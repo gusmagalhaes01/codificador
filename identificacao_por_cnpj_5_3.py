@@ -344,14 +344,21 @@ def buscar_por_nome_arquivo(nome_arquivo, cadastro):
 # ============================================================
 
 def criar_overlay(largura, altura, texto, fonte, tamanho, cor, x, y, centralizado):
+    """Desenha `texto` no PDF. Se tiver quebras de linha ("\n"), cada linha é
+    desenhada empilhada, a primeira em cima e as seguintes abaixo dela."""
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=(largura, altura))
     c.setFont(fonte, tamanho)
     c.setFillColor(HexColor(cor))
-    if centralizado:
-        largura_texto = c.stringWidth(texto, fonte, tamanho)
-        x = (largura - largura_texto) / 2
-    c.drawString(x, y, texto)
+
+    altura_linha = tamanho * 1.2
+    for i, linha in enumerate(texto.split("\n")):
+        x_linha = x
+        if centralizado:
+            largura_texto = c.stringWidth(linha, fonte, tamanho)
+            x_linha = (largura - largura_texto) / 2
+        c.drawString(x_linha, y - i * altura_linha, linha)
+
     c.save()
     buffer.seek(0)
     return buffer
@@ -435,7 +442,6 @@ class App(tk.Tk):
         self.pasta_entrada = tk.StringVar()
         self.pasta_saida = tk.StringVar()
         self.cnpj_emitente = tk.StringVar(value="13.736.666/0001-54")
-        self.tipo_servico = tk.StringVar(value="CIPAA")
         self.modo_texto = tk.StringVar(value="topo_esquerdo")
         self.tamanho_fonte = tk.StringVar(value="14")
         self.cor_texto = tk.StringVar(value="#000000")
@@ -785,8 +791,11 @@ class App(tk.Tk):
 
         self.frame_tipo_servico = ttk.Frame(frame3)
         self.frame_tipo_servico.pack(fill="x", padx=8, pady=(0, 8))
-        ttk.Label(self.frame_tipo_servico, text="Tipo de serviço (ex: CIPAA, PCMSO):").pack(side="left")
-        ttk.Entry(self.frame_tipo_servico, textvariable=self.tipo_servico, width=25).pack(side="left", padx=8)
+        ttk.Label(self.frame_tipo_servico, text="Tipo de serviço (Enter quebra linha no PDF):").pack(
+            side="left", anchor="n", pady=(2, 0))
+        self.txt_tipo_servico = tk.Text(self.frame_tipo_servico, width=30, height=3, wrap="none")
+        self.txt_tipo_servico.insert("1.0", "CIPAA")
+        self.txt_tipo_servico.pack(side="left", padx=8)
 
         frame4 = ttk.LabelFrame(parent, text="5. Estilo do texto")
         frame4.pack(fill="x", **pad)
@@ -1150,7 +1159,7 @@ class App(tk.Tk):
     def _processar_em_thread(self, entrada, saida, tamanho, cnpj_emitente_norm, usar_ocr, dpi,
                               usar_match_nome, usar_ocr_regiao, retangulo_regiao):
         modo = self.modo_texto.get()
-        tipo_servico = self.tipo_servico.get().strip()
+        tipo_servico = self.txt_tipo_servico.get("1.0", "end-1c").strip()
         cor = self.cor_texto.get().strip() or "#000000"
 
         if modo == "rodape":
@@ -1279,7 +1288,8 @@ class App(tk.Tk):
                             texto_pdf = codigo
                         processar_pdf(caminho_entrada_pdf, caminho_saida_pdf, texto_pdf, config)
                         sucesso += 1
-                        msg = f"[{idx}/{len(arquivos)}] ✓ {nome} → '{texto_pdf}'{sufixo_origem}"
+                        texto_pdf_log = texto_pdf.replace("\n", " / ")
+                        msg = f"[{idx}/{len(arquivos)}] ✓ {nome} → '{texto_pdf_log}'{sufixo_origem}"
 
             except Exception as e:
                 pendentes.append((nome, f"Erro inesperado: {e}"))
