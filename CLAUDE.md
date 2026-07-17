@@ -9,7 +9,10 @@ em planilha `.xlsx`.
 
 Arquivo principal: `identificacao_por_cnpj_5_3.py`
 Cadastro de condomínios: `cadastro_condominios.xlsx` (colunas: CNPJ, Código, Nome)
-Logs: `processamento.log` (histórico de sessões, ao lado do script)
+Logs: `processamento.log` (histórico de sessões) e `erros.log` (exceções não
+tratadas capturadas pelo handler global — ver seção "Robustez da interface"),
+ambos ao lado do script.
+Repositório: [gusmagalhaes01/codificador](https://github.com/gusmagalhaes01/codificador) (privado).
 
 ## Fluxo de identificação
 
@@ -94,11 +97,35 @@ similaridade de nome sozinha.
    página inteira — mais rápido e menos sujeito a carimbos como "QUITADO"
    fora da área de interesse. Só é usado quando resulta em exatamente 1
    candidato; caso contrário cai para o OCR de página inteira normalmente.
-   Tem botão "Pré-visualizar recorte..." (`_pre_visualizar_regiao` /
-   `recortar_pagina_como_imagem`) pra calibrar o retângulo visualmente contra
-   um PDF de exemplo — **os valores padrão (y0=0.15, y1=0.35) são um chute
-   inicial, não foram calibrados contra um boleto real da FedCorp.**
+   Calibração é visual: botão "🖱 Selecionar região no PDF..."
+   (`_selecionar_regiao_visualmente` / `_montar_janela_selecao_regiao`) abre
+   um PDF de exemplo em tamanho real (com barra de rolagem, já que a página
+   não cabe inteira na tela) e o usuário desenha o retângulo clicando e
+   arrastando o mouse; os campos x0,y0,x1,y1 são preenchidos sozinhos.
+   **Os valores padrão (y0=0.15, y1=0.35) continuam sendo um chute inicial,
+   não calibrados contra um boleto real da FedCorp** — calibrar antes de usar.
    Desligado por padrão até o usuário calibrar.
+4. **Tipo de serviço com quebra de linha**: o campo (aba 1, item 4) virou uma
+   caixa de texto multi-linha (`self.txt_tipo_servico`, um `tk.Text`) em vez
+   de um `Entry` de uma linha só — dá pra apertar Enter e quebrar o texto.
+   `criar_overlay()` agora desenha cada linha do texto empilhada (a primeira
+   no topo, as seguintes abaixo, respeitando centralização), em vez de forçar
+   tudo numa linha só no rodapé do PDF. O log de progresso mostra as quebras
+   trocadas por " / " pra não virar múltiplas linhas na tela de log.
+
+## Robustez da interface (janela pequena / crashes)
+
+- A aba "1. Processamento" cresceu bastante com os itens de OCR por região e
+  passou a não caber em telas menores — o conteúdo da aba agora fica dentro
+  de um canvas rolável (scroll com a roda do mouse ou barra lateral), então o
+  botão "▶ Processar PDFs" nunca fica inacessível. A janela principal também
+  passou a ser redimensionável (`resizable(True, True)`, com `minsize`).
+- `App.report_callback_exception` foi adicionado: qualquer exceção não
+  tratada num callback (clique de botão etc.) antes caía no comportamento
+  padrão do Tkinter de tentar imprimir no stderr — em ambientes sem console
+  (ex: script associado ao `pythonw`), isso podia derrubar a janela inteira
+  sem aviso nenhum. Agora o erro é gravado em `erros.log` (ao lado do script)
+  e mostrado num popup, sem fechar o app.
 
 ## Ideia de melhoria discutida, não implementada
 
