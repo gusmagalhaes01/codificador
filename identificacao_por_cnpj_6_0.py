@@ -116,15 +116,23 @@ DEFAULTS_CONFIG = {
 }
 
 
-def _registrar_erro_config(detalhes):
-    """Grava uma falha de leitura/escrita de config.json em erros.log, no
-    mesmo formato usado pelo handler global de exceções (App.report_callback_exception)."""
+def _gravar_erros_log(detalhes):
+    """Faz o append de `detalhes` em erros.log (ao lado do script), com
+    timestamp. Usada tanto por _registrar_erro_config quanto pelo handler
+    global de exceções (App.report_callback_exception) — mesmo formato nos
+    dois casos. Nunca lança exceção."""
     try:
         pasta_script = os.path.dirname(os.path.abspath(__file__))
         with open(os.path.join(pasta_script, "erros.log"), "a", encoding="utf-8") as f:
             f.write(f"\n[{datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}]\n{detalhes}\n")
     except Exception:
         pass
+
+
+def _registrar_erro_config(detalhes):
+    """Grava uma falha de leitura/escrita de config.json em erros.log, no
+    mesmo formato usado pelo handler global de exceções (App.report_callback_exception)."""
+    _gravar_erros_log(detalhes)
 
 
 def carregar_config():
@@ -540,10 +548,10 @@ def salvar_cadastro(caminho, cadastro):
 class App(ctk.CTk):
     def __init__(self):
         # --- Config persistida (config.json, ao lado do script) ---
-        self.config = carregar_config()
+        self.config_app = carregar_config()
 
         # --- Tema efetivo: resolve "auto" via darkdetect, aplica no CTk ---
-        self.nome_tema = self._resolver_nome_tema(self.config.get("tema", "auto"))
+        self.nome_tema = self._resolver_nome_tema(self.config_app.get("tema", "auto"))
         self.tema_atual = TEMA_CLARO if self.nome_tema == "claro" else TEMA_ESCURO
         ctk.set_appearance_mode("Dark" if self.nome_tema == "escuro" else "Light")
 
@@ -564,22 +572,22 @@ class App(ctk.CTk):
         # entre sessões)
         self.pasta_entrada = tk.StringVar()
         self.pasta_saida = tk.StringVar()
-        self.cnpj_emitente = tk.StringVar(value=self.config["cnpj_emitente"])
-        self.modo_texto = tk.StringVar(value=self.config["modo_texto"])
-        self.tamanho_fonte = tk.StringVar(value=self.config["tamanho_fonte"])
-        self.cor_texto = tk.StringVar(value=self.config["cor_texto"])
-        self.usar_ocr = tk.BooleanVar(value=self.config["usar_ocr"])
-        self.dpi_ocr = tk.IntVar(value=self.config["dpi_ocr"])
+        self.cnpj_emitente = tk.StringVar(value=self.config_app["cnpj_emitente"])
+        self.modo_texto = tk.StringVar(value=self.config_app["modo_texto"])
+        self.tamanho_fonte = tk.StringVar(value=self.config_app["tamanho_fonte"])
+        self.cor_texto = tk.StringVar(value=self.config_app["cor_texto"])
+        self.usar_ocr = tk.BooleanVar(value=self.config_app["usar_ocr"])
+        self.dpi_ocr = tk.IntVar(value=self.config_app["dpi_ocr"])
 
         # OCR por região (recorte) — opcional, calibrado pelo usuário
-        self.usar_ocr_regiao = tk.BooleanVar(value=self.config["usar_ocr_regiao"])
-        self.regiao_x0 = tk.DoubleVar(value=self.config["regiao_x0"])
-        self.regiao_y0 = tk.DoubleVar(value=self.config["regiao_y0"])
-        self.regiao_x1 = tk.DoubleVar(value=self.config["regiao_x1"])
-        self.regiao_y1 = tk.DoubleVar(value=self.config["regiao_y1"])
+        self.usar_ocr_regiao = tk.BooleanVar(value=self.config_app["usar_ocr_regiao"])
+        self.regiao_x0 = tk.DoubleVar(value=self.config_app["regiao_x0"])
+        self.regiao_y0 = tk.DoubleVar(value=self.config_app["regiao_y0"])
+        self.regiao_x1 = tk.DoubleVar(value=self.config_app["regiao_x1"])
+        self.regiao_y1 = tk.DoubleVar(value=self.config_app["regiao_y1"])
 
         # Match por nome de arquivo (evita OCR na maioria dos casos)
-        self.usar_match_nome_arquivo = tk.BooleanVar(value=self.config["usar_match_nome_arquivo"])
+        self.usar_match_nome_arquivo = tk.BooleanVar(value=self.config_app["usar_match_nome_arquivo"])
 
         # Variáveis - aba cadastro (formulário)
         self.form_cnpj = tk.StringVar()
@@ -619,8 +627,8 @@ class App(ctk.CTk):
         self.nome_tema = nome
         self.tema_atual = TEMA_ESCURO if nome == "escuro" else TEMA_CLARO
 
-        self.config["tema"] = nome
-        salvar_config(self.config)
+        self.config_app["tema"] = nome
+        salvar_config(self.config_app)
 
         ctk.set_appearance_mode("Dark" if nome == "escuro" else "Light")
         try:
@@ -643,12 +651,7 @@ class App(ctk.CTk):
         """
         import traceback
         detalhes = "".join(traceback.format_exception(exc, val, tb))
-        try:
-            pasta_script = os.path.dirname(os.path.abspath(__file__))
-            with open(os.path.join(pasta_script, "erros.log"), "a", encoding="utf-8") as f:
-                f.write(f"\n[{datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}]\n{detalhes}\n")
-        except Exception:
-            pass
+        _gravar_erros_log(detalhes)
         messagebox.showerror(
             "Erro inesperado",
             f"{val}\n\nDetalhes salvos em erros.log (na pasta do programa).",
@@ -960,7 +963,7 @@ class App(ctk.CTk):
         ttk.Label(self.frame_tipo_servico, text="Tipo de serviço (Enter quebra linha no PDF):").pack(
             side="left", anchor="n", pady=(2, 0))
         self.txt_tipo_servico = tk.Text(self.frame_tipo_servico, width=30, height=3, wrap="none")
-        self.txt_tipo_servico.insert("1.0", self.config["tipo_servico"])
+        self.txt_tipo_servico.insert("1.0", self.config_app["tipo_servico"])
         self.txt_tipo_servico.pack(side="left", padx=8)
 
         frame4 = ttk.LabelFrame(parent, text="5. Estilo do texto")
