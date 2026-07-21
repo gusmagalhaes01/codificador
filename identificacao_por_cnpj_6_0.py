@@ -114,8 +114,19 @@ DEFAULTS_CONFIG = {
     "tipo_servico": "CIPAA",
     "tamanho_fonte": "14",
     "cor_texto": "#000000",
+    "renomear_com_codigo": False,  # prefixar o código do condomínio no nome do PDF de saída
     "tema": "auto",  # "auto" | "claro" | "escuro"
 }
+
+
+def nome_saida_com_codigo(nome_original, codigo):
+    """Devolve o nome do arquivo de saída prefixado com o código do condomínio,
+    ex: "10002 - ARAUJO LIMA QUITADO 05.26.pdf". Remove do código caracteres
+    inválidos em nome de arquivo no Windows."""
+    codigo_limpo = re.sub(r'[\\/:*?"<>|]', "", str(codigo)).strip()
+    if not codigo_limpo:
+        return nome_original
+    return f"{codigo_limpo} - {nome_original}"
 
 
 def _gravar_erros_log(detalhes):
@@ -611,6 +622,9 @@ class App(ctk.CTk):
         # Match por nome de arquivo (evita OCR na maioria dos casos)
         self.usar_match_nome_arquivo = tk.BooleanVar(value=self.config_app["usar_match_nome_arquivo"])
 
+        # Renomear o PDF de saída com o código do condomínio na frente
+        self.renomear_com_codigo = tk.BooleanVar(value=self.config_app["renomear_com_codigo"])
+
         # Variáveis - aba cadastro (formulário)
         self.form_cnpj = tk.StringVar()
         self.form_codigo = tk.StringVar()
@@ -1079,6 +1093,7 @@ class App(ctk.CTk):
             "modo_texto": self.modo_texto.get(),
             "tamanho_fonte": self.tamanho_fonte.get(),
             "cor_texto": self.cor_texto.get(),
+            "renomear_com_codigo": self.renomear_com_codigo.get(),
         }
 
         janela = ctk.CTkToplevel(self)
@@ -1286,6 +1301,18 @@ class App(ctk.CTk):
             command=atualizar_estado_tipo_servico,
         ).pack(anchor="w", pady=(0, 8))
 
+        ctk.CTkCheckBox(
+            frame_texto, text="Renomear o arquivo de saída com o código do condomínio",
+            variable=self.renomear_com_codigo, corner_radius=0,
+            fg_color=tema["acento"], hover_color=tema["acento"],
+            border_color=tema["borda_forte"], text_color=tema["texto"], font=(fonte, 13),
+        ).pack(anchor="w", pady=(0, 4))
+        ctk.CTkLabel(
+            frame_texto, text="Ex: \"10002 - ARAUJO LIMA QUITADO 05.26.pdf\". Não altera o conteúdo, só o nome.",
+            font=(fonte, 12), text_color=tema["texto_terciario"], anchor="w",
+            justify="left", wraplength=520,
+        ).pack(fill="x", pady=(0, 8))
+
         ctk.CTkLabel(
             frame_texto, text="Tipo de serviço", font=(fonte, 12),
             text_color=tema["texto_secundario"], anchor="w",
@@ -1339,6 +1366,7 @@ class App(ctk.CTk):
             self.modo_texto.set(snapshot["modo_texto"])
             self.tamanho_fonte.set(snapshot["tamanho_fonte"])
             self.cor_texto.set(snapshot["cor_texto"])
+            self.renomear_com_codigo.set(snapshot["renomear_com_codigo"])
             janela.destroy()
 
         def salvar():
@@ -1376,6 +1404,7 @@ class App(ctk.CTk):
             self.config_app["tamanho_fonte"] = self.tamanho_fonte.get()
             self.config_app["cor_texto"] = self.cor_texto.get()
             self.config_app["tipo_servico"] = novo_tipo_servico
+            self.config_app["renomear_com_codigo"] = self.renomear_com_codigo.get()
             salvar_config(self.config_app)
 
             janela.destroy()
@@ -2008,7 +2037,10 @@ class App(ctk.CTk):
         else:
             texto_pdf = codigo
 
-        caminho_saida = os.path.join(ctx["saida"], dados["arquivo"])
+        nome_saida = dados["arquivo"]
+        if ctx.get("renomear"):
+            nome_saida = nome_saida_com_codigo(dados["arquivo"], codigo)
+        caminho_saida = os.path.join(ctx["saida"], nome_saida)
 
         try:
             processar_pdf(dados["caminho"], caminho_saida, texto_pdf, ctx["config"])
@@ -2227,6 +2259,7 @@ class App(ctk.CTk):
         modo = self.modo_texto.get()
         tipo_servico = self.txt_tipo_servico.get("1.0", "end-1c").strip()
         cor = self.cor_texto.get().strip() or "#000000"
+        renomear = self.renomear_com_codigo.get()
 
         if modo == "rodape":
             config = {"fonte": "Helvetica-Bold", "tamanho": tamanho, "cor": cor,
@@ -2235,7 +2268,8 @@ class App(ctk.CTk):
             config = {"fonte": "Helvetica-Bold", "tamanho": tamanho, "cor": cor,
                       "x": 120, "y": 815, "centralizado": False}
 
-        self._ctx_processamento = {"saida": saida, "config": config, "modo": modo, "tipo_servico": tipo_servico}
+        self._ctx_processamento = {"saida": saida, "config": config, "modo": modo,
+                                   "tipo_servico": tipo_servico, "renomear": renomear}
 
         arquivos = [f for f in os.listdir(entrada) if f.lower().endswith(".pdf")]
         if not arquivos:
@@ -2373,6 +2407,8 @@ class App(ctk.CTk):
                             texto_pdf = f"{codigo} {condominio} - {tipo_servico}".strip()
                         else:
                             texto_pdf = codigo
+                        if renomear:
+                            caminho_saida_pdf = os.path.join(saida, nome_saida_com_codigo(nome, codigo))
                         processar_pdf(caminho_entrada_pdf, caminho_saida_pdf, texto_pdf, config)
                         sucesso += 1
                         texto_pdf_log = texto_pdf.replace("\n", " / ")

@@ -159,7 +159,9 @@ o CustomTkinter não tem widget de tabela).
   (checkbox + "Qualidade de leitura" Rápida 72 / Normal 200 / Máxima 300 →
   mapeia o antigo DPI; grupo recolhível "Leitura por região" com o seletor visual
   `_selecionar_regiao_visualmente`), Texto no PDF (posição, tipo de serviço
-  multi-linha, tamanho, cor validada `#RRGGBB`). Padrão snapshot-ao-abrir /
+  multi-linha, tamanho, cor validada `#RRGGBB`, e opção "Renomear o arquivo de
+  saída com o código do condomínio" → `nome_saida_com_codigo`, ex: "10002 - ARAUJO
+  LIMA QUITADO.pdf"). Padrão snapshot-ao-abrir /
   restaura-no-Cancelar / persiste-no-Salvar. **Nenhum rótulo usa "OCR" ou "DPI"** —
   vocabulário humano ("boletos escaneados", "qualidade de leitura").
 - **Resultado** (`mostrar_resultado(resultado)`, painel `CTkToplevel`): substitui
