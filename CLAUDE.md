@@ -2,13 +2,18 @@
 
 ## O que o programa faz
 
-App desktop (Tkinter, Windows) que processa boletos e notas fiscais (NFS-e) em PDF,
+App desktop (Windows) que processa boletos e notas fiscais (NFS-e) em PDF,
 identifica a qual condomínio cada documento pertence (via CNPJ do tomador) e escreve
 o código do condomínio no PDF (rodapé ou canto superior), comparando com um cadastro
 em planilha `.xlsx`.
 
-Arquivo principal: `identificacao_por_cnpj_5_3.py`
+Arquivo principal: `identificacao_por_cnpj_6_0.py` (interface CustomTkinter, redesign
+Swiss — ver seção "Redesign visual 6_0"). A versão anterior `identificacao_por_cnpj_5_3.py`
+(Tkinter/ttk) segue no repo como referência; toda a lógica de identificação é
+byte-idêntica entre as duas — o 6_0 mudou só a interface.
 Cadastro de condomínios: `cadastro_condominios.xlsx` (colunas: CNPJ, Código, Nome)
+Configuração da interface: `config.json` (ao lado do script, gitignored) — CNPJ da
+emitente, opções de leitura, texto no PDF e tema; criado na 1ª execução com defaults.
 Logs: `processamento.log` (histórico de sessões) e `erros.log` (exceções não
 tratadas capturadas pelo handler global — ver seção "Robustez da interface"),
 ambos ao lado do script.
@@ -72,6 +77,13 @@ similaridade de nome sozinha.
   Imodata também no fallback genérico, não só no filtro por campo semântico.
   Corrigiu caso onde o OCR não lia o rótulo `CO-ESTIPULANTE` e o script pegava
   o CNPJ da Imodata por engano.
+- **Versão 6_0 (redesign)**: reforma gráfica completa em `identificacao_por_cnpj_6_0.py`
+  — reestruturação em 3 telas (Principal / Configurações / Resultado) **e** nova
+  identidade visual Swiss International Style, migrando de Tkinter/ttk para
+  **CustomTkinter**. Executada como redesign **exclusivamente de interface**: nenhuma
+  função de lógica de identificação foi tocada (as 14+ funções são byte-idênticas ao
+  5_3) e o formato de `processamento.log`/`erros.log`/planilha foi preservado. Ver
+  "Redesign visual 6_0".
 
 ## Melhorias implementadas (a partir da versão 5_3)
 
@@ -127,6 +139,54 @@ similaridade de nome sozinha.
   sem aviso nenhum. Agora o erro é gravado em `erros.log` (ao lado do script)
   e mostrado num popup, sem fechar o app.
 
+## Redesign visual 6_0 (implementado — `identificacao_por_cnpj_6_0.py`)
+
+Reforma gráfica que separa **operação** (o que o funcionário faz todo dia) de
+**configuração** (o que se define uma vez) e transforma o resultado num painel
+acionável. Migração de Tkinter/ttk para **CustomTkinter** (o Notebook de abas
+foi mantido e estilizado; tabelas continuam em `ttk.Treeview` estilizado, pois
+o CustomTkinter não tem widget de tabela).
+
+**3 telas:**
+- **Principal** (aba 1, sem scroll): cabeçalho "Codificador" + botão
+  "⚙ Configurações" + alternador de tema; campos de pasta de entrada/saída com
+  botão "Trocar"; botão cobalto largo "Processar N PDFs" (N = contagem de `*.pdf`,
+  dinâmico; desabilitado sem pasta); linha explicativa em linguagem humana. Sem
+  jargão técnico.
+- **Configurações** (`_abrir_configuracoes`, modal `CTkToplevel` com
+  `CTkScrollableFrame`): Empresa (CNPJ emitente, validado por checksum ao salvar),
+  Identificação (checkbox nome do arquivo), Leitura de boletos escaneados
+  (checkbox + "Qualidade de leitura" Rápida 72 / Normal 200 / Máxima 300 →
+  mapeia o antigo DPI; grupo recolhível "Leitura por região" com o seletor visual
+  `_selecionar_regiao_visualmente`), Texto no PDF (posição, tipo de serviço
+  multi-linha, tamanho, cor validada `#RRGGBB`). Padrão snapshot-ao-abrir /
+  restaura-no-Cancelar / persiste-no-Salvar. **Nenhum rótulo usa "OCR" ou "DPI"** —
+  vocabulário humano ("boletos escaneados", "qualidade de leitura").
+- **Resultado** (`mostrar_resultado(resultado)`, painel `CTkToplevel`): substitui
+  o antigo `messagebox` + log. 3 cartões (Processados / Pendentes / Tempo, só o
+  Pendentes em cobalto); tabela de **pendentes primeiro** (colunas Arquivo | Motivo,
+  motivos humanos: "CNPJ não cadastrado" / "Não foi possível ler" / "Dois CNPJs
+  possíveis") com ações por linha (duplo clique **ou** botão): **Cadastrar** (abre a
+  aba de cadastro pré-preenchida com CNPJ + nome sugerido), **Abrir PDF**
+  (`os.startfile`), **Escolher** (popup de candidatos → reprocessa só aquele
+  arquivo via `_reprocessar_arquivo`, usando `self._ctx_processamento`); depois a
+  tabela de processados (Arquivo | Código | Origem humana). O `processamento.log`
+  técnico continua idêntico, gravado como antes.
+
+**Identidade visual (Swiss International Style):** cantos retos
+(`corner_radius=0` em tudo), **cor de destaque única cobalto** (`TEMA_*["acento"]`;
+sem verde/amarelo/vermelho de status — pendências usam o próprio cobalto), hierarquia
+por tom sólido (não por opacidade, que o CustomTkinter não suporta em texto),
+tipografia grotesca em peso leve (IBM Plex Sans se instalada, senão Segoe UI, via
+`familia_fonte()`), grid de 8px, hairlines de 1px. Paleta em dois dicts de módulo
+`TEMA_CLARO`/`TEMA_ESCURO` (stone), trocados por `aplicar_tema`/`_recolorir`; sem
+hex soltos no código. Tema padrão segue o Windows (`darkdetect`), com alternador
+manual persistido em `config.json`.
+
+**Regra de ouro do cobalto:** só no botão "Processar", no cartão/label "Pendentes",
+e nos botões que **resolvem** um pendente (Cadastrar/Escolher/"Usar este CNPJ").
+Botões neutros (Trocar, Abrir PDF, Cancelar) são contornados, fundo transparente.
+
 ## Ideia de melhoria discutida, não implementada
 
 - **LLM como último fallback** (não como motor principal): mandar a imagem da
@@ -139,4 +199,10 @@ similaridade de nome sozinha.
 - Comentários e nomes de variáveis em português (ex: `cadastro`, `formatar_cnpj`).
 - CNPJs sempre normalizados para 14 dígitos internamente (`normalizar_cnpj`),
   formatados só na exibição/planilha (`formatar_cnpj`).
-- Dependências: `pypdf`, `reportlab`, `openpyxl`, `pymupdf`, `winocr` (Windows).
+- Dependências: `customtkinter` (interface 6_0; traz `darkdetect`), `pypdf`,
+  `reportlab`, `openpyxl`, `pymupdf`, `Pillow`, `winocr` (Windows).
+  Instalação: `python -m pip install customtkinter pypdf reportlab openpyxl pymupdf winocr`.
+- Cores da interface 6_0 nunca hardcoded soltas: sempre via `self.tema_atual[chave]`
+  (dicts `TEMA_CLARO`/`TEMA_ESCURO`). Todo widget CustomTkinter usa `corner_radius=0`.
+- Vocabulário da interface é para leigos: nunca expor "OCR" ou "DPI" em texto visível
+  (usar "boletos escaneados", "qualidade de leitura").
