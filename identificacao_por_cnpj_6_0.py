@@ -332,7 +332,10 @@ def extrair_cnpj_tomador(texto, cnpj_emitente_normalizado):
          casos em que o OCR não capta o rótulo do campo (ex: "CO-ESTIPULANTE"
          sai ilegível, sobrando só os nomes/CNPJs soltos no texto).
     """
-    CNPJ_FLEX = r"(\d{2}[\s.]?\d{3}[\s.]?\d{3}[\s/]?\d{4}[\s-]?\d{2})"
+    # Tolerante a variações de separador: alguns recibos FedCorp escrevem o CNPJ do
+    # co-estipulante com "-" (ou ".") no lugar da "/" — ex: 08.578.541-0001-03. O
+    # separador antes do bloco 0001 e antes dos 2 dígitos finais aceita /, -, . ou espaço.
+    CNPJ_FLEX = r"(\d{2}[\s.]?\d{3}[\s.]?\d{3}[\s/.\-]?\d{4}[\s.\-]?\d{2})"
 
     cnpjs_a_ignorar = set(CNPJS_INTERMEDIARIOS.keys())
     cnpjs_a_ignorar.add(cnpj_emitente_normalizado)
