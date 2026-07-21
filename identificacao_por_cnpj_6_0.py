@@ -416,6 +416,14 @@ def sugerir_nome_condominio(texto):
 LIMIAR_SCORE_NOME = 0.72         # score mínimo (0-1) para considerar um match confiável
 LIMIAR_DIFERENCA_AMBIGUA = 0.08  # se o 2º colocado ficar muito perto do 1º, é ambíguo
 
+#  Palavras que indicam o TIPO do documento no nome do arquivo (não fazem parte
+#  do nome do condomínio) e que diluem o fuzzy match — ex: "ARGENTINA QUITADO
+#  05.26.pdf" comparado com "ARGENTINA" caía para score 0.69 por causa do
+#  "QUITADO". São removidas do nome do arquivo antes de comparar com o cadastro.
+PALAVRAS_TIPO_DOC = {
+    "QUITADO", "NF", "RECIBO", "DEMONSTRATIVO", "NOTA", "FISCAL", "BOLETO",
+}
+
 
 def normalizar_texto_busca(texto):
     """Maiúsculas, sem acento, sem dígitos (datas/códigos), separadores viram espaço."""
@@ -424,6 +432,14 @@ def normalizar_texto_busca(texto):
     texto = re.sub(r"\d", " ", texto)
     texto = re.sub(r"\s+", " ", texto).strip().upper()
     return texto
+
+
+def remover_palavras_tipo_doc(texto_normalizado):
+    """Remove tokens de tipo de documento (QUITADO, NF, ...) de um texto já
+    normalizado. Se sobrar vazio (nome só com essas palavras), devolve o
+    texto original para não perder o match por completo."""
+    tokens = [t for t in texto_normalizado.split() if t not in PALAVRAS_TIPO_DOC]
+    return " ".join(tokens) if tokens else texto_normalizado
 
 
 def buscar_por_nome_arquivo(nome_arquivo, cadastro):
@@ -436,6 +452,7 @@ def buscar_por_nome_arquivo(nome_arquivo, cadastro):
     caso o chamador deve cair para a extração de CNPJ do conteúdo do PDF.
     """
     alvo = normalizar_texto_busca(os.path.splitext(nome_arquivo)[0])
+    alvo = remover_palavras_tipo_doc(alvo)
     if not alvo or not cadastro:
         return None, "nome de arquivo vazio ou cadastro vazio"
 
