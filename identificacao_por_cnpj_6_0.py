@@ -620,10 +620,9 @@ class App(ctk.CTk):
     def aplicar_tema(self, nome):
         """
         Troca o tema ativo ("claro" ou "escuro"), persiste em
-        config["tema"] e salva config.json. Reaplica as cores nos widgets
-        já existentes — nesta fase (fundação visual) isso se limita ao
-        fundo da janela e ao appearance mode do CustomTkinter; as telas
-        reais (Tarefas 2-4) reaplicam o tema por completo nos seus widgets.
+        config["tema"] e salva config.json. Reaplica as cores no fundo da
+        janela, no appearance mode do CustomTkinter e, via `_recolorir`,
+        em todos os widgets já existentes registrados em self._widgets_tema.
         """
         nome = "escuro" if nome == "escuro" else "claro"
         self.nome_tema = nome
@@ -680,7 +679,7 @@ class App(ctk.CTk):
         self._montar_aba_logs(self.aba_logs)
 
     # --------------------------------------------------------
-    #  ABA 1 — CADASTRO
+    #  ABA 2 — CADASTRO
     # --------------------------------------------------------
     def _montar_aba_cadastro(self, parent):
         pad = {"padx": 10, "pady": 6}
@@ -813,7 +812,7 @@ class App(ctk.CTk):
             messagebox.showerror("Erro ao salvar", str(e))
 
     # --------------------------------------------------------
-    #  ABA 2 — PROCESSAMENTO DE PDFs
+    #  ABA 1 — PROCESSAMENTO DE PDFs
     # --------------------------------------------------------
     def _montar_aba_processar(self, parent_externo):
         """
@@ -1447,18 +1446,24 @@ class App(ctk.CTk):
         Ao confirmar, grava as coordenadas (frações 0.0–1.0 da página) nos
         campos x0,y0,x1,y1 e liga o OCR por região.
         """
+        dono = (
+            self._janela_config
+            if getattr(self, "_janela_config", None) and self._janela_config.winfo_exists()
+            else self
+        )
         if not FITZ_DISPONIVEL:
-            messagebox.showerror("Erro", "PyMuPDF não instalado. Instale: pip install pymupdf")
+            messagebox.showerror("Erro", "PyMuPDF não instalado. Instale: pip install pymupdf", parent=dono)
             return
         try:
             from PIL import ImageTk  # noqa: F401 — só valida disponibilidade aqui
         except ImportError:
-            messagebox.showerror("Erro", "Pillow não instalado. Instale: pip install pillow")
+            messagebox.showerror("Erro", "Pillow não instalado. Instale: pip install pillow", parent=dono)
             return
 
         caminho = filedialog.askopenfilename(
             title="Selecione um PDF de exemplo para calibrar a região",
             filetypes=[("PDF", "*.pdf")],
+            parent=dono,
         )
         if not caminho:
             return
@@ -1470,7 +1475,7 @@ class App(ctk.CTk):
             img_original = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
             doc.close()
         except Exception as e:
-            messagebox.showerror("Erro ao abrir PDF", str(e))
+            messagebox.showerror("Erro ao abrir PDF", str(e), parent=dono)
             return
 
         # Imagem em tamanho real (sem espremer) — a janela tem barra de rolagem
@@ -1635,8 +1640,9 @@ class App(ctk.CTk):
         arquivo/handoff): total, tempo_segundos, processados[], pendentes[].
 
         Esta função só monta a UI: as ações reais (cadastrar, escolher entre
-        candidatos, abrir PDF) são implementadas na Tarefa 5 — aqui são stubs
-        que só confirmam que a ligação botão → dados da linha funciona.
+        candidatos, abrir PDF) já estão implementadas em
+        _acao_cadastrar_pendente/_acao_abrir_pdf_pendente/_acao_escolher_pendente,
+        ligadas aos botões de cada linha das tabelas.
         """
         tema = self.tema_atual
         fonte = familia_fonte()
@@ -1919,6 +1925,7 @@ class App(ctk.CTk):
             ctk.CTkRadioButton(
                 area, text=texto, variable=var_escolha, value=cnpj_norm,
                 font=(fonte, 13), text_color=tema["texto"], fg_color=tema["acento"],
+                corner_radius=0,
             ).pack(anchor="w", pady=6)
 
         frame_botoes = ctk.CTkFrame(popup, corner_radius=0, fg_color=tema["fundo"])
@@ -1930,11 +1937,13 @@ class App(ctk.CTk):
             if registro is None:
                 messagebox.showinfo(
                     "CNPJ não cadastrado",
-                    "Esse CNPJ ainda não está cadastrado. Use o botão \"Cadastrar\" "
-                    "para adicioná-lo antes de escolher.",
+                    "Esse CNPJ ainda não está cadastrado — abrindo o cadastro.",
                     parent=popup,
                 )
                 popup.destroy()
+                dados_cad = dict(dados)
+                dados_cad["cnpj"] = cnpj_escolhido
+                self._acao_cadastrar_pendente(dados_cad)
                 return
             popup.destroy()
             self._reprocessar_arquivo(dados, cnpj_escolhido)
