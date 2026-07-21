@@ -1598,6 +1598,265 @@ class App(ctk.CTk):
         ttk.Button(frame_botoes, text="Cancelar", command=janela.destroy).pack(side="left", padx=8)
 
     # --------------------------------------------------------
+    #  PAINEL DE RESULTADO (Tela 3 — Tarefa 4)
+    # --------------------------------------------------------
+    @staticmethod
+    def _formatar_tempo(tempo_segundos):
+        """Formata segundos como "1m 04s" ou "12s" (mesma lógica do resumo do log)."""
+        try:
+            tempo_segundos = float(tempo_segundos)
+        except (TypeError, ValueError):
+            tempo_segundos = 0.0
+        minutos = int(tempo_segundos // 60)
+        segundos = int(tempo_segundos % 60)
+        if minutos:
+            return f"{minutos}m {segundos:02d}s"
+        return f"{segundos}s"
+
+    def mostrar_resultado(self, resultado):
+        """
+        Abre (ou reaproveita) o painel de Resultado — Tela 3. Recebe o dict
+        `resultado` descrito no contrato da Tarefa 5 (ver docstring do
+        arquivo/handoff): total, tempo_segundos, processados[], pendentes[].
+
+        Esta função só monta a UI: as ações reais (cadastrar, escolher entre
+        candidatos, abrir PDF) são implementadas na Tarefa 5 — aqui são stubs
+        que só confirmam que a ligação botão → dados da linha funciona.
+        """
+        tema = self.tema_atual
+        fonte = familia_fonte()
+
+        processados = resultado.get("processados", []) or []
+        pendentes = resultado.get("pendentes", []) or []
+        total = resultado.get("total", len(processados) + len(pendentes))
+        tempo_str = self._formatar_tempo(resultado.get("tempo_segundos", 0))
+
+        if getattr(self, "_janela_resultado", None) is not None and self._janela_resultado.winfo_exists():
+            for widget in self._janela_resultado.winfo_children():
+                widget.destroy()
+            janela = self._janela_resultado
+            janela.focus_force()
+        else:
+            janela = ctk.CTkToplevel(self)
+            self._janela_resultado = janela
+
+        janela.title("Resultado do processamento")
+        janela.geometry("820x680")
+        janela.minsize(640, 480)
+        janela.resizable(True, True)
+        janela.configure(fg_color=tema["fundo"])
+        janela.transient(self)
+
+        # dados de cada pendente, indexados pelo iid da linha na tabela —
+        # usado pelos botões de ação e pelo duplo clique para recuperar o
+        # dict original (cnpj, nome_sugerido, candidatos, caminho, tipo...)
+        self._pend_por_iid = {}
+
+        # ===================== FAIXA DE CARTÕES =====================
+        faixa = ctk.CTkFrame(janela, corner_radius=0, fg_color=tema["fundo"])
+        faixa.pack(fill="x", padx=24, pady=(24, 0))
+        faixa.columnconfigure(0, weight=1)
+        faixa.columnconfigure(2, weight=1)
+        faixa.columnconfigure(4, weight=1)
+
+        def montar_cartao(parent, coluna, caption, valor, cor_caption, cor_valor):
+            bloco = ctk.CTkFrame(parent, corner_radius=0, fg_color=tema["fundo"])
+            bloco.grid(row=0, column=coluna, sticky="nsew", padx=16)
+            ctk.CTkLabel(
+                bloco, text=caption, font=(fonte, 11), text_color=cor_caption, anchor="w",
+            ).pack(fill="x", anchor="w")
+            ctk.CTkLabel(
+                bloco, text=valor, font=(fonte, 40), text_color=cor_valor, anchor="w",
+            ).pack(fill="x", anchor="w")
+
+        def hairline_vertical(parent, coluna):
+            linha = ctk.CTkFrame(parent, width=1, corner_radius=0, fg_color=tema["borda"])
+            linha.grid(row=0, column=coluna, sticky="ns")
+
+        montar_cartao(faixa, 0, "PROCESSADOS", str(len(processados)), tema["texto_secundario"], tema["texto"])
+        hairline_vertical(faixa, 1)
+        montar_cartao(faixa, 2, "PENDENTES", str(len(pendentes)), tema["acento"], tema["acento"])
+        hairline_vertical(faixa, 3)
+        montar_cartao(faixa, 4, "TEMPO", tempo_str, tema["texto_secundario"], tema["texto"])
+
+        hairline = ctk.CTkFrame(janela, height=1, corner_radius=0, fg_color=tema["borda"])
+        hairline.pack(fill="x", padx=24, pady=(24, 0))
+
+        # ===================== RODAPÉ (ancorado primeiro) =====================
+        rodape = ctk.CTkLabel(
+            janela, text=f"{total} arquivo(s) no total.",
+            font=(fonte, 12), text_color=tema["texto_terciario"], anchor="w",
+        )
+        rodape.pack(side="bottom", fill="x", padx=24, pady=16)
+
+        # ===================== ÁREA ROLÁVEL (pendentes + processados) =====================
+        area = ctk.CTkScrollableFrame(janela, corner_radius=0, fg_color=tema["fundo"])
+        area.pack(side="top", fill="both", expand=True, padx=24, pady=(16, 0))
+
+        # --- SEÇÃO PENDENTES ---
+        ctk.CTkLabel(
+            area, text="PENDENTES — PRECISAM DE AÇÃO", font=(fonte, 11, "bold"),
+            text_color=tema["acento"], anchor="w",
+        ).pack(fill="x", pady=(0, 8))
+
+        if not pendentes:
+            ctk.CTkLabel(
+                area, text="Nenhum pendente — todos os arquivos foram codificados.",
+                font=(fonte, 13), text_color=tema["texto_secundario"], anchor="w",
+            ).pack(fill="x", pady=(0, 16))
+        else:
+            frame_tabela_pend = ctk.CTkFrame(area, corner_radius=0, fg_color=tema["fundo"])
+            frame_tabela_pend.pack(fill="both", expand=False, pady=(0, 8))
+
+            tabela_pend = ttk.Treeview(
+                frame_tabela_pend, columns=("arquivo", "motivo"), show="headings", height=6,
+            )
+            tabela_pend.heading("arquivo", text="Arquivo")
+            tabela_pend.heading("motivo", text="Motivo")
+            tabela_pend.column("arquivo", width=280, anchor="w")
+            tabela_pend.column("motivo", width=420, anchor="w")
+            tabela_pend.pack(side="left", fill="both", expand=True)
+
+            scroll_pend = ttk.Scrollbar(frame_tabela_pend, orient="vertical", command=tabela_pend.yview)
+            tabela_pend.configure(yscrollcommand=scroll_pend.set)
+            scroll_pend.pack(side="left", fill="y")
+
+            for i, dados in enumerate(pendentes):
+                iid = f"pend{i}"
+                self._pend_por_iid[iid] = dados
+                tabela_pend.insert(
+                    "", "end", iid=iid,
+                    values=(dados.get("arquivo", ""), dados.get("motivo", "")),
+                )
+
+            # --- botões de ação, operam sobre a linha selecionada ---
+            frame_acoes = ctk.CTkFrame(area, corner_radius=0, fg_color=tema["fundo"])
+            frame_acoes.pack(fill="x", pady=(0, 16))
+
+            botao_cadastrar = ctk.CTkButton(
+                frame_acoes, text="Cadastrar", corner_radius=0, state="disabled",
+                fg_color=tema["acento"], hover_color=tema["acento"],
+                text_color=tema["sobre_acento"], border_width=0, font=(fonte, 13),
+                command=lambda: self._acao_cadastrar_pendente(self._pendente_selecionado(tabela_pend)),
+            )
+            botao_cadastrar.pack(side="left", padx=(0, 8))
+
+            botao_escolher = ctk.CTkButton(
+                frame_acoes, text="Escolher", corner_radius=0, state="disabled",
+                fg_color=tema["acento"], hover_color=tema["acento"],
+                text_color=tema["sobre_acento"], border_width=0, font=(fonte, 13),
+                command=lambda: self._acao_escolher_pendente(self._pendente_selecionado(tabela_pend)),
+            )
+            botao_escolher.pack(side="left", padx=(0, 8))
+
+            botao_abrir = ctk.CTkButton(
+                frame_acoes, text="Abrir PDF", corner_radius=0, state="disabled",
+                fg_color="transparent", hover_color=tema["superficie"],
+                border_width=1, border_color=tema["borda_forte"], text_color=tema["texto"],
+                font=(fonte, 13),
+                command=lambda: self._acao_abrir_pdf_pendente(self._pendente_selecionado(tabela_pend)),
+            )
+            botao_abrir.pack(side="left")
+
+            def atualizar_botoes_acao(_event=None):
+                dados = self._pendente_selecionado(tabela_pend)
+                if dados is None:
+                    botao_cadastrar.configure(state="disabled")
+                    botao_escolher.configure(state="disabled")
+                    botao_abrir.configure(state="disabled")
+                    return
+                tipo = dados.get("tipo")
+                botao_cadastrar.configure(state="normal" if tipo == "nao_cadastrado" else "disabled")
+                botao_escolher.configure(state="normal" if tipo == "ambiguo" else "disabled")
+                botao_abrir.configure(state="normal" if dados.get("caminho") else "disabled")
+
+            def ao_duplo_clique(_event=None):
+                dados = self._pendente_selecionado(tabela_pend)
+                if dados is None:
+                    return
+                tipo = dados.get("tipo")
+                if tipo == "nao_cadastrado":
+                    self._acao_cadastrar_pendente(dados)
+                elif tipo == "ambiguo":
+                    self._acao_escolher_pendente(dados)
+                else:
+                    self._acao_abrir_pdf_pendente(dados)
+
+            tabela_pend.bind("<<TreeviewSelect>>", atualizar_botoes_acao)
+            tabela_pend.bind("<Double-1>", ao_duplo_clique)
+
+        # --- SEÇÃO PROCESSADOS ---
+        hairline2 = ctk.CTkFrame(area, height=1, corner_radius=0, fg_color=tema["borda"])
+        hairline2.pack(fill="x", pady=(8, 16))
+
+        ctk.CTkLabel(
+            area, text="PROCESSADOS", font=(fonte, 11, "bold"),
+            text_color=tema["texto_secundario"], anchor="w",
+        ).pack(fill="x", pady=(0, 8))
+
+        if not processados:
+            ctk.CTkLabel(
+                area, text="Nenhum arquivo processado nesta sessão.",
+                font=(fonte, 13), text_color=tema["texto_secundario"], anchor="w",
+            ).pack(fill="x", pady=(0, 16))
+        else:
+            frame_tabela_proc = ctk.CTkFrame(area, corner_radius=0, fg_color=tema["fundo"])
+            frame_tabela_proc.pack(fill="both", expand=False, pady=(0, 16))
+
+            tabela_proc = ttk.Treeview(
+                frame_tabela_proc, columns=("arquivo", "codigo", "origem"), show="headings", height=8,
+            )
+            tabela_proc.heading("arquivo", text="Arquivo")
+            tabela_proc.heading("codigo", text="Código")
+            tabela_proc.heading("origem", text="Origem")
+            tabela_proc.column("arquivo", width=280, anchor="w")
+            tabela_proc.column("codigo", width=90, anchor="center")
+            tabela_proc.column("origem", width=280, anchor="w")
+            tabela_proc.pack(side="left", fill="both", expand=True)
+
+            scroll_proc = ttk.Scrollbar(frame_tabela_proc, orient="vertical", command=tabela_proc.yview)
+            tabela_proc.configure(yscrollcommand=scroll_proc.set)
+            scroll_proc.pack(side="left", fill="y")
+
+            for i, dados in enumerate(processados):
+                tabela_proc.insert(
+                    "", "end", iid=f"proc{i}",
+                    values=(dados.get("arquivo", ""), dados.get("codigo", ""), dados.get("origem", "")),
+                )
+
+        self._estilizar_ttk()
+        janela.protocol("WM_DELETE_WINDOW", janela.destroy)
+
+    def _pendente_selecionado(self, tabela_pend):
+        """Devolve o dict do pendente correspondente à linha selecionada na
+        tabela de pendentes, ou None se não houver seleção."""
+        selecionado = tabela_pend.selection()
+        if not selecionado:
+            return None
+        return self._pend_por_iid.get(selecionado[0])
+
+    def _acao_cadastrar_pendente(self, dados):
+        """STUB — a Tarefa 5 implementa o fluxo real de cadastro a partir do
+        CNPJ/nome sugerido do pendente selecionado."""
+        if dados is None:
+            return
+        messagebox.showinfo("Ação", "Implementado na Tarefa 5.", parent=self._janela_resultado)
+
+    def _acao_escolher_pendente(self, dados):
+        """STUB — a Tarefa 5 implementa a escolha entre os CNPJs candidatos
+        (caso ambíguo) do pendente selecionado."""
+        if dados is None:
+            return
+        messagebox.showinfo("Ação", "Implementado na Tarefa 5.", parent=self._janela_resultado)
+
+    def _acao_abrir_pdf_pendente(self, dados):
+        """STUB — a Tarefa 5 implementa a abertura do PDF original do
+        pendente selecionado."""
+        if dados is None:
+            return
+        messagebox.showinfo("Ação", "Implementado na Tarefa 5.", parent=self._janela_resultado)
+
+    # --------------------------------------------------------
     #  ABA 3 — LOGS
     # --------------------------------------------------------
     def _montar_aba_logs(self, parent):
