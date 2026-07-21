@@ -69,11 +69,13 @@ TEMA_CLARO = {
     "fundo": "#FAFAF9", "superficie": "#F5F5F4", "borda": "#E7E5E4",
     "borda_forte": "#1C1917", "texto": "#1C1917", "texto_secundario": "#57534E",
     "texto_terciario": "#A8A29E", "acento": "#003B8E", "sobre_acento": "#FFFFFF",
+    "acento_hover": "#002A66",
 }
 TEMA_ESCURO = {
     "fundo": "#0C0A09", "superficie": "#1C1917", "borda": "#292524",
     "borda_forte": "#FAFAF9", "texto": "#FAFAF9", "texto_secundario": "#A8A29E",
     "texto_terciario": "#57534E", "acento": "#2563EB", "sobre_acento": "#FFFFFF",
+    "acento_hover": "#1D4FD0",
 }
 
 
@@ -959,11 +961,11 @@ class App(ctk.CTk):
         self.botao_iniciar = registrar(
             ctk.CTkButton(
                 corpo, text="Processar PDFs", corner_radius=0, height=44, font=(fonte, 15),
-                fg_color=tema["acento"], hover_color=tema["acento"],
+                fg_color=tema["acento"], hover_color=tema["acento_hover"],
                 text_color=tema["sobre_acento"], border_width=0,
                 command=self._iniciar_processamento,
             ),
-            {"fg_color": "acento", "hover_color": "acento", "text_color": "sobre_acento"},
+            {"fg_color": "acento", "hover_color": "acento_hover", "text_color": "sobre_acento"},
         )
         self.botao_iniciar.grid(row=4, column=0, sticky="ew", pady=(8, 8))
 
@@ -1082,6 +1084,11 @@ class App(ctk.CTk):
             linha = ctk.CTkFrame(parent, height=1, corner_radius=0, fg_color=tema["borda"])
             linha.pack(fill="x", padx=24, pady=(16, 0))
             return linha
+
+        # --- rodapé (Cancelar/Salvar), empacotado ANTES do conteúdo rolável
+        # para nunca ser espremido pelo CTkScrollableFrame expansível ---
+        rodape = ctk.CTkFrame(janela, corner_radius=0, fg_color=tema["fundo"])
+        rodape.pack(side="bottom", fill="x", padx=24, pady=16)
 
         # --- área rolável para o conteúdo do modal ---
         corpo = ctk.CTkScrollableFrame(janela, corner_radius=0, fg_color=tema["fundo"])
@@ -1298,8 +1305,7 @@ class App(ctk.CTk):
         ).pack(fill="x")
 
         # ===================== RODAPÉ: CANCELAR / SALVAR =====================
-        rodape = ctk.CTkFrame(janela, corner_radius=0, fg_color=tema["fundo"])
-        rodape.pack(fill="x", padx=24, pady=16)
+        # (frame já criado e empacotado com side="bottom" antes de `corpo`)
 
         def cancelar():
             self.cnpj_emitente.set(snapshot["cnpj_emitente"])
@@ -1322,6 +1328,14 @@ class App(ctk.CTk):
                 messagebox.showerror(
                     "CNPJ inválido",
                     "O CNPJ da sua empresa não é válido. Confira os dígitos e tente novamente.",
+                    parent=janela,
+                )
+                return
+
+            if not re.match(r"^#[0-9a-fA-F]{6}$", self.cor_texto.get()):
+                messagebox.showerror(
+                    "Cor inválida",
+                    "Cor inválida — use formato #RRGGBB, ex: #000000.",
                     parent=janela,
                 )
                 return
@@ -1355,7 +1369,7 @@ class App(ctk.CTk):
         ).pack(side="right", padx=(8, 0))
         ctk.CTkButton(
             rodape, text="Salvar", corner_radius=0,
-            fg_color=tema["acento"], hover_color=tema["acento"],
+            fg_color=tema["acento"], hover_color=tema["acento_hover"],
             text_color=tema["sobre_acento"], border_width=0,
             font=(fonte, 13), command=salvar,
         ).pack(side="right")
@@ -1627,6 +1641,10 @@ class App(ctk.CTk):
         tema = self.tema_atual
         fonte = familia_fonte()
 
+        # referência ao dict renderizado, usada por ações (ex: reprocesso via
+        # "Escolher") para atualizar o resultado in-place e re-renderizar
+        self._resultado_atual = resultado
+
         processados = resultado.get("processados", []) or []
         pendentes = resultado.get("pendentes", []) or []
         total = resultado.get("total", len(processados) + len(pendentes))
@@ -1736,7 +1754,7 @@ class App(ctk.CTk):
 
             botao_cadastrar = ctk.CTkButton(
                 frame_acoes, text="Cadastrar", corner_radius=0, state="disabled",
-                fg_color=tema["borda"], hover_color=tema["acento"],
+                fg_color=tema["borda"], hover_color=tema["acento_hover"],
                 text_color=tema["sobre_acento"], border_width=0, font=(fonte, 13),
                 command=lambda: self._acao_cadastrar_pendente(self._pendente_selecionado(tabela_pend)),
             )
@@ -1744,7 +1762,7 @@ class App(ctk.CTk):
 
             botao_escolher = ctk.CTkButton(
                 frame_acoes, text="Escolher", corner_radius=0, state="disabled",
-                fg_color=tema["borda"], hover_color=tema["acento"],
+                fg_color=tema["borda"], hover_color=tema["acento_hover"],
                 text_color=tema["sobre_acento"], border_width=0, font=(fonte, 13),
                 command=lambda: self._acao_escolher_pendente(self._pendente_selecionado(tabela_pend)),
             )
@@ -1923,7 +1941,7 @@ class App(ctk.CTk):
 
         ctk.CTkButton(
             frame_botoes, text="Usar este CNPJ", corner_radius=0,
-            fg_color=tema["acento"], hover_color=tema["acento"],
+            fg_color=tema["acento"], hover_color=tema["acento_hover"],
             text_color=tema["sobre_acento"], border_width=0, font=(fonte, 13),
             command=confirmar,
         ).pack(side="left", padx=(0, 8))
@@ -1951,11 +1969,9 @@ class App(ctk.CTk):
             )
             return
 
+        # (validação de registro cadastrado já feita em confirmar(), no popup
+        # de "Escolher", que é o único chamador desta função)
         registro = self.cadastro.get(cnpj_escolhido)
-        if registro is None:
-            messagebox.showerror("Erro", "CNPJ não encontrado no cadastro.", parent=self._janela_resultado)
-            return
-
         codigo = registro["codigo"]
         condominio = registro["nome"]
         if ctx["modo"] == "rodape":
@@ -1979,12 +1995,31 @@ class App(ctk.CTk):
             parent=self._janela_resultado,
         )
 
-        # remove o pendente resolvido da tabela e do índice iid -> dados
-        for iid, dados_pend in list(self._pend_por_iid.items()):
-            if dados_pend is dados:
-                del self._pend_por_iid[iid]
-                self._remover_linha_pendente(iid)
-                break
+        # move o pendente resolvido para "processados" no resultado
+        # renderizado e re-renderiza o painel inteiro, para que cartões-
+        # resumo, rodapé e as duas tabelas fiquem consistentes
+        resultado = getattr(self, "_resultado_atual", None)
+        if resultado is not None:
+            pendentes_resultado = resultado.get("pendentes") or []
+            for item in list(pendentes_resultado):
+                if item is dados:
+                    pendentes_resultado.remove(item)
+                    break
+            processados_resultado = resultado.setdefault("processados", [])
+            processados_resultado.append({
+                "arquivo": dados["arquivo"],
+                "codigo": registro["codigo"],
+                "origem": "pelo CNPJ (escolhido)",
+            })
+            self.mostrar_resultado(resultado)
+        else:
+            # fallback: sem o resultado renderizado disponível, só remove a
+            # linha do pendente da tabela (comportamento antigo)
+            for iid, dados_pend in list(self._pend_por_iid.items()):
+                if dados_pend is dados:
+                    del self._pend_por_iid[iid]
+                    self._remover_linha_pendente(iid)
+                    break
 
     def _remover_linha_pendente(self, iid):
         """Remove a linha `iid` da tabela de pendentes do painel de
