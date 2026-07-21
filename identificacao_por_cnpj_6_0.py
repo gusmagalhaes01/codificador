@@ -664,6 +664,7 @@ class App(ctk.CTk):
     def _montar_interface(self):
         notebook = ttk.Notebook(self)
         notebook.pack(fill="both", expand=True, padx=8, pady=8)
+        self.notebook = notebook
 
         self.aba_processar = ttk.Frame(notebook)
         self.aba_cadastro = ttk.Frame(notebook)
@@ -1845,25 +1846,178 @@ class App(ctk.CTk):
         return self._pend_por_iid.get(selecionado[0])
 
     def _acao_cadastrar_pendente(self, dados):
-        """STUB — a Tarefa 5 implementa o fluxo real de cadastro a partir do
-        CNPJ/nome sugerido do pendente selecionado."""
+        """Leva o usuário à aba de Cadastro com CNPJ/nome pré-preenchidos a
+        partir do pendente selecionado, para ele completar o código."""
         if dados is None:
             return
-        messagebox.showinfo("Ação", "Implementado na Tarefa 5.", parent=self._janela_resultado)
+        cnpj = dados.get("cnpj")
+        self.form_cnpj.set(formatar_cnpj(cnpj) if cnpj else "")
+        self.form_codigo.set("")
+        self.form_nome.set(dados.get("nome_sugerido") or "")
+        self.notebook.select(self.aba_cadastro)
+        self.lift()
+        self.focus_force()
 
     def _acao_escolher_pendente(self, dados):
-        """STUB — a Tarefa 5 implementa a escolha entre os CNPJs candidatos
-        (caso ambíguo) do pendente selecionado."""
+        """Abre um popup para o usuário escolher, entre os CNPJs candidatos
+        do pendente (caso ambíguo), qual é o condomínio de verdade."""
         if dados is None:
             return
-        messagebox.showinfo("Ação", "Implementado na Tarefa 5.", parent=self._janela_resultado)
+        candidatos = dados.get("candidatos") or []
+        if not candidatos:
+            messagebox.showinfo(
+                "Ação", "Este pendente não tem candidatos para escolher.",
+                parent=self._janela_resultado,
+            )
+            return
+
+        tema = self.tema_atual
+        fonte = familia_fonte()
+
+        popup = ctk.CTkToplevel(self._janela_resultado)
+        popup.title("Escolher CNPJ")
+        popup.geometry("480x420")
+        popup.configure(fg_color=tema["fundo"])
+        popup.transient(self._janela_resultado)
+        popup.resizable(False, False)
+
+        ctk.CTkLabel(
+            popup, text="Qual CNPJ é o condomínio deste arquivo?",
+            font=(fonte, 14, "bold"), text_color=tema["texto"], anchor="w",
+        ).pack(fill="x", padx=20, pady=(20, 4))
+        ctk.CTkLabel(
+            popup, text=dados.get("arquivo", ""),
+            font=(fonte, 11), text_color=tema["texto_secundario"], anchor="w",
+        ).pack(fill="x", padx=20, pady=(0, 12))
+
+        area = ctk.CTkScrollableFrame(popup, corner_radius=0, fg_color=tema["fundo"])
+        area.pack(fill="both", expand=True, padx=20, pady=(0, 8))
+
+        var_escolha = tk.StringVar(value=candidatos[0])
+        for cnpj_norm in candidatos:
+            registro = self.cadastro.get(cnpj_norm)
+            nome = registro.get("nome", "(não cadastrado)") if registro else "(não cadastrado)"
+            texto = f"{formatar_cnpj(cnpj_norm)} — {nome}"
+            ctk.CTkRadioButton(
+                area, text=texto, variable=var_escolha, value=cnpj_norm,
+                font=(fonte, 13), text_color=tema["texto"], fg_color=tema["acento"],
+            ).pack(anchor="w", pady=6)
+
+        frame_botoes = ctk.CTkFrame(popup, corner_radius=0, fg_color=tema["fundo"])
+        frame_botoes.pack(fill="x", padx=20, pady=(0, 20))
+
+        def confirmar():
+            cnpj_escolhido = var_escolha.get()
+            registro = self.cadastro.get(cnpj_escolhido)
+            if registro is None:
+                messagebox.showinfo(
+                    "CNPJ não cadastrado",
+                    "Esse CNPJ ainda não está cadastrado. Use o botão \"Cadastrar\" "
+                    "para adicioná-lo antes de escolher.",
+                    parent=popup,
+                )
+                popup.destroy()
+                return
+            popup.destroy()
+            self._reprocessar_arquivo(dados, cnpj_escolhido)
+
+        ctk.CTkButton(
+            frame_botoes, text="Usar este CNPJ", corner_radius=0,
+            fg_color=tema["acento"], hover_color=tema["acento"],
+            text_color=tema["sobre_acento"], border_width=0, font=(fonte, 13),
+            command=confirmar,
+        ).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(
+            frame_botoes, text="Cancelar", corner_radius=0, fg_color="transparent",
+            hover_color=tema["superficie"], border_width=1, border_color=tema["borda_forte"],
+            text_color=tema["texto"], font=(fonte, 13),
+            command=popup.destroy,
+        ).pack(side="left")
+
+        popup.grab_set()
+
+    def _reprocessar_arquivo(self, dados, cnpj_escolhido):
+        """Reprocessa um único arquivo pendente com o CNPJ escolhido pelo
+        usuário no popup de "Escolher", replicando o ramo de sucesso do loop
+        de processamento (Tarefa 5a) para esse arquivo isolado. Ao terminar
+        com sucesso, remove o pendente do painel de resultado."""
+        ctx = getattr(self, "_ctx_processamento", None)
+        if not ctx:
+            messagebox.showerror(
+                "Sem contexto de processamento",
+                "Não há informações do último processamento nesta sessão. "
+                "Rode o processamento novamente antes de tentar reprocessar.",
+                parent=self._janela_resultado,
+            )
+            return
+
+        registro = self.cadastro.get(cnpj_escolhido)
+        if registro is None:
+            messagebox.showerror("Erro", "CNPJ não encontrado no cadastro.", parent=self._janela_resultado)
+            return
+
+        codigo = registro["codigo"]
+        condominio = registro["nome"]
+        if ctx["modo"] == "rodape":
+            texto_pdf = f"{codigo} {condominio} - {ctx['tipo_servico']}".strip()
+        else:
+            texto_pdf = codigo
+
+        caminho_saida = os.path.join(ctx["saida"], dados["arquivo"])
+
+        try:
+            processar_pdf(dados["caminho"], caminho_saida, texto_pdf, ctx["config"])
+        except Exception as e:
+            messagebox.showerror(
+                "Erro ao reprocessar", f"Falha ao codificar '{dados.get('arquivo', '')}': {e}",
+                parent=self._janela_resultado,
+            )
+            return
+
+        messagebox.showinfo(
+            "Arquivo codificado", f"Arquivo codificado com o código {codigo}.",
+            parent=self._janela_resultado,
+        )
+
+        # remove o pendente resolvido da tabela e do índice iid -> dados
+        for iid, dados_pend in list(self._pend_por_iid.items()):
+            if dados_pend is dados:
+                del self._pend_por_iid[iid]
+                self._remover_linha_pendente(iid)
+                break
+
+    def _remover_linha_pendente(self, iid):
+        """Remove a linha `iid` da tabela de pendentes do painel de
+        Resultado, se ela ainda existir na tela."""
+        janela = getattr(self, "_janela_resultado", None)
+        if janela is None or not janela.winfo_exists():
+            return
+        for widget in janela.winfo_children():
+            self._remover_treeview_iid_recursivo(widget, iid)
+
+    def _remover_treeview_iid_recursivo(self, widget, iid):
+        if isinstance(widget, ttk.Treeview):
+            if widget.exists(iid):
+                widget.delete(iid)
+            return
+        for filho in widget.winfo_children():
+            self._remover_treeview_iid_recursivo(filho, iid)
 
     def _acao_abrir_pdf_pendente(self, dados):
-        """STUB — a Tarefa 5 implementa a abertura do PDF original do
-        pendente selecionado."""
+        """Abre o PDF original do pendente selecionado no visualizador padrão
+        do sistema, para o funcionário conferir o conteúdo."""
         if dados is None:
             return
-        messagebox.showinfo("Ação", "Implementado na Tarefa 5.", parent=self._janela_resultado)
+        caminho = dados.get("caminho")
+        if not caminho:
+            return
+        try:
+            os.startfile(caminho)
+        except Exception as e:
+            messagebox.showerror(
+                "Erro ao abrir PDF", f"Não foi possível abrir o arquivo:\n{e}",
+                parent=self._janela_resultado,
+            )
 
     # --------------------------------------------------------
     #  ABA 3 — LOGS
