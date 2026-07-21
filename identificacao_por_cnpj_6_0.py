@@ -635,6 +635,7 @@ class App(ctk.CTk):
             self.configure(fg_color=self.tema_atual["fundo"])
         except Exception:
             pass
+        self._recolorir()
 
     def alternar_tema(self):
         """Cicla claro <-> escuro, aplica e persiste."""
@@ -812,181 +813,273 @@ class App(ctk.CTk):
     #  ABA 2 — PROCESSAMENTO DE PDFs
     # --------------------------------------------------------
     def _montar_aba_processar(self, parent_externo):
-        pad = {"padx": 10, "pady": 6}
+        """
+        Tela Principal — Swiss International Style, sem scroll. Cabeçalho
+        (título + Configurações + alternador de tema), campos de pasta de
+        entrada/saída e botão primário de processamento. Os controles de
+        OCR/DPI/região/estilo saíram desta tela: viram opções avançadas na
+        Tarefa 3 (modal de Configurações).
+        """
+        tema = self.tema_atual
+        fonte = familia_fonte()
 
-        # A aba fica dentro de um canvas rolável — o conteúdo (OCR, região,
-        # estilo, botão, log) não cabe inteiro em telas menores, e assim o
-        # botão de processar nunca fica inacessível.
-        canvas = tk.Canvas(parent_externo, highlightthickness=0)
-        barra_v = ttk.Scrollbar(parent_externo, orient="vertical", command=canvas.yview)
-        canvas.configure(yscrollcommand=barra_v.set)
-        canvas.pack(side="left", fill="both", expand=True)
-        barra_v.pack(side="right", fill="y")
+        # Lista de (widget, {propriedade: chave_do_tema}) usada por
+        # self._recolorir() para reaplicar as cores do tema quando o usuário
+        # alterna claro/escuro, sem precisar remontar a tela inteira.
+        self._widgets_tema = []
 
-        parent = ttk.Frame(canvas)
-        janela_id = canvas.create_window((0, 0), window=parent, anchor="nw")
-        parent.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
-        canvas.bind("<Configure>", lambda e: canvas.itemconfig(janela_id, width=e.width))
+        def registrar(widget, mapa):
+            self._widgets_tema.append((widget, mapa))
+            for prop, chave in mapa.items():
+                try:
+                    widget.configure(**{prop: tema[chave]})
+                except Exception:
+                    pass
+            return widget
 
-        def _rolar(event):
-            canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
-        canvas.bind("<Enter>", lambda e: canvas.bind_all("<MouseWheel>", _rolar))
-        canvas.bind("<Leave>", lambda e: canvas.unbind_all("<MouseWheel>"))
-
-        frame1 = ttk.LabelFrame(parent, text="1. Pasta com os PDFs originais")
-        frame1.pack(fill="x", **pad)
-        ttk.Entry(frame1, textvariable=self.pasta_entrada, width=60).pack(
-            side="left", padx=8, pady=8, fill="x", expand=True)
-        ttk.Button(frame1, text="Procurar...", command=self._escolher_pasta_entrada).pack(side="left", padx=8)
-
-        frame2 = ttk.LabelFrame(parent, text="2. Pasta onde salvar os PDFs modificados")
-        frame2.pack(fill="x", **pad)
-        ttk.Entry(frame2, textvariable=self.pasta_saida, width=60).pack(
-            side="left", padx=8, pady=8, fill="x", expand=True)
-        ttk.Button(frame2, text="Procurar...", command=self._escolher_pasta_saida).pack(side="left", padx=8)
-
-        frame_cnpj = ttk.LabelFrame(parent, text="3. CNPJ da sua empresa (será ignorado na busca)")
-        frame_cnpj.pack(fill="x", **pad)
-        ttk.Entry(frame_cnpj, textvariable=self.cnpj_emitente, width=25).pack(side="left", padx=8, pady=8)
-        ttk.Checkbutton(
-            frame_cnpj,
-            text="Tentar identificar pelo nome do arquivo antes de abrir o PDF (evita OCR na maioria dos casos)",
-            variable=self.usar_match_nome_arquivo,
-        ).pack(side="left", padx=(20, 8))
-
-        frame_ocr = ttk.LabelFrame(parent, text="OCR (para PDFs escaneados, sem texto)")
-        frame_ocr.pack(fill="x", **pad)
-        texto_status = "disponível (OCR nativo do Windows)" if OCR_DISPONIVEL else "NÃO instalado — veja instruções abaixo"
-        chk = ttk.Checkbutton(
-            frame_ocr,
-            text=f"Habilitar OCR automático quando o PDF não tiver texto legível  ({texto_status})",
-            variable=self.usar_ocr,
-            command=self._atualizar_estado_dpi,
+        container = registrar(
+            ctk.CTkFrame(parent_externo, corner_radius=0, fg_color=tema["fundo"]),
+            {"fg_color": "fundo"},
         )
-        chk.pack(anchor="w", padx=8, pady=(8, 2))
-        if not OCR_DISPONIVEL:
-            chk.configure(state="disabled")
-            ttk.Label(
-                frame_ocr,
-                foreground="#a00000",
-                wraplength=700,
-                justify="left",
-                text=("Para habilitar, instale: pip install pymupdf winocr\n"
-                      "Não é necessário instalar nenhum programa externo — "
-                      "o OCR usa o motor nativo do Windows 10/11."),
-            ).pack(anchor="w", padx=8, pady=(0, 8))
+        container.pack(fill="both", expand=True)
 
-        # --- Controle de DPI ---
-        self.frame_dpi = ttk.Frame(frame_ocr)
-        self.frame_dpi.pack(fill="x", padx=8, pady=(2, 8))
-
-        ttk.Label(self.frame_dpi, text="DPI para OCR:").pack(side="left")
-
-        self._dpi_avisos = {
-            72:  ("⚡ Muito rápido", "#1a7a1a", "resolução baixa — pode falhar em textos pequenos"),
-            150: ("⚡ Rápido",       "#2a7a2a", "boa velocidade, qualidade aceitável na maioria dos casos"),
-            200: ("⚖ Balanceado",   "#7a6000", "recomendado — velocidade e qualidade equilibradas"),
-            300: ("🔍 Alta qualidade","#7a3a00", "mais lento, ideal para documentos com texto pequeno ou ruim"),
-            400: ("🔬 Máxima qualidade","#a00000","muito lento — use apenas se 300 DPI não reconhecer o texto"),
-        }
-
-        opcoes_dpi = list(self._dpi_avisos.keys())
-        self.combo_dpi = ttk.Combobox(
-            self.frame_dpi,
-            textvariable=self.dpi_ocr,
-            values=opcoes_dpi,
-            width=6,
-            state="readonly",
+        # --- CABEÇALHO ---
+        cabecalho = registrar(
+            ctk.CTkFrame(container, corner_radius=0, fg_color=tema["fundo"]),
+            {"fg_color": "fundo"},
         )
-        self.combo_dpi.pack(side="left", padx=(6, 12))
-        self.combo_dpi.bind("<<ComboboxSelected>>", lambda e: self._atualizar_aviso_dpi())
+        cabecalho.pack(fill="x", padx=24, pady=(24, 0))
+        cabecalho.columnconfigure(0, weight=1)
+        cabecalho.columnconfigure(1, weight=0)
 
-        self.label_aviso_dpi = ttk.Label(self.frame_dpi, text="", font=("", 9, "bold"))
-        self.label_aviso_dpi.pack(side="left")
-
-        self.label_detalhe_dpi = ttk.Label(self.frame_dpi, text="", foreground="#555555", font=("", 8))
-        self.label_detalhe_dpi.pack(side="left", padx=(4, 0))
-
-        self._atualizar_estado_dpi()
-        self._atualizar_aviso_dpi()
-
-        # --- OCR por região (recorte) — opcional, avançado ---
-        frame_regiao = ttk.LabelFrame(
-            parent, text="OCR por região (opcional — recorte fixo, ex: área do CO-ESTIPULANTE)"
+        bloco_titulo = registrar(
+            ctk.CTkFrame(cabecalho, corner_radius=0, fg_color=tema["fundo"]),
+            {"fg_color": "fundo"},
         )
-        frame_regiao.pack(fill="x", **pad)
-        self.chk_regiao = ttk.Checkbutton(
-            frame_regiao,
-            text="Tentar OCR só numa região da página antes do OCR de página inteira (mais rápido, menos ruído de carimbos)",
-            variable=self.usar_ocr_regiao,
+        bloco_titulo.grid(row=0, column=0, sticky="w")
+
+        titulo = registrar(
+            ctk.CTkLabel(bloco_titulo, text="Codificador", font=(fonte, 20),
+                         text_color=tema["texto"], anchor="w"),
+            {"text_color": "texto"},
         )
-        self.chk_regiao.pack(anchor="w", padx=8, pady=(8, 2))
-        if not OCR_DISPONIVEL:
-            self.chk_regiao.configure(state="disabled")
+        titulo.pack(anchor="w")
 
-        linha_regiao = ttk.Frame(frame_regiao)
-        linha_regiao.pack(fill="x", padx=8, pady=(0, 4))
-        ttk.Button(
-            linha_regiao, text="🖱 Selecionar região no PDF...", command=self._selecionar_regiao_visualmente
-        ).pack(side="left")
-        for rotulo, var in (("x0:", self.regiao_x0), ("y0:", self.regiao_y0),
-                             ("x1:", self.regiao_x1), ("y1:", self.regiao_y1)):
-            ttk.Label(linha_regiao, text=rotulo).pack(side="left", padx=(12, 0))
-            ttk.Entry(linha_regiao, textvariable=var, width=6).pack(side="left", padx=(2, 0))
+        subtitulo = registrar(
+            ctk.CTkLabel(bloco_titulo, text="IDENTIFICAÇÃO DE PDFS POR CNPJ", font=(fonte, 11),
+                         text_color=tema["texto_secundario"], anchor="w"),
+            {"text_color": "texto_secundario"},
+        )
+        subtitulo.pack(anchor="w")
 
-        ttk.Label(
-            frame_regiao,
-            foreground="#555555",
-            wraplength=700,
-            justify="left",
-            text=("Clique em \"Selecionar região no PDF...\", escolha um PDF de exemplo e desenhe "
-                  "com o mouse (clique e arraste) a área que contém o CNPJ/nome do condomínio. "
-                  "Os campos x0,y0,x1,y1 (frações de 0.0 a 1.0 da página) são preenchidos "
-                  "automaticamente — só mexa neles à mão se quiser um ajuste fino. Se o recorte "
-                  "não achar um CNPJ válido, o programa cai automaticamente para o OCR da página "
-                  "inteira."),
-        ).pack(anchor="w", padx=8, pady=(0, 8))
+        bloco_acoes = registrar(
+            ctk.CTkFrame(cabecalho, corner_radius=0, fg_color=tema["fundo"]),
+            {"fg_color": "fundo"},
+        )
+        bloco_acoes.grid(row=0, column=1, sticky="e")
 
-        frame3 = ttk.LabelFrame(parent, text="4. Onde e o que escrever")
-        frame3.pack(fill="x", **pad)
-        ttk.Radiobutton(
-            frame3, text="Rodapé centralizado — código + nome do condomínio + tipo de serviço",
-            variable=self.modo_texto, value="rodape", command=self._atualizar_campos_modo,
-        ).pack(anchor="w", padx=8, pady=(8, 0))
-        ttk.Radiobutton(
-            frame3, text="Canto superior esquerdo — somente o código",
-            variable=self.modo_texto, value="topo_esquerdo", command=self._atualizar_campos_modo,
-        ).pack(anchor="w", padx=8, pady=(0, 8))
+        self.botao_config = registrar(
+            ctk.CTkButton(
+                bloco_acoes, text="⚙ Configurações", corner_radius=0,
+                fg_color="transparent", hover_color=tema["superficie"],
+                border_width=1, border_color=tema["borda_forte"],
+                text_color=tema["texto"], font=(fonte, 13),
+                command=self._abrir_configuracoes,
+            ),
+            {"hover_color": "superficie", "border_color": "borda_forte", "text_color": "texto"},
+        )
+        self.botao_config.pack(side="left", padx=(0, 8))
 
-        self.frame_tipo_servico = ttk.Frame(frame3)
-        self.frame_tipo_servico.pack(fill="x", padx=8, pady=(0, 8))
-        ttk.Label(self.frame_tipo_servico, text="Tipo de serviço (Enter quebra linha no PDF):").pack(
-            side="left", anchor="n", pady=(2, 0))
-        self.txt_tipo_servico = tk.Text(self.frame_tipo_servico, width=30, height=3, wrap="none")
+        self.botao_tema = registrar(
+            ctk.CTkButton(
+                bloco_acoes, text=self._texto_botao_tema(), corner_radius=0,
+                fg_color="transparent", hover_color=tema["superficie"],
+                border_width=1, border_color=tema["borda_forte"],
+                text_color=tema["texto"], font=(fonte, 13),
+                command=self.alternar_tema,
+            ),
+            {"hover_color": "superficie", "border_color": "borda_forte", "text_color": "texto"},
+        )
+        self.botao_tema.pack(side="left")
+
+        # --- hairline separando o cabeçalho do resto ---
+        hairline = registrar(
+            ctk.CTkFrame(container, height=1, corner_radius=0, fg_color=tema["borda"]),
+            {"fg_color": "borda"},
+        )
+        hairline.pack(fill="x", padx=24, pady=(16, 24))
+
+        # --- CORPO ---
+        corpo = registrar(
+            ctk.CTkFrame(container, corner_radius=0, fg_color=tema["fundo"]),
+            {"fg_color": "fundo"},
+        )
+        corpo.pack(fill="both", expand=True, padx=24)
+        corpo.columnconfigure(0, weight=1)
+
+        def montar_campo_pasta(linha_grid, rotulo, variavel, comando_trocar):
+            label = registrar(
+                ctk.CTkLabel(corpo, text=rotulo, font=(fonte, 11),
+                             text_color=tema["texto_secundario"], anchor="w"),
+                {"text_color": "texto_secundario"},
+            )
+            label.grid(row=linha_grid, column=0, sticky="w", pady=(0, 4))
+
+            linha = registrar(
+                ctk.CTkFrame(corpo, corner_radius=0, fg_color=tema["fundo"]),
+                {"fg_color": "fundo"},
+            )
+            linha.grid(row=linha_grid + 1, column=0, sticky="ew", pady=(0, 16))
+            linha.columnconfigure(0, weight=1)
+
+            entry = registrar(
+                ctk.CTkEntry(linha, textvariable=variavel, corner_radius=0,
+                             fg_color=tema["superficie"], border_width=1, border_color=tema["borda"],
+                             text_color=tema["texto"], font=(fonte, 13)),
+                {"fg_color": "superficie", "border_color": "borda", "text_color": "texto"},
+            )
+            entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+
+            botao = registrar(
+                ctk.CTkButton(
+                    linha, text="Trocar", corner_radius=0, width=90,
+                    fg_color="transparent", hover_color=tema["superficie"],
+                    border_width=1, border_color=tema["borda_forte"], text_color=tema["texto"],
+                    font=(fonte, 13), command=comando_trocar,
+                ),
+                {"hover_color": "superficie", "border_color": "borda_forte", "text_color": "texto"},
+            )
+            botao.grid(row=0, column=1)
+
+        montar_campo_pasta(0, "PASTA COM OS PDFS", self.pasta_entrada, self._escolher_pasta_entrada)
+        montar_campo_pasta(2, "SALVAR PDFS CODIFICADOS EM", self.pasta_saida, self._escolher_pasta_saida)
+
+        # --- Botão primário ---
+        self.botao_iniciar = registrar(
+            ctk.CTkButton(
+                corpo, text="Processar PDFs", corner_radius=0, height=44, font=(fonte, 15),
+                fg_color=tema["acento"], hover_color=tema["acento"],
+                text_color=tema["sobre_acento"], border_width=0,
+                command=self._iniciar_processamento,
+            ),
+            {"fg_color": "acento", "hover_color": "acento", "text_color": "sobre_acento"},
+        )
+        self.botao_iniciar.grid(row=4, column=0, sticky="ew", pady=(8, 8))
+
+        # --- Linha explicativa ---
+        explicacao = registrar(
+            ctk.CTkLabel(
+                corpo,
+                text=("Identificação: nome do arquivo, depois leitura do PDF. Boletos escaneados "
+                      "são lidos automaticamente."),
+                font=(fonte, 13), text_color=tema["texto_terciario"], justify="left", anchor="w",
+            ),
+            {"text_color": "texto_terciario"},
+        )
+        explicacao.grid(row=5, column=0, sticky="w", pady=(0, 16))
+
+        # --- Barra de progresso (usada por _processar_em_thread) ---
+        self.barra_progresso = ttk.Progressbar(corpo, mode="determinate")
+        self.barra_progresso.grid(row=6, column=0, sticky="ew", pady=(0, 24))
+
+        # --- Widgets ocultos usados pelo loop de processamento, mas sem
+        # lugar na tela Swiss limpa. Nunca são pack/grid — ficam fora da
+        # árvore visível, só existem como atributos para não quebrar
+        # _iniciar_processamento/_processar_em_thread. ---
+        self._frame_oculto = tk.Frame(parent_externo)
+
+        # temporário: Tarefa 4/5 substitui pelo painel de Resultado
+        self.log_text = tk.Text(self._frame_oculto, state="disabled", wrap="word")
+
+        # a Tarefa 3 realoca este campo no modal de Configurações
+        self.txt_tipo_servico = tk.Text(self._frame_oculto, width=30, height=3, wrap="none")
         self.txt_tipo_servico.insert("1.0", self.config_app["tipo_servico"])
-        self.txt_tipo_servico.pack(side="left", padx=8)
 
-        frame4 = ttk.LabelFrame(parent, text="5. Estilo do texto")
-        frame4.pack(fill="x", **pad)
-        linha = ttk.Frame(frame4)
-        linha.pack(fill="x", padx=8, pady=8)
-        ttk.Label(linha, text="Tamanho da fonte:").pack(side="left")
-        ttk.Entry(linha, textvariable=self.tamanho_fonte, width=6).pack(side="left", padx=(4, 20))
-        ttk.Label(linha, text="Cor (hex):").pack(side="left")
-        ttk.Entry(linha, textvariable=self.cor_texto, width=10).pack(side="left", padx=4)
+        self._atualizar_botao_processar()
+        self._estilizar_ttk()
 
-        self.botao_iniciar = ttk.Button(parent, text="▶  Processar PDFs", command=self._iniciar_processamento)
-        self.botao_iniciar.pack(pady=10)
+    def _texto_botao_tema(self):
+        return "☀ Claro" if self.nome_tema == "escuro" else "🌙 Escuro"
 
-        self.barra_progresso = ttk.Progressbar(parent, mode="determinate")
-        self.barra_progresso.pack(fill="x", padx=10)
+    def _atualizar_botao_processar(self):
+        """
+        Conta os *.pdf (case-insensitive) na pasta de entrada e ajusta o
+        texto/estado do botão primário. Chamado ao montar a tela e sempre
+        que o usuário troca a pasta de entrada.
+        """
+        pasta = self.pasta_entrada.get().strip()
+        quantidade = 0
+        if pasta and os.path.isdir(pasta):
+            try:
+                quantidade = sum(1 for f in os.listdir(pasta) if f.lower().endswith(".pdf"))
+            except Exception:
+                quantidade = 0
 
-        frame_log = ttk.LabelFrame(parent, text="Progresso")
-        frame_log.pack(fill="both", expand=True, **pad)
-        self.log_text = tk.Text(frame_log, height=11, state="disabled", wrap="word")
-        self.log_text.pack(fill="both", expand=True, padx=8, pady=8)
+        if quantidade > 0:
+            self.botao_iniciar.configure(text=f"Processar {quantidade} PDFs", state="normal")
+        else:
+            self.botao_iniciar.configure(text="Processar PDFs", state="disabled")
 
-        self._atualizar_campos_modo()
+    def _abrir_configuracoes(self):
+        """Stub — a Tarefa 3 implementa o modal de Configurações de verdade."""
+        messagebox.showinfo("Configurações", "Em construção (Tarefa 3).")
+
+    def _estilizar_ttk(self):
+        """
+        Estiliza o ttk.Notebook (abas), ttk.Progressbar e ttk.Treeview com as
+        cores do tema atual. O Treeview detalhado é retrabalhado na Tarefa 4
+        — aqui é só o básico para não ficar com cinza padrão do sistema.
+        """
+        tema = self.tema_atual
+        estilo = ttk.Style(self)
+        try:
+            estilo.theme_use("clam")
+        except Exception:
+            pass
+
+        estilo.configure("TFrame", background=tema["fundo"])
+        estilo.configure("TNotebook", background=tema["fundo"], borderwidth=0)
+        estilo.configure(
+            "TNotebook.Tab", background=tema["fundo"], foreground=tema["texto_secundario"],
+            padding=(16, 8), borderwidth=0,
+        )
+        estilo.map(
+            "TNotebook.Tab",
+            background=[("selected", tema["superficie"])],
+            foreground=[("selected", tema["texto"])],
+        )
+        estilo.configure(
+            "TProgressbar", background=tema["acento"], troughcolor=tema["superficie"], borderwidth=0,
+        )
+        estilo.configure(
+            "Treeview", background=tema["superficie"], fieldbackground=tema["superficie"],
+            foreground=tema["texto"], borderwidth=0,
+        )
+        estilo.configure(
+            "Treeview.Heading", background=tema["fundo"], foreground=tema["texto_secundario"],
+        )
+
+    def _recolorir(self):
+        """
+        Percorre self._widgets_tema (registrados em _montar_aba_processar) e
+        reaplica as cores do tema atual, além de re-estilizar o ttk. Chamado
+        por aplicar_tema() para que o alternador de tema recolorir a tela na
+        hora, sem remontar os widgets.
+        """
+        if not hasattr(self, "_widgets_tema"):
+            return
+        for widget, mapa in self._widgets_tema:
+            for prop, chave in mapa.items():
+                try:
+                    widget.configure(**{prop: self.tema_atual[chave]})
+                except Exception:
+                    pass
+        if hasattr(self, "botao_tema"):
+            try:
+                self.botao_tema.configure(text=self._texto_botao_tema())
+            except Exception:
+                pass
+        self._estilizar_ttk()
 
     def _atualizar_estado_dpi(self):
         """Habilita/desabilita o controle de DPI conforme o OCR está ativo."""
@@ -1261,6 +1354,7 @@ class App(ctk.CTk):
         pasta = filedialog.askdirectory(title="Selecione a pasta com os PDFs originais")
         if pasta:
             self.pasta_entrada.set(pasta)
+            self._atualizar_botao_processar()
 
     def _escolher_pasta_saida(self):
         pasta = filedialog.askdirectory(title="Selecione a pasta de saída")
