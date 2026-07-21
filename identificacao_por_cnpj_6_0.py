@@ -2017,6 +2017,8 @@ class App(ctk.CTk):
             config = {"fonte": "Helvetica-Bold", "tamanho": tamanho, "cor": cor,
                       "x": 120, "y": 815, "centralizado": False}
 
+        self._ctx_processamento = {"saida": saida, "config": config, "modo": modo, "tipo_servico": tipo_servico}
+
         arquivos = [f for f in os.listdir(entrada) if f.lower().endswith(".pdf")]
         if not arquivos:
             self.after(0, lambda: self._log("Nenhum arquivo PDF encontrado."))
@@ -2045,6 +2047,8 @@ class App(ctk.CTk):
         total_ocr = 0
         total_match_nome = 0
         pendentes = []  # (nome_arquivo, motivo)
+        res_processados = []
+        res_pendentes = []
         inicio = time.time()
 
         for idx, nome in enumerate(arquivos, 1):
@@ -2055,6 +2059,7 @@ class App(ctk.CTk):
                 cnpj = None
                 texto = ""
                 sufixo_origem = ""
+                origem_humana = "pelo CNPJ do boleto"
 
                 # --- 1) Tenta casar pelo nome do arquivo, antes de abrir o PDF ---
                 if usar_match_nome:
@@ -2062,6 +2067,7 @@ class App(ctk.CTk):
                     if cnpj_nome is not None:
                         cnpj = cnpj_nome
                         sufixo_origem = f" (via nome do arquivo, score {resultado:.2f})"
+                        origem_humana = "pelo nome do arquivo"
                         total_match_nome += 1
 
                 # --- 2) Se não casou pelo nome, extrai do conteúdo do PDF ---
@@ -2082,6 +2088,7 @@ class App(ctk.CTk):
                                 usado_ocr = True
                                 dpi_usado = dpi
                                 sufixo_origem = " (via OCR de região)"
+                                origem_humana = "pelo CNPJ do boleto"
                                 total_ocr += 1
 
                         # 2b) Se a região não resolveu, OCR de página inteira
@@ -2092,6 +2099,7 @@ class App(ctk.CTk):
                                 usado_ocr = True
                                 dpi_usado = dpi
                                 sufixo_origem = " (via OCR)"
+                                origem_humana = "pelo CNPJ do boleto"
                                 total_ocr += 1
 
                     candidatos = extrair_cnpj_tomador(texto, cnpj_emitente_norm)
@@ -2108,14 +2116,23 @@ class App(ctk.CTk):
                                 texto = texto_retry
                                 candidatos = candidatos_retry
                                 sufixo_origem = f" (via OCR, re-tentativa DPI {proximo})"
+                                origem_humana = "pelo CNPJ (releitura)"
 
                 if len(candidatos) == 0:
                     pendentes.append((nome, "CNPJ do tomador não encontrado no PDF" + sufixo_origem))
                     msg = f"[{idx}/{len(arquivos)}] ⚠ {nome} — CNPJ não encontrado{sufixo_origem}"
+                    res_pendentes.append({
+                        "arquivo": nome, "caminho": caminho_entrada_pdf, "tipo": "nao_lido",
+                        "motivo": "Não foi possível ler", "cnpj": None, "nome_sugerido": None,
+                        "candidatos": None})
                 elif len(candidatos) > 1:
                     lista = ", ".join(formatar_cnpj(c) for c in candidatos)
                     pendentes.append((nome, f"CNPJ ambíguo: {lista}" + sufixo_origem))
                     msg = f"[{idx}/{len(arquivos)}] ⚠ {nome} — CNPJ ambíguo ({lista}){sufixo_origem}"
+                    res_pendentes.append({
+                        "arquivo": nome, "caminho": caminho_entrada_pdf, "tipo": "ambiguo",
+                        "motivo": "Dois CNPJs possíveis", "cnpj": None, "nome_sugerido": None,
+                        "candidatos": list(candidatos)})
                 else:
                     cnpj = candidatos[0]
                     registro = self.cadastro.get(cnpj)
@@ -2127,6 +2144,10 @@ class App(ctk.CTk):
                         detalhe += sufixo_origem
                         pendentes.append((nome, detalhe))
                         msg = f"[{idx}/{len(arquivos)}] ⚠ {nome} — {detalhe}"
+                        res_pendentes.append({
+                            "arquivo": nome, "caminho": caminho_entrada_pdf, "tipo": "nao_cadastrado",
+                            "motivo": "CNPJ não cadastrado", "cnpj": cnpj, "nome_sugerido": (nome_sugerido or None),
+                            "candidatos": None})
                     else:
                         codigo = registro["codigo"]
                         condominio = registro["nome"]
@@ -2138,10 +2159,16 @@ class App(ctk.CTk):
                         sucesso += 1
                         texto_pdf_log = texto_pdf.replace("\n", " / ")
                         msg = f"[{idx}/{len(arquivos)}] ✓ {nome} → '{texto_pdf_log}'{sufixo_origem}"
+                        res_processados.append({
+                            "arquivo": nome, "codigo": codigo, "origem": origem_humana})
 
             except Exception as e:
                 pendentes.append((nome, f"Erro inesperado: {e}"))
                 msg = f"[{idx}/{len(arquivos)}] ✗ {nome} — erro: {e}"
+                res_pendentes.append({
+                    "arquivo": nome, "caminho": caminho_entrada_pdf, "tipo": "erro",
+                    "motivo": "Erro ao processar", "cnpj": None, "nome_sugerido": None,
+                    "candidatos": None})
 
             linhas_log.append(msg)
             self.after(0, lambda m=msg: self._log(m))
@@ -2171,11 +2198,14 @@ class App(ctk.CTk):
         self.after(0, lambda: self._salvar_sessao_no_log(linhas_log))
         self.after(0, lambda: self._carregar_log_em_tela())
         self.after(0, lambda: self.botao_iniciar.configure(state="normal"))
-        self.after(0, lambda: messagebox.showinfo(
-            "Concluído",
-            f"{sucesso}/{len(arquivos)} processados com sucesso."
-            + (f"\n{len(pendentes)} pendente(s) — veja a aba Logs." if pendentes else "")
-        ))
+
+        resultado = {
+            "total": len(arquivos),
+            "tempo_segundos": tempo_total,
+            "processados": res_processados,
+            "pendentes": res_pendentes,
+        }
+        self.after(0, lambda: self.mostrar_resultado(resultado))
 
 
 if __name__ == "__main__":
