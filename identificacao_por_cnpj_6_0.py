@@ -1735,7 +1735,7 @@ class App(ctk.CTk):
 
             botao_cadastrar = ctk.CTkButton(
                 frame_acoes, text="Cadastrar", corner_radius=0, state="disabled",
-                fg_color=tema["acento"], hover_color=tema["acento"],
+                fg_color=tema["borda"], hover_color=tema["acento"],
                 text_color=tema["sobre_acento"], border_width=0, font=(fonte, 13),
                 command=lambda: self._acao_cadastrar_pendente(self._pendente_selecionado(tabela_pend)),
             )
@@ -1743,7 +1743,7 @@ class App(ctk.CTk):
 
             botao_escolher = ctk.CTkButton(
                 frame_acoes, text="Escolher", corner_radius=0, state="disabled",
-                fg_color=tema["acento"], hover_color=tema["acento"],
+                fg_color=tema["borda"], hover_color=tema["acento"],
                 text_color=tema["sobre_acento"], border_width=0, font=(fonte, 13),
                 command=lambda: self._acao_escolher_pendente(self._pendente_selecionado(tabela_pend)),
             )
@@ -1761,13 +1761,21 @@ class App(ctk.CTk):
             def atualizar_botoes_acao(_event=None):
                 dados = self._pendente_selecionado(tabela_pend)
                 if dados is None:
-                    botao_cadastrar.configure(state="disabled")
-                    botao_escolher.configure(state="disabled")
+                    botao_cadastrar.configure(state="disabled", fg_color=tema["borda"])
+                    botao_escolher.configure(state="disabled", fg_color=tema["borda"])
                     botao_abrir.configure(state="disabled")
                     return
                 tipo = dados.get("tipo")
-                botao_cadastrar.configure(state="normal" if tipo == "nao_cadastrado" else "disabled")
-                botao_escolher.configure(state="normal" if tipo == "ambiguo" else "disabled")
+                cadastrar_ativo = tipo == "nao_cadastrado"
+                escolher_ativo = tipo == "ambiguo"
+                botao_cadastrar.configure(
+                    state="normal" if cadastrar_ativo else "disabled",
+                    fg_color=tema["acento"] if cadastrar_ativo else tema["borda"],
+                )
+                botao_escolher.configure(
+                    state="normal" if escolher_ativo else "disabled",
+                    fg_color=tema["acento"] if escolher_ativo else tema["borda"],
+                )
                 botao_abrir.configure(state="normal" if dados.get("caminho") else "disabled")
 
             def ao_duplo_clique(_event=None):
@@ -1779,11 +1787,12 @@ class App(ctk.CTk):
                     self._acao_cadastrar_pendente(dados)
                 elif tipo == "ambiguo":
                     self._acao_escolher_pendente(dados)
-                else:
+                elif dados.get("caminho"):
                     self._acao_abrir_pdf_pendente(dados)
 
             tabela_pend.bind("<<TreeviewSelect>>", atualizar_botoes_acao)
             tabela_pend.bind("<Double-1>", ao_duplo_clique)
+            atualizar_botoes_acao()
 
         # --- SEÇÃO PROCESSADOS ---
         hairline2 = ctk.CTkFrame(area, height=1, corner_radius=0, fg_color=tema["borda"])
