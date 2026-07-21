@@ -1020,9 +1020,346 @@ class App(ctk.CTk):
         else:
             self.botao_iniciar.configure(text="Processar PDFs", state="disabled")
 
+    # --------------------------------------------------------
+    #  MODAL DE CONFIGURAÇÕES (Tarefa 3)
+    # --------------------------------------------------------
+
+    _OPCOES_QUALIDADE = [("Rápida", 72), ("Normal", 200), ("Máxima", 300)]
+
     def _abrir_configuracoes(self):
-        """Stub — a Tarefa 3 implementa o modal de Configurações de verdade."""
-        messagebox.showinfo("Configurações", "Em construção (Tarefa 3).")
+        """
+        Abre o modal de Configurações (ctk.CTkToplevel), que agrupa todo o
+        técnico que saiu da Tela Principal: empresa, identificação, leitura
+        de boletos escaneados (e leitura por região) e texto escrito no PDF.
+
+        Padrão snapshot/cancelar/salvar: os widgets do modal ligam-se
+        diretamente às self.* vars reais, então um snapshot é tirado na
+        abertura para permitir descartar as edições no Cancelar.
+        """
+        if getattr(self, "_janela_config", None) is not None and self._janela_config.winfo_exists():
+            self._janela_config.focus_force()
+            return
+
+        tema = self.tema_atual
+        fonte = familia_fonte()
+
+        # --- snapshot dos valores atuais, para o Cancelar restaurar ---
+        snapshot = {
+            "cnpj_emitente": self.cnpj_emitente.get(),
+            "usar_match_nome_arquivo": self.usar_match_nome_arquivo.get(),
+            "usar_ocr": self.usar_ocr.get(),
+            "dpi_ocr": self.dpi_ocr.get(),
+            "usar_ocr_regiao": self.usar_ocr_regiao.get(),
+            "regiao_x0": self.regiao_x0.get(),
+            "regiao_y0": self.regiao_y0.get(),
+            "regiao_x1": self.regiao_x1.get(),
+            "regiao_y1": self.regiao_y1.get(),
+            "modo_texto": self.modo_texto.get(),
+            "tamanho_fonte": self.tamanho_fonte.get(),
+            "cor_texto": self.cor_texto.get(),
+        }
+
+        janela = ctk.CTkToplevel(self)
+        self._janela_config = janela
+        janela.title("Configurações")
+        janela.geometry("640x680")
+        janela.minsize(560, 520)
+        janela.resizable(True, True)
+        janela.configure(fg_color=tema["fundo"])
+        janela.transient(self)
+        janela.grab_set()
+
+        def rotulo_secao(parent, texto):
+            lbl = ctk.CTkLabel(
+                parent, text=texto.upper(), font=(fonte, 11, "bold"),
+                text_color=tema["texto_secundario"], anchor="w",
+            )
+            lbl.pack(fill="x", padx=24, pady=(24, 8))
+            return lbl
+
+        def hairline(parent):
+            linha = ctk.CTkFrame(parent, height=1, corner_radius=0, fg_color=tema["borda"])
+            linha.pack(fill="x", padx=24, pady=(16, 0))
+            return linha
+
+        # --- área rolável para o conteúdo do modal ---
+        corpo = ctk.CTkScrollableFrame(janela, corner_radius=0, fg_color=tema["fundo"])
+        corpo.pack(fill="both", expand=True)
+
+        # ===================== EMPRESA =====================
+        rotulo_secao(corpo, "Empresa")
+        frame_empresa = ctk.CTkFrame(corpo, corner_radius=0, fg_color=tema["fundo"])
+        frame_empresa.pack(fill="x", padx=24)
+        ctk.CTkLabel(
+            frame_empresa, text="CNPJ da sua empresa (ignorado na identificação)",
+            font=(fonte, 12), text_color=tema["texto"], anchor="w",
+        ).pack(fill="x", pady=(0, 4))
+        ctk.CTkEntry(
+            frame_empresa, textvariable=self.cnpj_emitente, corner_radius=0,
+            fg_color=tema["superficie"], border_width=1, border_color=tema["borda"],
+            text_color=tema["texto"], font=(fonte, 13),
+        ).pack(fill="x", pady=(0, 8))
+
+        hairline(corpo)
+
+        # ===================== IDENTIFICAÇÃO =====================
+        rotulo_secao(corpo, "Identificação")
+        frame_ident = ctk.CTkFrame(corpo, corner_radius=0, fg_color=tema["fundo"])
+        frame_ident.pack(fill="x", padx=24)
+        ctk.CTkCheckBox(
+            frame_ident, text="Tentar identificar pelo nome do arquivo",
+            variable=self.usar_match_nome_arquivo, corner_radius=0,
+            fg_color=tema["acento"], hover_color=tema["acento"],
+            border_color=tema["borda_forte"], text_color=tema["texto"], font=(fonte, 13),
+        ).pack(anchor="w", pady=(0, 8))
+
+        hairline(corpo)
+
+        # ===================== LEITURA DE BOLETOS ESCANEADOS =====================
+        rotulo_secao(corpo, "Leitura de boletos escaneados")
+        frame_leitura = ctk.CTkFrame(corpo, corner_radius=0, fg_color=tema["fundo"])
+        frame_leitura.pack(fill="x", padx=24)
+
+        chk_ocr = ctk.CTkCheckBox(
+            frame_leitura, text="Ler boletos escaneados automaticamente (mais lento)",
+            variable=self.usar_ocr, corner_radius=0,
+            fg_color=tema["acento"], hover_color=tema["acento"],
+            border_color=tema["borda_forte"], text_color=tema["texto"], font=(fonte, 13),
+        )
+        chk_ocr.pack(anchor="w", pady=(0, 8))
+        if not OCR_DISPONIVEL:
+            chk_ocr.configure(state="disabled")
+            ctk.CTkLabel(
+                frame_leitura,
+                text="Leitura de boletos escaneados não está disponível nesta instalação.",
+                font=(fonte, 12), text_color=tema["texto_terciario"], anchor="w", justify="left",
+            ).pack(fill="x", pady=(0, 8))
+
+        linha_qualidade = ctk.CTkFrame(frame_leitura, corner_radius=0, fg_color=tema["fundo"])
+        linha_qualidade.pack(fill="x", pady=(0, 8))
+        ctk.CTkLabel(
+            linha_qualidade, text="Qualidade de leitura", font=(fonte, 12),
+            text_color=tema["texto"], anchor="w",
+        ).pack(side="left", padx=(0, 12))
+
+        rotulos_qualidade = [nome for nome, _ in self._OPCOES_QUALIDADE]
+        mapa_qualidade = dict(self._OPCOES_QUALIDADE)
+        mapa_qualidade_inverso = {v: k for k, v in self._OPCOES_QUALIDADE}
+        rotulo_inicial = mapa_qualidade_inverso.get(self.dpi_ocr.get(), "Normal")
+        var_qualidade = tk.StringVar(value=rotulo_inicial)
+
+        def ao_trocar_qualidade(escolha):
+            self.dpi_ocr.set(mapa_qualidade.get(escolha, 200))
+
+        combo_qualidade = ctk.CTkOptionMenu(
+            linha_qualidade, values=rotulos_qualidade, variable=var_qualidade,
+            corner_radius=0, fg_color=tema["superficie"], button_color=tema["borda_forte"],
+            button_hover_color=tema["acento"], text_color=tema["texto"],
+            dropdown_fg_color=tema["superficie"], dropdown_text_color=tema["texto"],
+            font=(fonte, 13), command=ao_trocar_qualidade,
+        )
+        combo_qualidade.pack(side="left")
+
+        # --- grupo avançado recolhível: leitura por região ---
+        frame_regiao_wrapper = ctk.CTkFrame(frame_leitura, corner_radius=0, fg_color=tema["fundo"])
+        frame_regiao_wrapper.pack(fill="x", pady=(0, 8))
+
+        frame_regiao_conteudo = ctk.CTkFrame(frame_regiao_wrapper, corner_radius=0, fg_color=tema["fundo"])
+
+        estado_recolhivel = {"aberto": False}
+
+        def alternar_regiao():
+            if estado_recolhivel["aberto"]:
+                frame_regiao_conteudo.pack_forget()
+                botao_recolhivel.configure(text="▸ Leitura por região")
+                estado_recolhivel["aberto"] = False
+            else:
+                frame_regiao_conteudo.pack(fill="x", pady=(8, 0))
+                botao_recolhivel.configure(text="▾ Leitura por região")
+                estado_recolhivel["aberto"] = True
+
+        botao_recolhivel = ctk.CTkButton(
+            frame_regiao_wrapper, text="▸ Leitura por região", corner_radius=0,
+            fg_color="transparent", hover_color=tema["superficie"],
+            border_width=1, border_color=tema["borda_forte"], text_color=tema["texto"],
+            font=(fonte, 13), anchor="w", command=alternar_regiao,
+        )
+        botao_recolhivel.pack(fill="x")
+
+        ctk.CTkCheckBox(
+            frame_regiao_conteudo, text="Usar leitura por região",
+            variable=self.usar_ocr_regiao, corner_radius=0,
+            fg_color=tema["acento"], hover_color=tema["acento"],
+            border_color=tema["borda_forte"], text_color=tema["texto"], font=(fonte, 13),
+        ).pack(anchor="w", pady=(8, 8))
+
+        label_retangulo = ctk.CTkLabel(
+            frame_regiao_conteudo, text="", font=(fonte, 12),
+            text_color=tema["texto_secundario"], anchor="w",
+        )
+        label_retangulo.pack(fill="x", pady=(0, 8))
+
+        def atualizar_label_retangulo():
+            label_retangulo.configure(
+                text=(f"Região atual: x0={self.regiao_x0.get():.3f}  y0={self.regiao_y0.get():.3f}  "
+                      f"x1={self.regiao_x1.get():.3f}  y1={self.regiao_y1.get():.3f}")
+            )
+
+        atualizar_label_retangulo()
+
+        def selecionar_regiao():
+            self._selecionar_regiao_visualmente()
+            atualizar_label_retangulo()
+
+        ctk.CTkButton(
+            frame_regiao_conteudo, text="🖱 Selecionar região no PDF...", corner_radius=0,
+            fg_color="transparent", hover_color=tema["superficie"],
+            border_width=1, border_color=tema["borda_forte"], text_color=tema["texto"],
+            font=(fonte, 13), command=selecionar_regiao,
+        ).pack(anchor="w", pady=(0, 8))
+
+        ctk.CTkLabel(
+            frame_regiao_conteudo,
+            text="Os valores padrão são um chute inicial — calibre com um boleto real antes de usar.",
+            font=(fonte, 12), text_color=tema["texto_terciario"], anchor="w",
+            justify="left", wraplength=520,
+        ).pack(fill="x", pady=(0, 8))
+
+        hairline(corpo)
+
+        # ===================== TEXTO NO PDF =====================
+        rotulo_secao(corpo, "Texto no PDF")
+        frame_texto = ctk.CTkFrame(corpo, corner_radius=0, fg_color=tema["fundo"])
+        frame_texto.pack(fill="x", padx=24)
+
+        caixa_tipo_servico = ctk.CTkTextbox(
+            frame_texto, height=64, corner_radius=0, fg_color=tema["superficie"],
+            border_width=1, border_color=tema["borda"], text_color=tema["texto"], font=(fonte, 13),
+        )
+        texto_tipo_servico_atual = self.txt_tipo_servico.get("1.0", "end-1c")
+
+        def atualizar_estado_tipo_servico(*_args):
+            if self.modo_texto.get() == "rodape":
+                caixa_tipo_servico.configure(state="normal")
+            else:
+                caixa_tipo_servico.configure(state="disabled")
+
+        ctk.CTkRadioButton(
+            frame_texto, text="Rodapé (código + nome + serviço)", value="rodape",
+            variable=self.modo_texto, corner_radius=0,
+            fg_color=tema["acento"], border_color=tema["borda_forte"],
+            text_color=tema["texto"], font=(fonte, 13),
+            command=atualizar_estado_tipo_servico,
+        ).pack(anchor="w", pady=(0, 4))
+        ctk.CTkRadioButton(
+            frame_texto, text="Canto superior (só o código)", value="topo_esquerdo",
+            variable=self.modo_texto, corner_radius=0,
+            fg_color=tema["acento"], border_color=tema["borda_forte"],
+            text_color=tema["texto"], font=(fonte, 13),
+            command=atualizar_estado_tipo_servico,
+        ).pack(anchor="w", pady=(0, 8))
+
+        ctk.CTkLabel(
+            frame_texto, text="Tipo de serviço", font=(fonte, 12),
+            text_color=tema["texto_secundario"], anchor="w",
+        ).pack(fill="x", pady=(0, 4))
+        caixa_tipo_servico.pack(fill="x", pady=(0, 8))
+        caixa_tipo_servico.insert("1.0", texto_tipo_servico_atual)
+        atualizar_estado_tipo_servico()
+
+        linha_fonte = ctk.CTkFrame(frame_texto, corner_radius=0, fg_color=tema["fundo"])
+        linha_fonte.pack(fill="x", pady=(0, 8))
+        linha_fonte.columnconfigure(0, weight=1)
+        linha_fonte.columnconfigure(1, weight=1)
+
+        bloco_tamanho = ctk.CTkFrame(linha_fonte, corner_radius=0, fg_color=tema["fundo"])
+        bloco_tamanho.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        ctk.CTkLabel(
+            bloco_tamanho, text="Tamanho da fonte", font=(fonte, 12),
+            text_color=tema["texto_secundario"], anchor="w",
+        ).pack(fill="x", pady=(0, 4))
+        ctk.CTkEntry(
+            bloco_tamanho, textvariable=self.tamanho_fonte, corner_radius=0,
+            fg_color=tema["superficie"], border_width=1, border_color=tema["borda"],
+            text_color=tema["texto"], font=(fonte, 13),
+        ).pack(fill="x")
+
+        bloco_cor = ctk.CTkFrame(linha_fonte, corner_radius=0, fg_color=tema["fundo"])
+        bloco_cor.grid(row=0, column=1, sticky="ew")
+        ctk.CTkLabel(
+            bloco_cor, text="Cor (hex)", font=(fonte, 12),
+            text_color=tema["texto_secundario"], anchor="w",
+        ).pack(fill="x", pady=(0, 4))
+        ctk.CTkEntry(
+            bloco_cor, textvariable=self.cor_texto, corner_radius=0,
+            fg_color=tema["superficie"], border_width=1, border_color=tema["borda"],
+            text_color=tema["texto"], font=(fonte, 13),
+        ).pack(fill="x")
+
+        # ===================== RODAPÉ: CANCELAR / SALVAR =====================
+        rodape = ctk.CTkFrame(janela, corner_radius=0, fg_color=tema["fundo"])
+        rodape.pack(fill="x", padx=24, pady=16)
+
+        def cancelar():
+            self.cnpj_emitente.set(snapshot["cnpj_emitente"])
+            self.usar_match_nome_arquivo.set(snapshot["usar_match_nome_arquivo"])
+            self.usar_ocr.set(snapshot["usar_ocr"])
+            self.dpi_ocr.set(snapshot["dpi_ocr"])
+            self.usar_ocr_regiao.set(snapshot["usar_ocr_regiao"])
+            self.regiao_x0.set(snapshot["regiao_x0"])
+            self.regiao_y0.set(snapshot["regiao_y0"])
+            self.regiao_x1.set(snapshot["regiao_x1"])
+            self.regiao_y1.set(snapshot["regiao_y1"])
+            self.modo_texto.set(snapshot["modo_texto"])
+            self.tamanho_fonte.set(snapshot["tamanho_fonte"])
+            self.cor_texto.set(snapshot["cor_texto"])
+            janela.destroy()
+
+        def salvar():
+            cnpj_norm = normalizar_cnpj(self.cnpj_emitente.get())
+            if not cnpj_valido(cnpj_norm):
+                messagebox.showerror(
+                    "CNPJ inválido",
+                    "O CNPJ da sua empresa não é válido. Confira os dígitos e tente novamente.",
+                    parent=janela,
+                )
+                return
+
+            novo_tipo_servico = caixa_tipo_servico.get("1.0", "end-1c")
+            self.txt_tipo_servico.delete("1.0", "end")
+            self.txt_tipo_servico.insert("1.0", novo_tipo_servico)
+
+            self.config_app["cnpj_emitente"] = self.cnpj_emitente.get()
+            self.config_app["usar_match_nome_arquivo"] = self.usar_match_nome_arquivo.get()
+            self.config_app["usar_ocr"] = self.usar_ocr.get()
+            self.config_app["dpi_ocr"] = self.dpi_ocr.get()
+            self.config_app["usar_ocr_regiao"] = self.usar_ocr_regiao.get()
+            self.config_app["regiao_x0"] = self.regiao_x0.get()
+            self.config_app["regiao_y0"] = self.regiao_y0.get()
+            self.config_app["regiao_x1"] = self.regiao_x1.get()
+            self.config_app["regiao_y1"] = self.regiao_y1.get()
+            self.config_app["modo_texto"] = self.modo_texto.get()
+            self.config_app["tamanho_fonte"] = self.tamanho_fonte.get()
+            self.config_app["cor_texto"] = self.cor_texto.get()
+            self.config_app["tipo_servico"] = novo_tipo_servico
+            salvar_config(self.config_app)
+
+            janela.destroy()
+
+        ctk.CTkButton(
+            rodape, text="Cancelar", corner_radius=0,
+            fg_color="transparent", hover_color=tema["superficie"],
+            border_width=1, border_color=tema["borda_forte"], text_color=tema["texto"],
+            font=(fonte, 13), command=cancelar,
+        ).pack(side="right", padx=(8, 0))
+        ctk.CTkButton(
+            rodape, text="Salvar", corner_radius=0,
+            fg_color=tema["acento"], hover_color=tema["acento"],
+            text_color=tema["sobre_acento"], border_width=0,
+            font=(fonte, 13), command=salvar,
+        ).pack(side="right")
+
+        janela.protocol("WM_DELETE_WINDOW", cancelar)
 
     def _estilizar_ttk(self):
         """
@@ -1080,21 +1417,6 @@ class App(ctk.CTk):
             except Exception:
                 pass
         self._estilizar_ttk()
-
-    def _atualizar_estado_dpi(self):
-        """Habilita/desabilita o controle de DPI conforme o OCR está ativo."""
-        estado = "readonly" if self.usar_ocr.get() and OCR_DISPONIVEL else "disabled"
-        self.combo_dpi.configure(state=estado)
-        cor = "#000000" if estado == "readonly" else "#aaaaaa"
-        self.label_aviso_dpi.configure(foreground=cor)
-        self.label_detalhe_dpi.configure(foreground="#555555" if estado == "readonly" else "#aaaaaa")
-
-    def _atualizar_aviso_dpi(self):
-        """Atualiza o texto de aviso ao lado do combo de DPI."""
-        dpi = self.dpi_ocr.get()
-        icone, cor, detalhe = self._dpi_avisos.get(dpi, ("", "#000000", ""))
-        self.label_aviso_dpi.configure(text=icone, foreground=cor)
-        self.label_detalhe_dpi.configure(text=f"— {detalhe}")
 
     def _ler_retangulo_regiao(self):
         try:
@@ -1344,11 +1666,6 @@ class App(ctk.CTk):
         except Exception as e:
             # Falha silenciosa no log não deve travar o processamento
             print(f"[AVISO] Não foi possível salvar o log: {e}")
-
-    def _atualizar_campos_modo(self):
-        estado = "normal" if self.modo_texto.get() == "rodape" else "disabled"
-        for w in self.frame_tipo_servico.winfo_children():
-            w.configure(state=estado)
 
     def _escolher_pasta_entrada(self):
         pasta = filedialog.askdirectory(title="Selecione a pasta com os PDFs originais")
