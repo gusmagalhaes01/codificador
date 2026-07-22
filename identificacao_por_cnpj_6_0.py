@@ -603,7 +603,7 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("Dark" if self.nome_tema == "escuro" else "Light")
 
         super().__init__()
-        self.title("Identificação de PDFs por CNPJ")
+        self.title("Codificador v6.0.0")
         self.geometry("780x680")
         self.minsize(620, 420)
         self.resizable(True, True)
@@ -725,6 +725,12 @@ class App(ctk.CTk):
         self._montar_aba_processar(self.aba_processar)
         self._montar_aba_cadastro(self.aba_cadastro)
         self._montar_aba_logs(self.aba_logs)
+
+        # _montar_aba_processar já chama _estilizar_ttk() ao final, mas nesse
+        # ponto as abas de Cadastro/Logs ainda não existem — chama de novo
+        # agora que todas as três existem, para log_historico etc. também
+        # receberem a cor do tema já na montagem inicial (não só ao alternar).
+        self._estilizar_ttk()
 
     # --------------------------------------------------------
     #  ABA 2 — CADASTRO
@@ -1472,6 +1478,51 @@ class App(ctk.CTk):
         estilo.configure(
             "Treeview.Heading", background=tema["fundo"], foreground=tema["texto_secundario"],
         )
+
+        # As abas de Cadastro e Logs ainda usam widgets ttk "clássicos" (Entry,
+        # Button, Label, LabelFrame) — sem isso, o tema "clam" (necessário para
+        # estilizar Notebook/Treeview acima) deixa esses widgets sempre claros,
+        # destoando do resto do app no tema escuro.
+        estilo.configure(
+            "TLabel", background=tema["fundo"], foreground=tema["texto_secundario"],
+        )
+        estilo.configure(
+            "TLabelframe", background=tema["fundo"], bordercolor=tema["borda"],
+        )
+        estilo.configure(
+            "TLabelframe.Label", background=tema["fundo"], foreground=tema["texto_secundario"],
+        )
+        estilo.configure(
+            "TEntry", fieldbackground=tema["superficie"], foreground=tema["texto"],
+            bordercolor=tema["borda"], insertcolor=tema["texto"],
+        )
+        estilo.configure(
+            "TButton", background=tema["superficie"], foreground=tema["texto"],
+            bordercolor=tema["borda_forte"], focuscolor=tema["superficie"],
+        )
+        estilo.map(
+            "TButton",
+            background=[("active", tema["borda"]), ("pressed", tema["borda"])],
+        )
+        estilo.configure(
+            "Vertical.TScrollbar", background=tema["superficie"], troughcolor=tema["fundo"],
+            bordercolor=tema["borda"], arrowcolor=tema["texto_secundario"],
+        )
+
+        # Widgets tk "clássicos" (não-ttk) usados nas abas Cadastro/Logs — cor de
+        # sistema não acompanha o tema, então fixamos explicitamente.
+        for widget, cor_fundo, cor_texto in (
+            (getattr(self, "log_historico", None), tema["superficie"], tema["texto"]),
+        ):
+            if widget is not None:
+                try:
+                    widget.configure(
+                        bg=cor_fundo, fg=cor_texto,
+                        insertbackground=cor_texto, selectbackground=tema["acento"],
+                        selectforeground=tema["sobre_acento"],
+                    )
+                except Exception:
+                    pass
 
     def _recolorir(self):
         """
