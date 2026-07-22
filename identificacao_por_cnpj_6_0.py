@@ -75,6 +75,20 @@ def pasta_base():
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def caminho_recurso(nome):
+    """
+    Caminho de um recurso EMBUTIDO só-leitura (ex: o ícone .ico), diferente de
+    pasta_base() que é para arquivos graváveis ao lado do .exe. Empacotado com
+    PyInstaller, os dados vão para sys._MEIPASS; rodando como script, ficam na
+    pasta do próprio arquivo.
+    """
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, nome)
+
+
+NOME_ICONE = "icone.ico"
+
+
 # ============================================================
 #  TEMA VISUAL — Swiss International Style (paleta "stone")
 # ============================================================
@@ -607,6 +621,7 @@ class App(ctk.CTk):
         self.geometry("780x680")
         self.minsize(620, 420)
         self.resizable(True, True)
+        self._aplicar_icone()
 
         # Caminho da planilha de cadastro e do log (ficam ao lado deste script)
         pasta_script = pasta_base()
@@ -647,6 +662,27 @@ class App(ctk.CTk):
         self._montar_interface()
         self._atualizar_tabela_cadastro()
         self._carregar_log_em_tela()
+
+    def _aplicar_icone(self):
+        """
+        Aplica o ícone (icone.ico) na barra de título/taskbar da janela.
+        O CustomTkinter põe um ícone padrão próprio logo após a criação da
+        janela (via um `after` interno), então além de setar na hora, re-aplica
+        depois de um instante para sobrepor o padrão do CTk. Falha silenciosa —
+        um ícone ausente nunca deve impedir o app de abrir.
+        """
+        caminho = caminho_recurso(NOME_ICONE)
+        if not os.path.isfile(caminho):
+            return
+
+        def setar():
+            try:
+                self.iconbitmap(caminho)
+            except Exception:
+                pass
+
+        setar()
+        self.after(300, setar)
 
     # --------------------------------------------------------
     #  TEMA
