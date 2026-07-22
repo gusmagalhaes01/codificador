@@ -1,0 +1,250 @@
+====================================================================
+HANDOFF — Redesign 6_0 do Codificador (Swiss + CustomTkinter)
+Para continuar em outra máquina (Claude Code de casa)
+====================================================================
+
+>> COMO USAR ESTE ARQUIVO
+Cole o conteúdo deste txt como primeira mensagem no Claude Code de casa,
+ou diga "leia o HANDOFF_redesign_6_0.txt e continue da Tarefa 2".
+Ele contém TODO o contexto necessário — não depende do outro chat.
+
+--------------------------------------------------------------------
+0. PRÉ-REQUISITO PARA CONTINUAR EM CASA (IMPORTANTE)
+--------------------------------------------------------------------
+O trabalho está numa branch LOCAL chamada `redesign-6_0` que AINDA NÃO
+foi enviada (push) pro GitHub. Para pegar em casa, é preciso:
+
+  1. Na máquina do trabalho, enviar a branch:
+       git push -u origin redesign-6_0
+  2. Em casa, clonar/atualizar o repo privado e trocar de branch:
+       git clone https://github.com/gusmagalhaes01/codificador.git   (se ainda não tiver)
+       git fetch origin
+       git checkout redesign-6_0
+  3. Instalar dependências em casa (Windows com Python):
+       python -m pip install customtkinter pypdf reportlab openpyxl pymupdf winocr
+     (winocr só funciona no Windows; darkdetect vem junto com customtkinter)
+
+OBS: o arquivo `config.json` e os `.log` estão no .gitignore (estado local,
+não viajam pro GitHub) — normal, serão recriados com defaults.
+
+--------------------------------------------------------------------
+1. O QUE É O PROJETO
+--------------------------------------------------------------------
+App desktop Windows (hoje Tkinter/ttk) que processa boletos e NFS-e em PDF,
+identifica o condomínio pelo CNPJ do tomador, e escreve o código do
+condomínio no PDF. Arquivo original: `identificacao_por_cnpj_5_3.py`.
+Contexto completo do domínio está no `CLAUDE.md` (leia a seção
+"Redesign da interface — especificação" — é a fonte CANÔNICA da estrutura
+das telas).
+
+--------------------------------------------------------------------
+2. O QUE ESTAMOS FAZENDO (o objetivo do redesign 6_0)
+--------------------------------------------------------------------
+Reforma gráfica COMPLETA, entregue como arquivo NOVO
+`identificacao_por_cnpj_6_0.py`, com DUAS coisas juntas:
+  (a) Reestruturação em 3 telas: separar OPERAÇÃO (dia a dia) de
+      CONFIGURAÇÃO (define uma vez), e transformar o resultado num painel
+      acionável em vez de log de texto.
+  (b) Identidade visual "Swiss International Style" aplicada em CustomTkinter.
+
+Método de trabalho: skill superpowers:subagent-driven-development — cada
+tarefa é implementada por um subagente fresco, revisada (spec + qualidade),
+e há uma revisão ampla no final. Execução SEQUENCIAL (arquivo único acoplado).
+
+--------------------------------------------------------------------
+3. ESTADO ATUAL (onde paramos)
+--------------------------------------------------------------------
+- Branch: `redesign-6_0` (criada a partir de `main` @ 7d00e0c). NÃO mexer na main.
+- Ledger de progresso: `.superpowers/sdd/progress.md`
+      Task base: 7d00e0c
+      Task 1: complete (commits 7d00e0c..02d4e24, review clean)
+- TAREFA 1 DE 6: ✅ CONCLUÍDA E APROVADA (commit 02d4e24)
+    * `identificacao_por_cnpj_6_0.py` criado a partir do 5_3.py
+    * Migrado para CustomTkinter (App agora herda de ctk.CTk)
+    * Dicts de tema TEMA_CLARO / TEMA_ESCURO (paleta Swiss, ver seção 6)
+    * familia_fonte() -> "IBM Plex Sans" se instalada, senão "Segoe UI"
+    * Sistema config.json: DEFAULTS_CONFIG, carregar_config(), salvar_config()
+      (JSON corrompido NÃO crasha -> recria defaults + loga em erros.log)
+    * Atributo de config é `self.config_app` (NÃO `self.config` — isso
+      sombreava o método configure() do Tkinter; foi corrigido)
+    * Métodos aplicar_tema(nome) e alternar_tema() prontos
+    * As abas ttk (Processamento/Cadastro/Logs) ainda NÃO foram redesenhadas
+      — continuam em ttk, só a fundação foi trocada. App abre e funciona.
+    * As 14 funções de lógica confirmadas BYTE-IDÊNTICAS ao 5_3.py.
+
+--------------------------------------------------------------------
+4. PRÓXIMO PASSO: TAREFA 2 — TELA 1 PRINCIPAL
+--------------------------------------------------------------------
+Reconstruir o conteúdo da aba "1. Processamento" como a nova tela Swiss.
+
+DECISÃO DE NAVEGAÇÃO JÁ TOMADA: MANTER o Notebook (abas Principal /
+Cadastro / Logs estilizadas). A aba Principal vira a tela Swiss; o botão
+"⚙ Configurações" fica no cabeçalho DELA e abre o modal (modal é a Tarefa 3).
+
+Conteúdo da Tela Principal, nesta ordem, SEM scroll:
+  1. Cabeçalho: título "Codificador" (peso leve, ~20px) + subtítulo em
+     caption; no canto direito, botão "⚙ Configurações" + alternador de
+     tema (Claro/Escuro, usando self.alternar_tema já pronto).
+  2. Campo "Pasta com os PDFs" (caminho + botão "Trocar").
+  3. Campo "Salvar PDFs codificados em" (caminho + botão "Trocar").
+  4. Botão primário GRANDE cobalto "Processar N PDFs" — N = contagem de
+     *.pdf na pasta de entrada, atualizado ao escolher a pasta. Sem pasta/
+     vazia: botão desabilitado com texto "Processar PDFs".
+  5. Linha pequena/cinza explicando em linguagem humana: "Identificação:
+     nome do arquivo, depois leitura do PDF. Boletos escaneados são lidos
+     automaticamente."
+  NADA de CNPJ da emitente, OCR, DPI, região, fonte, cor ou posição aqui.
+
+CUIDADO COM O ACOPLAMENTO (o loop de processamento ainda usa widgets antigos):
+  - `_iniciar_processamento` e `_processar_em_thread` NÃO devem ser mexidos
+    nesta tarefa (é a Tarefa 5). Mas eles LEEM/USAM estes widgets:
+    self.botao_iniciar, self.barra_progresso, self.log_text,
+    self.txt_tipo_servico. A Tarefa 2 precisa MANTER esses atributos vivos:
+      * self.botao_iniciar = o novo botão cobalto "Processar".
+      * self.barra_progresso = manter (pode ficar abaixo do botão).
+      * self.log_text = manter TEMPORARIAMENTE (área de progresso no rodapé
+        da aba), com comentário de que Tarefa 4/5 substitui pelo painel de
+        resultado. Isso evita quebrar o loop.
+      * self.txt_tipo_servico = criar mas NÃO exibir (widget existente sem
+        gridar) — o loop lê dele; a Tarefa 3 recria no modal de config.
+  - Ao remover os widgets de OCR/DPI/região/estilo da aba, remova também as
+    CHAMADAS pendentes aos handlers deles no código de montagem
+    (_atualizar_estado_dpi, _atualizar_aviso_dpi, _atualizar_campos_modo),
+    mas MANTENHA os métodos e as variáveis (config vars) para a Tarefa 3
+    reusar. NÃO apague _selecionar_regiao_visualmente /
+    _montar_janela_selecao_regiao (Tarefa 3 usa).
+  - Botão "⚙ Configurações": criar um stub self._abrir_configuracoes
+    (ex: messagebox "em construção") — a Tarefa 3 substitui.
+  - O alternador de tema deve FUNCIONAR de verdade na tela principal:
+    expandir aplicar_tema() para recolorir os widgets da tela principal
+    lendo de self.tema_atual (dict do tema ativo).
+
+--------------------------------------------------------------------
+5. REGRAS ABSOLUTAS (valem para TODAS as tarefas)
+--------------------------------------------------------------------
+- NÃO alterar NENHUMA função de lógica de identificação (devem ficar
+  byte-idênticas ao 5_3.py):
+  extrair_cnpj_tomador, buscar_por_nome_arquivo, cnpj_valido,
+  proximo_dpi_maior, extrair_texto_ocr_regiao, sugerir_nome_condominio,
+  extrair_texto_ocr, extrair_texto_pdf, normalizar_cnpj, formatar_cnpj,
+  criar_overlay, processar_pdf, carregar_cadastro, salvar_cadastro,
+  DPI_ESCALONAMENTO, CNPJS_INTERMEDIARIOS.
+  (Se o loop _processar_em_thread precisar ser refatorado na Tarefa 5 para
+   alimentar as tabelas, manter comportamento e formato do log idênticos.)
+- NÃO mudar o formato de processamento.log, erros.log, nem da planilha
+  cadastro_condominios.xlsx.
+- Rodar `python -m py_compile identificacao_por_cnpj_6_0.py` ao fim de
+  cada tarefa.
+- NENHUM rótulo visível pode usar as palavras "OCR" ou "DPI" (vocabulário
+  humano: "boletos escaneados", "qualidade de leitura", "não foi possível ler").
+- Todos os widgets CustomTkinter com corner_radius=0 (cantos retos, Swiss).
+
+--------------------------------------------------------------------
+6. IDENTIDADE VISUAL SWISS — RESUMO OPERACIONAL
+--------------------------------------------------------------------
+PALETA (já definida como dicts TEMA_CLARO/TEMA_ESCURO no 6_0.py; sempre
+referenciar o dict do tema ativo self.tema_atual, sem hex solto):
+
+  TEMA_CLARO: fundo #FAFAF9, superficie #F5F5F4, borda #E7E5E4,
+    borda_forte #1C1917, texto #1C1917, texto_secundario #57534E,
+    texto_terciario #A8A29E, acento #003B8E, sobre_acento #FFFFFF
+  TEMA_ESCURO: fundo #0C0A09, superficie #1C1917, borda #292524,
+    borda_forte #FAFAF9, texto #FAFAF9, texto_secundario #A8A29E,
+    texto_terciario #57534E, acento #2563EB, sobre_acento #FFFFFF
+
+COR DE DESTAQUE ÚNICA: cobalto (acento). REGRA DE OURO — usar cobalto SÓ em:
+  - Botão primário "Processar N PDFs".
+  - Número/label "Pendentes" no painel de resultado.
+  - Botões que RESOLVEM pendente ("Cadastrar", "Escolher").
+  - (opcional) indicador de tema ativo / foco.
+  NUNCA usar verde/amarelo/vermelho de status (decisão confirmada:
+  cobalto-só vence o verde/amarelo que estava no CLAUDE.md Tela 3).
+  Botões neutros ("Abrir PDF", "Trocar", "Cancelar"): fundo transparente,
+  borda 1px na cor borda_forte, texto na cor primária.
+
+TIPOGRAFIA: família via familia_fonte(). Títulos e números grandes em peso
+  LEVE/normal (NUNCA bold pesado em título). Escala aprox: métrica 40 /
+  título 20 / corpo 14 / label secundário 13 / caption MAIÚSCULA 11.
+  Captions de seção em MAIÚSCULAS (ex: "PASTA COM OS PDFS"). Números em
+  colunas/tabelas alinhados (mono tipo Consolas ou alinhamento à direita).
+
+ESPAÇAMENTO: base de 8px (padx/pady múltiplos de 8: 8,16,24,32). Generoso —
+  padding de seção 24–32px. Formulários com grid() de colunas fixas (label
+  largura fixa à esquerda, campo expandindo) — NÃO usar pack(side="left")
+  encadeado (é o que causava desalinhamento no app antigo).
+
+FORMAS: tudo retangular (corner_radius=0). Divisórias e contornos = hairlines
+  de 1px na cor "borda". Separar seções/linhas de tabela por hairline, não
+  por cor de fundo (nada de zebra colorido).
+
+TEMA: padrão segue o Windows (darkdetect); alternador manual persiste a
+  escolha em config.json (config_app["tema"] = "auto"|"claro"|"escuro").
+
+--------------------------------------------------------------------
+7. PLANO COMPLETO — 6 TAREFAS
+--------------------------------------------------------------------
+[x] Tarefa 1 — Fundação visual + tema + config  (CONCLUÍDA, 02d4e24)
+[ ] Tarefa 2 — Tela 1 Principal  <== PRÓXIMA (detalhada na seção 4)
+[ ] Tarefa 3 — Tela 2 Configurações (modal CTkToplevel)
+        Agrupa o técnico: Empresa (CNPJ emitente + checksum ao salvar),
+        Identificação (checkbox nome do arquivo), Leitura de boletos
+        escaneados (checkbox + "Qualidade de leitura": Rápida 72 / Normal
+        200 / Máxima 300 -> mapeia DPI; grupo avançado recolhível "Leitura
+        por região" com o seletor visual atual + campos x0,y0,x1,y1 + aviso
+        de calibração), Texto no PDF (posição rodapé/canto, tipo de serviço
+        multi-linha, tamanho, cor). Botões Salvar/Cancelar -> config.json.
+        NENHUM rótulo com "OCR"/"DPI".
+[ ] Tarefa 4 — Tela 3 Resultado (painel, substitui messagebox + log)
+        3 cartões (Processados / Pendentes / Tempo) — cobalto SÓ no
+        Pendentes. Tabela de PENDENTES PRIMEIRO (ttk.Treeview com hairlines)
+        colunas Arquivo | Motivo | Ação, motivos em linguagem humana:
+          "CNPJ não cadastrado" / "Não foi possível ler" / "Dois CNPJs
+          possíveis". Depois tabela de Processados: Arquivo | Código |
+        Origem ("pelo nome do arquivo" / "pelo CNPJ do boleto" / "pelo CNPJ
+        (releitura)"). Guardar nos itens os dados p/ as ações (CNPJ, nome
+        sugerido, candidatos ambíguos, caminho do arquivo).
+[ ] Tarefa 5 — Ações + refactor do loop
+        Refatorar _processar_em_thread p/ coletar resultados estruturados
+        (comportamento e processamento.log IDÊNTICOS) e alimentar as tabelas.
+        Ações do painel: "Cadastrar" (abre cadastro pré-preenchido com CNPJ
+        + nome sugerido), "Abrir PDF" (os.startfile), "Escolher" (popup lista
+        candidatos e reprocessa só aquele arquivo). Funcionar com DUPLO
+        CLIQUE E BOTÃO.
+[ ] Tarefa 6 — Fechamento
+        Checklist final; sincronizar a seção "Redesign da interface" no
+        CLAUDE.md do repo (hoje está desatualizada lá) + adicionar entrada
+        no "Histórico de decisões" (versão 6_0: redesign 3 telas + Swiss em
+        CustomTkinter); confirmar customtkinter nas dependências.
+
+--------------------------------------------------------------------
+8. CHECKLIST FINAL (verificar antes de considerar o redesign pronto)
+--------------------------------------------------------------------
+[ ] py_compile passa.
+[ ] Nenhuma função de lógica de identificação alterada (byte-idêntica).
+[ ] processamento.log e erros.log com formato idêntico.
+[ ] 3 telas: Principal (sem scroll), Configurações (modal), Resultado (painel).
+[ ] config.json persiste configurações + tema; JSON corrompido não crasha.
+[ ] Todos os widgets com corner_radius=0.
+[ ] Cobalto usado só nos pontos da regra de ouro (seção 6).
+[ ] Paleta via dict de tema; sem hex soltos.
+[ ] Alternância claro/escuro funciona e reaplica as cores.
+[ ] Ações do painel de pendentes funcionam com duplo clique E botão.
+[ ] "Cadastrar" abre o formulário pré-preenchido (CNPJ + nome sugerido).
+[ ] "Escolher" lista os candidatos e reprocessa só aquele arquivo.
+[ ] Nenhum rótulo visível usa "OCR" ou "DPI".
+[ ] Entrada adicionada ao "Histórico de decisões" do CLAUDE.md.
+
+--------------------------------------------------------------------
+9. WORKFLOW DE RETOMADA (resumo para o Claude Code de casa)
+--------------------------------------------------------------------
+1. git checkout redesign-6_0 ; git log --oneline (confirmar 02d4e24 no topo).
+2. Ler .superpowers/sdd/progress.md (ledger) — não refazer tarefas já marcadas.
+3. Ler a seção "Redesign da interface — especificação" no CLAUDE.md (canônica
+   p/ estrutura das telas).
+4. Executar a Tarefa 2 (seção 4 deste arquivo). Se usar subagentes: um
+   implementador fresco por tarefa + revisor (spec + qualidade); rodar
+   review depois. Se preferir manual, seguir as mesmas regras (seção 5).
+5. Ao concluir cada tarefa: py_compile, commit em português com
+   "Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>", e anexar 1
+   linha no ledger. NÃO fazer push sem pedir. NÃO mexer na main.
+====================================================================
