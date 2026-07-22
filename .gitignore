@@ -4,3 +4,6 @@ processamento.log
 erros.log
 CODIFICADOR.zip
 config.json
+build/
+dist/
+*.spec

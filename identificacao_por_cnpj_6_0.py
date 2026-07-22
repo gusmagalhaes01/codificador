@@ -16,6 +16,7 @@ import io
 import json
 import os
 import re
+import sys
 import threading
 import time
 import datetime
@@ -59,6 +60,19 @@ CNPJ_REGEX = re.compile(r"\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}")
 NOME_ARQUIVO_PADRAO = "cadastro_condominios.xlsx"
 NOME_LOG_PADRAO = "processamento.log"
 NOME_CONFIG_PADRAO = "config.json"
+
+
+def pasta_base():
+    """
+    Pasta onde ficam config.json, os logs e a planilha de cadastro.
+    Rodando como script (.py), é a pasta do próprio arquivo. Empacotado com
+    PyInstaller (--onedir/--onefile), sys.frozen fica True e __file__ aponta
+    pra dentro da pasta temporária/interna do pacote — nesse caso usamos a
+    pasta onde está o .exe, para tudo ficar ao lado dele (portátil).
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
 
 
 # ============================================================
@@ -135,7 +149,7 @@ def _gravar_erros_log(detalhes):
     global de exceções (App.report_callback_exception) — mesmo formato nos
     dois casos. Nunca lança exceção."""
     try:
-        pasta_script = os.path.dirname(os.path.abspath(__file__))
+        pasta_script = pasta_base()
         with open(os.path.join(pasta_script, "erros.log"), "a", encoding="utf-8") as f:
             f.write(f"\n[{datetime.datetime.now().strftime('%d/%m/%Y %H:%M:%S')}]\n{detalhes}\n")
     except Exception:
@@ -155,7 +169,7 @@ def carregar_config():
     erros.log e devolve uma cópia dos defaults — nunca lança exceção.
     Sempre mescla sobre os defaults, então um config parcial não quebra.
     """
-    pasta_script = os.path.dirname(os.path.abspath(__file__))
+    pasta_script = pasta_base()
     caminho = os.path.join(pasta_script, NOME_CONFIG_PADRAO)
 
     config = dict(DEFAULTS_CONFIG)
@@ -178,7 +192,7 @@ def carregar_config():
 def salvar_config(config):
     """Grava `config` como JSON em config.json (ao lado do script). Falha ao
     salvar não deve travar o app — loga em erros.log e segue."""
-    pasta_script = os.path.dirname(os.path.abspath(__file__))
+    pasta_script = pasta_base()
     caminho = os.path.join(pasta_script, NOME_CONFIG_PADRAO)
     try:
         with open(caminho, "w", encoding="utf-8") as f:
@@ -595,7 +609,7 @@ class App(ctk.CTk):
         self.resizable(True, True)
 
         # Caminho da planilha de cadastro e do log (ficam ao lado deste script)
-        pasta_script = os.path.dirname(os.path.abspath(__file__))
+        pasta_script = pasta_base()
         self.caminho_planilha = os.path.join(pasta_script, NOME_ARQUIVO_PADRAO)
         self.caminho_log = os.path.join(pasta_script, NOME_LOG_PADRAO)
         self.cadastro = carregar_cadastro(self.caminho_planilha)
