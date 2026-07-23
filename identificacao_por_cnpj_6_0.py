@@ -764,7 +764,7 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("Dark" if self.nome_tema == "escuro" else "Light")
 
         super().__init__()
-        self.title("Codificador v6.2.0")
+        self.title("Codificador v6.5.0")
         self.geometry("780x680")
         self.minsize(620, 420)
         self.resizable(True, True)
@@ -932,49 +932,70 @@ class App(ctk.CTk):
     #  ABA 2 — CADASTRO
     # --------------------------------------------------------
     def _montar_aba_cadastro(self, parent):
-        pad = {"padx": 10, "pady": 6}
+        pad = {"padx": 24, "pady": 6}
+        fonte = familia_fonte()
 
-        info = ttk.Label(
-            parent,
-            text=f"Planilha: {self.caminho_planilha}",
-            foreground="#555555",
+        def caption(texto):
+            return ttk.Label(parent, text=texto.upper(), style="Caption.TLabel", font=(fonte, 11))
+
+        def caption_in(parent_widget, texto):
+            return ttk.Label(parent_widget, text=texto.upper(), style="Caption.TLabel", font=(fonte, 11))
+
+        titulo = ttk.Label(parent, text="Condomínios", style="Titulo.TLabel", font=(fonte, 20))
+        titulo.pack(anchor="w", padx=24, pady=(20, 0))
+
+        self.label_planilha_cadastro = ttk.Label(
+            parent, text=self.caminho_planilha, style="Caption.TLabel", font=("Consolas", 10),
         )
-        info.pack(anchor="w", **pad)
+        self.label_planilha_cadastro.pack(anchor="w", padx=24, pady=(4, 16))
 
-        # --- Formulário ---
-        frame_form = ttk.LabelFrame(parent, text="Adicionar / Editar condomínio")
-        frame_form.pack(fill="x", **pad)
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", padx=24)
 
-        linha1 = ttk.Frame(frame_form)
-        linha1.pack(fill="x", padx=8, pady=4)
-        ttk.Label(linha1, text="CNPJ:", width=10).pack(side="left")
-        ttk.Entry(linha1, textvariable=self.form_cnpj, width=25).pack(side="left", padx=(0, 20))
-        ttk.Label(linha1, text="Código:", width=10).pack(side="left")
-        ttk.Entry(linha1, textvariable=self.form_codigo, width=15).pack(side="left")
+        caption(" Adicionar / editar").pack(anchor="w", padx=24, pady=(16, 8))
 
-        linha2 = ttk.Frame(frame_form)
-        linha2.pack(fill="x", padx=8, pady=4)
-        ttk.Label(linha2, text="Nome:", width=10).pack(side="left")
-        ttk.Entry(linha2, textvariable=self.form_nome, width=50).pack(side="left", fill="x", expand=True)
+        frame_form = ttk.Frame(parent)
+        frame_form.pack(fill="x", padx=24)
+        frame_form.columnconfigure(0, weight=0)
+        frame_form.columnconfigure(1, weight=0)
+        frame_form.columnconfigure(2, weight=1)
 
-        linha3 = ttk.Frame(frame_form)
-        linha3.pack(fill="x", padx=8, pady=(4, 8))
-        ttk.Button(linha3, text="Adicionar / Atualizar", command=self._adicionar_ou_atualizar).pack(side="left")
-        ttk.Button(linha3, text="Limpar campos", command=self._limpar_form).pack(side="left", padx=8)
+        caption_in(frame_form, "CNPJ").grid(row=0, column=0, sticky="w", padx=(0, 16))
+        caption_in(frame_form, "Código").grid(row=0, column=1, sticky="w", padx=(0, 16))
+        caption_in(frame_form, "Nome").grid(row=0, column=2, sticky="w")
+
+        ttk.Entry(frame_form, textvariable=self.form_cnpj, width=22, font=(fonte, 12)).grid(
+            row=1, column=0, sticky="w", padx=(0, 16), pady=(2, 12))
+        ttk.Entry(frame_form, textvariable=self.form_codigo, width=12, font=(fonte, 12)).grid(
+            row=1, column=1, sticky="w", padx=(0, 16), pady=(2, 12))
+        ttk.Entry(frame_form, textvariable=self.form_nome, font=(fonte, 12)).grid(
+            row=1, column=2, sticky="ew", pady=(2, 12))
+
+        linha_botoes_form = ttk.Frame(parent)
+        linha_botoes_form.pack(fill="x", padx=24, pady=(0, 16))
+        ttk.Button(
+            linha_botoes_form, text="Salvar", style="Cobalto.TButton",
+            command=self._adicionar_ou_atualizar,
+        ).pack(side="left")
+        ttk.Button(linha_botoes_form, text="Limpar campos", command=self._limpar_form).pack(side="left", padx=8)
+
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", padx=24, pady=(0, 16))
 
         # --- Tabela ---
-        frame_tabela = ttk.LabelFrame(parent, text="Condomínios cadastrados")
-        frame_tabela.pack(fill="both", expand=True, **pad)
+        self.label_contagem_cadastro = caption("0 cadastrados")
+        self.label_contagem_cadastro.pack(anchor="w", padx=24, pady=(0, 8))
+
+        frame_tabela = ttk.Frame(parent)
+        frame_tabela.pack(fill="both", expand=True, padx=24)
 
         colunas = ("cnpj", "codigo", "nome")
         self.tabela = ttk.Treeview(frame_tabela, columns=colunas, show="headings", height=14)
         self.tabela.heading("cnpj", text="CNPJ")
         self.tabela.heading("codigo", text="Código")
         self.tabela.heading("nome", text="Nome do Condomínio")
-        self.tabela.column("cnpj", width=150, anchor="center")
-        self.tabela.column("codigo", width=80, anchor="center")
+        self.tabela.column("cnpj", width=150, anchor="w")
+        self.tabela.column("codigo", width=80, anchor="w")
         self.tabela.column("nome", width=380, anchor="w")
-        self.tabela.pack(fill="both", expand=True, padx=8, pady=8, side="left")
+        self.tabela.pack(fill="both", expand=True, side="left")
         self.tabela.bind("<<TreeviewSelect>>", self._selecionar_linha)
 
         scrollbar = ttk.Scrollbar(frame_tabela, orient="vertical", command=self.tabela.yview)
@@ -982,10 +1003,11 @@ class App(ctk.CTk):
         scrollbar.pack(side="left", fill="y")
 
         # --- Botões de baixo ---
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", padx=24, pady=(16, 0))
         frame_botoes = ttk.Frame(parent)
-        frame_botoes.pack(fill="x", **pad)
+        frame_botoes.pack(fill="x", padx=24, pady=16)
         ttk.Button(frame_botoes, text="Remover selecionado", command=self._remover_selecionado).pack(side="left")
-        ttk.Button(frame_botoes, text="Importar planilha existente...", command=self._importar_planilha).pack(side="left", padx=8)
+        ttk.Button(frame_botoes, text="Importar planilha...", command=self._importar_planilha).pack(side="left", padx=8)
         ttk.Button(frame_botoes, text="Salvar planilha agora", command=self._salvar_planilha).pack(side="left")
 
     def _atualizar_tabela_cadastro(self):
@@ -993,6 +1015,8 @@ class App(ctk.CTk):
         for cnpj_norm, dados in sorted(self.cadastro.items(), key=lambda kv: kv[1]["codigo"]):
             self.tabela.insert("", "end", iid=cnpj_norm,
                                 values=(formatar_cnpj(cnpj_norm), dados["codigo"], dados["nome"]))
+        if hasattr(self, "label_contagem_cadastro"):
+            self.label_contagem_cadastro.configure(text=f"{len(self.cadastro)} CADASTRADOS")
 
     def _selecionar_linha(self, event):
         selecionado = self.tabela.selection()
@@ -1847,6 +1871,24 @@ class App(ctk.CTk):
             "Vertical.TScrollbar", background=tema["superficie"], troughcolor=tema["fundo"],
             bordercolor=tema["borda"], arrowcolor=tema["texto_secundario"],
         )
+        estilo.configure("TSeparator", background=tema["borda"])
+
+        # Estilos Swiss usados nas abas Cadastro/Logs: legenda pequena
+        # secundária, título grande e o único botão cobalto dessas abas.
+        estilo.configure(
+            "Caption.TLabel", background=tema["fundo"], foreground=tema["texto_secundario"],
+        )
+        estilo.configure(
+            "Titulo.TLabel", background=tema["fundo"], foreground=tema["texto"],
+        )
+        estilo.configure(
+            "Cobalto.TButton", background=tema["acento"], foreground=tema["sobre_acento"],
+            bordercolor=tema["acento"], focuscolor=tema["acento"],
+        )
+        estilo.map(
+            "Cobalto.TButton",
+            background=[("active", tema["acento_hover"]), ("pressed", tema["acento_hover"])],
+        )
 
         # Widgets tk "clássicos" (não-ttk) usados nas abas Cadastro/Logs — cor de
         # sistema não acompanha o tema, então fixamos explicitamente.
@@ -2523,28 +2565,34 @@ class App(ctk.CTk):
     #  ABA 3 — LOGS
     # --------------------------------------------------------
     def _montar_aba_logs(self, parent):
-        pad = {"padx": 10, "pady": 6}
+        fonte = familia_fonte()
 
-        frame_info = ttk.Frame(parent)
-        frame_info.pack(fill="x", **pad)
+        titulo = ttk.Label(parent, text="Logs", style="Titulo.TLabel", font=(fonte, 20))
+        titulo.pack(anchor="w", padx=24, pady=(20, 0))
+
         self.label_caminho_log = ttk.Label(
-            frame_info,
-            text=f"Arquivo: {self.caminho_log}",
-            foreground="#555555",
+            parent, text=self.caminho_log, style="Caption.TLabel", font=("Consolas", 10),
         )
-        self.label_caminho_log.pack(side="left", anchor="w")
+        self.label_caminho_log.pack(anchor="w", padx=24, pady=(4, 16))
+
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", padx=24)
 
         frame_botoes = ttk.Frame(parent)
-        frame_botoes.pack(fill="x", padx=10, pady=(0, 4))
-        ttk.Button(frame_botoes, text="🔄 Atualizar", command=self._carregar_log_em_tela).pack(side="left")
-        ttk.Button(frame_botoes, text="🗑 Limpar log", command=self._limpar_log).pack(side="left", padx=8)
-        ttk.Button(frame_botoes, text="📂 Abrir pasta", command=self._abrir_pasta_log).pack(side="left")
+        frame_botoes.pack(fill="x", padx=24, pady=12)
+        ttk.Button(frame_botoes, text="Atualizar", command=self._carregar_log_em_tela).pack(side="left")
+        ttk.Button(frame_botoes, text="Limpar log", command=self._limpar_log).pack(side="left", padx=8)
+        ttk.Button(frame_botoes, text="Abrir pasta", command=self._abrir_pasta_log).pack(side="left")
 
-        frame_log = ttk.LabelFrame(parent, text="Histórico de sessões")
-        frame_log.pack(fill="both", expand=True, **pad)
+        ttk.Separator(parent, orient="horizontal").pack(fill="x", padx=24)
 
-        self.log_historico = tk.Text(frame_log, state="disabled", wrap="word", font=("Consolas", 9))
-        self.log_historico.pack(fill="both", expand=True, side="left", padx=8, pady=8)
+        frame_log = ttk.Frame(parent)
+        frame_log.pack(fill="both", expand=True, padx=24, pady=16)
+
+        self.log_historico = tk.Text(
+            frame_log, state="disabled", wrap="word", font=("Consolas", 10),
+            borderwidth=0, highlightthickness=0,
+        )
+        self.log_historico.pack(fill="both", expand=True, side="left")
 
         scroll_log = ttk.Scrollbar(frame_log, orient="vertical", command=self.log_historico.yview)
         self.log_historico.configure(yscrollcommand=scroll_log.set)
