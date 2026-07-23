@@ -1,0 +1,145 @@
+DANFSe v1.0
+Documento Auxiliar da NFS-e
+Prefeitura da Cidade do Rio de
+Janeiro
+SMF / Receita Rio
+Chave de Acesso da NFS-e
+33045572233431503000170000000000348326057077044092
+A autenticidade desta NFS-e pode ser verificada
+pela leitura deste código QR ou pela consulta da
+chave de acesso no portal nacional da NFS-e
+Número da NFS-e
+3483
+Competência da NFS-e
+28/05/2026
+Data e Hora da emissão da NFS-e
+29/05/2026 18:57:23
+Número da DPS
+174435
+Série da DPS
+10
+Data e Hora da emissão da DPS
+28/05/2026 00:00:00
+EMITENTE DA NFS-e
+Prestador do Serviço
+CNPJ / CPF / NIF
+33.431.503/0001-70
+Inscrição Municipal
+-
+Telefone
+-
+Nome / Nome Empresarial
+INSETISAN SERVICOS DE CONTROLE DE PRAGAS LTDA
+E-mail
+-
+Endereço
+RUA ALMIRANTE BALTAZAR, 115, SAO CRISTOVAO
+Município
+Rio de Janeiro - RJ
+CEP
+20941-150
+Simples Nacional na Data de Competência
+Não optante
+Regime de Apuração Tributária pelo SN
+-
+TOMADOR DO SERVIÇO CNPJ / CPF / NIF
+07.945.453/0001-30
+Inscrição Municipal
+-
+Telefone
+-
+Nome / Nome Empresarial
+COND. EDF. LAGO MAGGIORE
+E-mail
+edlagomaggiore3235@gmail.com
+Endereço
+BORGES DE MEDEIROS, 3235, LAGOA
+Município
+Rio de Janeiro - RJ
+CEP
+22470-001
+INTERMEDIÁRIO DO SERVIÇO NÃO IDENTIFICADO NA NFS-e
+SERVIÇO PRESTADO
+Código de Tributação Nacional
+07.13.01 - Dedetização, desinfecção,
+desinsetização, imunização, hig...
+Código de Tributação Municipal
+005 - Controle de pragas.
+Local da Prestação
+Rio de Janeiro - RJ
+País da Prestação
+-
+Descrição do Serviço
+10-28052026028 - VALOR APROXIMADO DOS TRIBUTOS R$ 467,46 (17,60%). FONTE IBPT. /// DEDETIZACAO CONTRA BARATAS E DESRATIZACAO
+NA TOTALIDADE DAS PARTES COMUNS DO CONDOMINIO, COM 01 APLICACAO E 01 REEXECUCAO PROGRAMADA EM 90 DIAS. /// Garantia de
+assistencia tecnica ate: 24/11/2026 Local de execucao: BORGES DE MEDEIROS, 3235// - LAGOA - RIO DE JANEIRO.
+TRIBUTAÇÃO MUNICIPAL
+Tributação do ISSQN
+Operação Tributável
+País Resultado da Prestação do Serviço
+-
+Município de Incidência do ISSQN
+Rio de Janeiro - RJ
+Regime Especial de Tributação
+Nenhum
+Tipo de Imunidade
+-
+Suspensão da Exigibilidade do ISSQN
+Não
+Número Processo Suspensão
+-
+Benefício Municipal
+-
+Valor do Serviço
+R$ 2.656,00
+Desconto Incondicionado
+-
+Total Deduções/Reduções
+-
+Cálculo do BM
+-
+BC ISSQN
+R$ 2.656,00
+Alíquota Aplicada
+5,00%
+Retenção do ISSQN
+Não Retido
+ISSQN Apurado
+R$ 132,80
+TRIBUTAÇÃO FEDERAL
+IRRF
+-
+Contribuição Previdenciária - Retida
+R$ 292,16
+Contribuições Sociais - Retidas
+R$ 123,50
+Descrição Contrib. Sociais - Retidas
+3 - PIS/COFINS/CSLL Retidos
+PIS - Débito Apuração Própria
+R$ 43,82
+COFINS - Débito Apuração Própria
+R$ 201,86
+VALOR TOTAL DA NFS-E
+Valor do Serviço
+R$ 2.656,00
+Desconto Condicionado
+-
+Desconto Incondicionado
+-
+ISSQN Retido
+-
+Total das Retenções Federais
+R$ 415,66
+PIS/COFINS - Débito Apur. Própria
+R$ 245,68
+Valor Líquido da NFS-e
+R$ 2.240,34
+TOTAIS APROXIMADOS DOS TRIBUTOS
+Federais
+13,45 %
+Estaduais
+0,00 %
+Municipais
+4,15 %
+INFORMAÇÕES COMPLEMENTARES
+NBS: 118032100
