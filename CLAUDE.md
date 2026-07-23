@@ -263,8 +263,9 @@ no 6_0 — o `identificacao_por_cnpj_5_3.py` não tem nenhuma delas:
 - CNPJs sempre normalizados para 14 dígitos internamente (`normalizar_cnpj`),
   formatados só na exibição/planilha (`formatar_cnpj`).
 - Dependências: `customtkinter` (interface 6_0; traz `darkdetect`), `pypdf`,
-  `reportlab`, `openpyxl`, `pymupdf`, `Pillow`, `winocr` (Windows).
-  Instalação: `python -m pip install customtkinter pypdf reportlab openpyxl pymupdf winocr`.
+  `reportlab`, `openpyxl`, `pymupdf`, `Pillow`, `winocr` (Windows). Versões
+  fixas em `requirements.txt` (mantido em sincronia manualmente — sem
+  ferramenta de lockfile automática). Instalação: `python -m pip install -r requirements.txt`.
 - Cores da interface 6_0 nunca hardcoded soltas: sempre via `self.tema_atual[chave]`
   (dicts `TEMA_CLARO`/`TEMA_ESCURO`). Todo widget CustomTkinter usa `corner_radius=0`.
 - Vocabulário da interface é para leigos: nunca expor "OCR" ou "DPI" em texto visível
