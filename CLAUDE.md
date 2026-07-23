@@ -9,11 +9,14 @@ em planilha `.xlsx`.
 
 Arquivo principal: `identificacao_por_cnpj_6_0.py` (interface CustomTkinter, redesign
 Swiss — ver seção "Redesign visual 6_0"). A versão anterior `identificacao_por_cnpj_5_3.py`
-(Tkinter/ttk) segue no repo como referência; toda a lógica de identificação é
-byte-idêntica entre as duas — o 6_0 mudou só a interface.
+(Tkinter/ttk) segue no repo como referência. A lógica de identificação começou
+byte-idêntica entre as duas (o 6_0 nasceu como redesign exclusivo de interface),
+mas divergiu depois em 3 pontos, só no 6_0 — ver "Divergências de lógica só no
+6_0 (pós-redesign)".
 Cadastro de condomínios: `cadastro_condominios.xlsx` (colunas: CNPJ, Código, Nome)
-Configuração da interface: `config.json` (ao lado do script, gitignored) — CNPJ da
-emitente, opções de leitura, texto no PDF e tema; criado na 1ª execução com defaults.
+Configuração da interface: `config.json` (ao lado do script, gitignored) — 3
+predefinições de lote (FedCorp/F&F/Notas Diversas, ver seção "Predefinições de
+lote") + tema; criado na 1ª execução com defaults.
 Logs: `processamento.log` (histórico de sessões) e `erros.log` (exceções não
 tratadas capturadas pelo handler global — ver seção "Robustez da interface"),
 ambos ao lado do script.
@@ -188,6 +191,64 @@ manual persistido em `config.json`.
 **Regra de ouro do cobalto:** só no botão "Processar", no cartão/label "Pendentes",
 e nos botões que **resolvem** um pendente (Cadastrar/Escolher/"Usar este CNPJ").
 Botões neutros (Trocar, Abrir PDF, Cancelar) são contornados, fundo transparente.
+
+## Predefinições de lote (FedCorp / F&F / Notas Diversas)
+
+A Tela Principal tem 3 botões ("PREDEFINIÇÃO") que trocam de uma vez todas as
+configurações de um tipo de lote — CNPJ emitente, identificação, carimbo, tipo
+de serviço — em vez de reconfigurar tudo toda sessão. Editáveis pelo próprio
+app (não fixas no código): cada perfil é um dict dentro de
+`config.json["predefinicoes"]`, com `predefinicao_ativa` apontando qual está
+em uso. `carregar_config()` migra automaticamente um `config.json` de antes
+desse recurso (campos soltos no nível raiz) para dentro do perfil "fedcorp",
+sem perder a configuração que já existia.
+
+- **FedCorp** (`cnpj_emitente=35.315.360/0001-67`, rodapé, `CIPAA`): fluxo
+  original — `usar_match_nome_arquivo=True` tenta primeiro
+  `buscar_por_nome_arquivo` (ver abaixo), senão cai para
+  texto/OCR/`extrair_cnpj_tomador` do conteúdo do PDF.
+- **F&F** (`cnpj_emitente=13.736.666/0001-54`, rodapé, tipo de serviço
+  editável por lote — PGR/PCMSO/ESOCIAL/EXAMES/TREINAMENTOS, o usuário troca
+  na aba/pasta que for processar): os arquivos já chegam nomeados com o
+  código do condomínio embutido (ex: `PGR 10004 Klosters.pdf` → 10004) — quase
+  sempre resolve na primeira etapa (código exato), sem precisar abrir o PDF.
+- **Notas Diversas** (`cnpj_emitente` vazio — lotes de administradoras
+  variadas, ex: Imodata; canto superior, só o código): usa o pipeline de CNPJ
+  normal, mas sem emitente fixo pra excluir a priori. Tem
+  `preferir_cadastrado_em_ambiguo=True`: quando sobra mais de um CNPJ
+  candidato (tipicamente o emitente da nota, não cadastrado, + o condomínio
+  tomador, cadastrado), prefere o(s) que já estão no cadastro — resolve o
+  caso comum sem precisar de emitente fixo.
+
+**`buscar_por_nome_arquivo` faz DUAS coisas** (a que resolver primeiro,
+ganha — não combina): (1) procura números no nome do arquivo que batam
+*exatamente* com um código do cadastro (usado pela F&F, mas funciona pra
+qualquer perfil com `usar_match_nome_arquivo=True`); (2) se não achar código,
+cai pro fuzzy match original por nome do condomínio (usado pela FedCorp).
+Não é um "modo" separado por perfil — é o mesmo mecanismo pra todos, e cada
+perfil só liga/desliga `usar_match_nome_arquivo`.
+
+Configurações → "Salvar" grava no perfil ativo (`Configurações — Editando:
+<nome>` no título do modal), não mais num config plano. Snapshot/Cancelar
+continuam do jeito que eram. Os botões de predefinição mostram
+"(modificado)" quando as `tk.Var` vivas divergem do que está salvo no perfil
+(`_perfil_ativo_modificado`) — só indicativo, não bloqueia nada.
+
+## Divergências de lógica só no 6_0 (pós-redesign)
+
+O redesign 6_0 nasceu como reforma **exclusiva de interface** (lógica
+byte-idêntica ao 5_3), mas depois ganhou 3 correções/recursos que só existem
+no 6_0 — o `identificacao_por_cnpj_5_3.py` não tem nenhuma delas:
+
+1. **`buscar_por_nome_arquivo` ignora palavras de tipo de documento**
+   ("QUITADO"/"NF"/"RECIBO"/"DEMONSTRATIVO"/"NOTA"/"FISCAL"/"BOLETO") antes do
+   fuzzy match — nomes como "ARGENTINA QUITADO 05.26.pdf" caíam abaixo do
+   limiar de 0.72 por causa da palavra extra.
+2. **`CNPJ_FLEX` tolera `-`/`.` como separador**, além de `/`, no CNPJ do
+   campo (ex: CO-ESTIPULANTE) — alguns recibos da FedCorp escrevem
+   "08.578.541-0001-03" em vez de "08.578.541/0001-03".
+3. **Match por código exato no nome do arquivo + desempate por cadastro em
+   CNPJ ambíguo** — ver seção "Predefinições de lote" acima.
 
 ## Ideia de melhoria discutida, não implementada
 

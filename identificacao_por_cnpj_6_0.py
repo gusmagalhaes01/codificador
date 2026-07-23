@@ -12,6 +12,7 @@ Interface em CustomTkinter, identidade visual "Swiss International Style".
 """
 
 import asyncio
+import copy
 import io
 import json
 import os
@@ -128,21 +129,80 @@ def familia_fonte():
 #  CONFIGURAÇÃO PERSISTENTE (config.json, ao lado do script)
 # ============================================================
 
+# Campos que vivem DENTRO de cada predefinição (perfil de lote). Cada perfil é
+# um "pacote" de configurações que o usuário troca de uma vez (ex: "hoje vou
+# processar boletos da FedCorp" vs "hoje é a F&F"), em vez de reconfigurar tudo
+# a cada lote.
+CHAVES_PERFIL = [
+    "cnpj_emitente", "preferir_cadastrado_em_ambiguo",
+    "usar_match_nome_arquivo", "usar_ocr", "dpi_ocr", "usar_ocr_regiao",
+    "regiao_x0", "regiao_y0", "regiao_x1", "regiao_y1",
+    "modo_texto", "tipo_servico", "tamanho_fonte", "cor_texto",
+    "renomear_com_codigo",
+]
+
+# Todos os perfis usam o mesmo pipeline de identificação
+# (buscar_por_nome_arquivo -> texto/OCR/CNPJ do conteúdo, ver
+# _processar_em_thread); o que muda de um perfil pro outro é só a
+# configuração: CNPJ emitente, se tenta casar pelo nome do arquivo primeiro,
+# como carimba o PDF, e (Notas Diversas) o desempate de CNPJ ambíguo.
+PERFIS_PADRAO = {
+    "fedcorp": {
+        "nome": "FedCorp",
+        "cnpj_emitente": "35.315.360/0001-67",
+        "preferir_cadastrado_em_ambiguo": False,
+        "usar_match_nome_arquivo": True,
+        "usar_ocr": False,
+        "dpi_ocr": 200,
+        "usar_ocr_regiao": False,
+        "regiao_x0": 0.0, "regiao_y0": 0.15, "regiao_x1": 1.0, "regiao_y1": 0.35,
+        "modo_texto": "rodape",
+        "tipo_servico": "CIPAA",
+        "tamanho_fonte": "14",
+        "cor_texto": "#000000",
+        "renomear_com_codigo": False,
+    },
+    "ff": {
+        "nome": "F&F",
+        "cnpj_emitente": "13.736.666/0001-54",
+        "preferir_cadastrado_em_ambiguo": False,
+        # F&F já nomeia os arquivos com o código embutido (ex: "PGR 10004
+        # Klosters.pdf"), então o match por nome do arquivo (que também
+        # reconhece código exato — ver buscar_por_nome_arquivo) resolve
+        # praticamente tudo sem precisar abrir o PDF.
+        "usar_match_nome_arquivo": True,
+        "usar_ocr": False,
+        "dpi_ocr": 200,
+        "usar_ocr_regiao": False,
+        "regiao_x0": 0.0, "regiao_y0": 0.15, "regiao_x1": 1.0, "regiao_y1": 0.35,
+        "modo_texto": "rodape",
+        "tipo_servico": "PGR",
+        "tamanho_fonte": "14",
+        "cor_texto": "#000000",
+        "renomear_com_codigo": False,
+    },
+    "notas_diversas": {
+        "nome": "Notas Diversas",
+        "cnpj_emitente": "",  # sem emitente fixo — lotes de administradoras variadas
+        "preferir_cadastrado_em_ambiguo": True,
+        "usar_match_nome_arquivo": False,
+        "usar_ocr": False,
+        "dpi_ocr": 200,
+        "usar_ocr_regiao": False,
+        "regiao_x0": 0.0, "regiao_y0": 0.15, "regiao_x1": 1.0, "regiao_y1": 0.35,
+        "modo_texto": "topo_esquerdo",
+        "tipo_servico": "",
+        "tamanho_fonte": "14",
+        "cor_texto": "#000000",
+        "renomear_com_codigo": False,
+    },
+}
+
+ORDEM_PREDEFINICOES = ["fedcorp", "ff", "notas_diversas"]
+
 DEFAULTS_CONFIG = {
-    "cnpj_emitente": "13.736.666/0001-54",
-    "usar_match_nome_arquivo": True,
-    "usar_ocr": False,
-    "dpi_ocr": 200,
-    "usar_ocr_regiao": False,
-    "regiao_x0": 0.0,
-    "regiao_y0": 0.15,
-    "regiao_x1": 1.0,
-    "regiao_y1": 0.35,
-    "modo_texto": "topo_esquerdo",
-    "tipo_servico": "CIPAA",
-    "tamanho_fonte": "14",
-    "cor_texto": "#000000",
-    "renomear_com_codigo": False,  # prefixar o código do condomínio no nome do PDF de saída
+    "predefinicao_ativa": "fedcorp",
+    "predefinicoes": PERFIS_PADRAO,
     "tema": "auto",  # "auto" | "claro" | "escuro"
 }
 
@@ -179,26 +239,58 @@ def _registrar_erro_config(detalhes):
 def carregar_config():
     """
     Lê config.json (ao lado do script). Se não existir, devolve uma cópia
-    dos defaults. Se existir mas estiver corrompido, loga a exceção em
-    erros.log e devolve uma cópia dos defaults — nunca lança exceção.
-    Sempre mescla sobre os defaults, então um config parcial não quebra.
+    dos defaults (3 predefinições). Se existir mas estiver corrompido, loga a
+    exceção em erros.log e devolve uma cópia dos defaults — nunca lança
+    exceção. Sempre mescla sobre os defaults, então um config parcial (de
+    uma versão antiga, sem alguma chave nova) não quebra.
+
+    Migração: versões anteriores ao recurso de predefinições salvavam os
+    campos de lote soltos no nível raiz do config (ex: "cnpj_emitente" direto,
+    sem "predefinicoes"). Quando isso é detectado, esses valores viram a base
+    do perfil "fedcorp" — era o único perfil que existia até então — sem
+    perder a configuração que o usuário já tinha.
     """
+    config = copy.deepcopy(DEFAULTS_CONFIG)
+
     pasta_script = pasta_base()
     caminho = os.path.join(pasta_script, NOME_CONFIG_PADRAO)
-
-    config = dict(DEFAULTS_CONFIG)
     if not os.path.isfile(caminho):
         return config
 
     try:
         with open(caminho, "r", encoding="utf-8") as f:
             dados = json.load(f)
-        if isinstance(dados, dict):
-            config.update(dados)
     except Exception:
         import traceback
         _registrar_erro_config(traceback.format_exc())
-        return dict(DEFAULTS_CONFIG)
+        return copy.deepcopy(DEFAULTS_CONFIG)
+
+    if not isinstance(dados, dict):
+        return config
+
+    if "tema" in dados:
+        config["tema"] = dados["tema"]
+
+    if "predefinicoes" not in dados:
+        # Formato antigo (campos de lote soltos no nível raiz) -> migra pro
+        # perfil FedCorp, que era o único configurável até então.
+        for chave in CHAVES_PERFIL:
+            if chave in dados:
+                config["predefinicoes"]["fedcorp"][chave] = dados[chave]
+        return config
+
+    # Formato novo: mescla cada predefinição salva sobre o default dela
+    # (preserva chaves novas que uma versão anterior do config não tinha).
+    predefinicoes_salvas = dados.get("predefinicoes")
+    if isinstance(predefinicoes_salvas, dict):
+        for chave_perfil, perfil_default in config["predefinicoes"].items():
+            perfil_salvo = predefinicoes_salvas.get(chave_perfil)
+            if isinstance(perfil_salvo, dict):
+                perfil_default.update(perfil_salvo)
+
+    ativa = dados.get("predefinicao_ativa")
+    if ativa in config["predefinicoes"]:
+        config["predefinicao_ativa"] = ativa
 
     return config
 
@@ -484,16 +576,55 @@ def remover_palavras_tipo_doc(texto_normalizado):
     return " ".join(tokens) if tokens else texto_normalizado
 
 
+def _codigos_do_cadastro(cadastro):
+    """dict código (string) -> cnpj_norm, a partir do cadastro."""
+    codigos = {}
+    for cnpj_norm, dados in cadastro.items():
+        codigo = dados.get("codigo")
+        if codigo:
+            codigos.setdefault(str(codigo).strip(), cnpj_norm)
+    return codigos
+
+
 def buscar_por_nome_arquivo(nome_arquivo, cadastro):
     """
-    Tenta casar o nome do arquivo (ex: "ARAUJO_LIMA_QUITADO_05_26.pdf") com o
-    nome de algum condomínio cadastrado, via fuzzy match.
+    Tenta identificar o condomínio a partir do nome do arquivo, em duas
+    etapas (a primeira que resolver, ganha — não combina as duas):
 
-    Retorna (cnpj_norm, score) se achar um match único e confiável, ou
-    (None, motivo) se não achar nada ou o resultado ficar ambíguo — nesse
-    caso o chamador deve cair para a extração de CNPJ do conteúdo do PDF.
+      1. Código exato: alguns lotes (ex: F&F) já nomeiam o arquivo com o
+         código do condomínio embutido, ex: "PGR 10004 Klosters.pdf" -> 10004.
+         Extrai os números do nome e confere se algum bate, letra por letra,
+         com um código do cadastro. Mais confiável que o fuzzy — sem essa
+         ambiguidade de nomes parecidos.
+      2. Fuzzy pelo nome: se nenhum número do nome bater com um código
+         cadastrado, cai para o comportamento original — compara o nome do
+         arquivo (limpo de palavras de tipo de documento) contra os nomes
+         cadastrados por similaridade de texto.
+
+    Retorna (cnpj_norm, descricao) se achar um match único e confiável
+    — `descricao` já pronta pra exibição, ex: "código no nome do arquivo" ou
+    "nome do arquivo, score 0.85" — ou (None, motivo) se não achar nada ou
+    ficar ambíguo; nesse caso o chamador deve cair para a extração de CNPJ do
+    conteúdo do PDF.
     """
-    alvo = normalizar_texto_busca(os.path.splitext(nome_arquivo)[0])
+    base = os.path.splitext(nome_arquivo)[0]
+
+    # --- 1) Código exato no nome do arquivo ---
+    numeros = re.findall(r"\d+", base)
+    if numeros and cadastro:
+        codigos_cadastro = _codigos_do_cadastro(cadastro)
+        candidatos_codigo = []
+        for numero in numeros:
+            cnpj_norm = codigos_cadastro.get(numero)
+            if cnpj_norm and cnpj_norm not in candidatos_codigo:
+                candidatos_codigo.append(cnpj_norm)
+        if len(candidatos_codigo) == 1:
+            return candidatos_codigo[0], "código no nome do arquivo"
+        if len(candidatos_codigo) > 1:
+            return None, "mais de um código possível no nome do arquivo"
+
+    # --- 2) Fuzzy pelo nome do condomínio (comportamento original) ---
+    alvo = normalizar_texto_busca(base)
     alvo = remover_palavras_tipo_doc(alvo)
     if not alvo or not cadastro:
         return None, "nome de arquivo vazio ou cadastro vazio"
@@ -518,7 +649,7 @@ def buscar_por_nome_arquivo(nome_arquivo, cadastro):
     if len(pontuacoes) > 1 and (melhor_score - pontuacoes[1][0]) < LIMIAR_DIFERENCA_AMBIGUA:
         return None, f"nome do arquivo ambíguo entre condomínios parecidos (scores próximos)"
 
-    return melhor_cnpj, melhor_score
+    return melhor_cnpj, f"nome do arquivo, score {melhor_score:.2f}"
 
 
 # ============================================================
@@ -629,30 +760,39 @@ class App(ctk.CTk):
         self.caminho_log = os.path.join(pasta_script, NOME_LOG_PADRAO)
         self.cadastro = carregar_cadastro(self.caminho_planilha)
 
-        # Variáveis - aba processamento (inicializadas a partir da config
-        # persistida, não mais de literais hardcoded — assim sobrevivem
-        # entre sessões)
+        # Predefinição ativa (FedCorp / F&F / Notas Diversas) — cada uma é um
+        # "pacote" de configurações de lote, trocado de uma vez pelos botões
+        # da tela principal. self.predefinicao_ativa guarda só a CHAVE
+        # ("fedcorp"/"ff"/"notas_diversas"); os valores em si vivem nas
+        # tk.Var abaixo, inicializadas a partir do perfil ativo.
+        self.predefinicao_ativa = tk.StringVar(value=self.config_app["predefinicao_ativa"])
+        perfil_inicial = self.config_app["predefinicoes"][self.config_app["predefinicao_ativa"]]
+
+        # Variáveis - aba processamento (inicializadas a partir do perfil
+        # ativo da config persistida, não mais de literais hardcoded — assim
+        # sobrevivem entre sessões)
         self.pasta_entrada = tk.StringVar()
         self.pasta_saida = tk.StringVar()
-        self.cnpj_emitente = tk.StringVar(value=self.config_app["cnpj_emitente"])
-        self.modo_texto = tk.StringVar(value=self.config_app["modo_texto"])
-        self.tamanho_fonte = tk.StringVar(value=self.config_app["tamanho_fonte"])
-        self.cor_texto = tk.StringVar(value=self.config_app["cor_texto"])
-        self.usar_ocr = tk.BooleanVar(value=self.config_app["usar_ocr"])
-        self.dpi_ocr = tk.IntVar(value=self.config_app["dpi_ocr"])
+        self.cnpj_emitente = tk.StringVar(value=perfil_inicial["cnpj_emitente"])
+        self.modo_texto = tk.StringVar(value=perfil_inicial["modo_texto"])
+        self.tamanho_fonte = tk.StringVar(value=perfil_inicial["tamanho_fonte"])
+        self.cor_texto = tk.StringVar(value=perfil_inicial["cor_texto"])
+        self.usar_ocr = tk.BooleanVar(value=perfil_inicial["usar_ocr"])
+        self.dpi_ocr = tk.IntVar(value=perfil_inicial["dpi_ocr"])
 
         # OCR por região (recorte) — opcional, calibrado pelo usuário
-        self.usar_ocr_regiao = tk.BooleanVar(value=self.config_app["usar_ocr_regiao"])
-        self.regiao_x0 = tk.DoubleVar(value=self.config_app["regiao_x0"])
-        self.regiao_y0 = tk.DoubleVar(value=self.config_app["regiao_y0"])
-        self.regiao_x1 = tk.DoubleVar(value=self.config_app["regiao_x1"])
-        self.regiao_y1 = tk.DoubleVar(value=self.config_app["regiao_y1"])
+        self.usar_ocr_regiao = tk.BooleanVar(value=perfil_inicial["usar_ocr_regiao"])
+        self.regiao_x0 = tk.DoubleVar(value=perfil_inicial["regiao_x0"])
+        self.regiao_y0 = tk.DoubleVar(value=perfil_inicial["regiao_y0"])
+        self.regiao_x1 = tk.DoubleVar(value=perfil_inicial["regiao_x1"])
+        self.regiao_y1 = tk.DoubleVar(value=perfil_inicial["regiao_y1"])
 
-        # Match por nome de arquivo (evita OCR na maioria dos casos)
-        self.usar_match_nome_arquivo = tk.BooleanVar(value=self.config_app["usar_match_nome_arquivo"])
+        # Match por nome de arquivo (código exato ou fuzzy — ver
+        # buscar_por_nome_arquivo; evita abrir o PDF na maioria dos casos)
+        self.usar_match_nome_arquivo = tk.BooleanVar(value=perfil_inicial["usar_match_nome_arquivo"])
 
         # Renomear o PDF de saída com o código do condomínio na frente
-        self.renomear_com_codigo = tk.BooleanVar(value=self.config_app["renomear_com_codigo"])
+        self.renomear_com_codigo = tk.BooleanVar(value=perfil_inicial["renomear_com_codigo"])
 
         # Variáveis - aba cadastro (formulário)
         self.form_cnpj = tk.StringVar()
@@ -721,6 +861,10 @@ class App(ctk.CTk):
         except Exception:
             pass
         self._recolorir()
+        # _recolorir não cobre a cor de borda/texto dos botões de
+        # predefinição (ativo x inativo é estado, não só tema) — reaplica
+        # com os valores do tema novo.
+        self._atualizar_botoes_predefinicao()
 
     def alternar_tema(self):
         """Cicla claro <-> escuro, aplica e persiste."""
@@ -1001,6 +1145,49 @@ class App(ctk.CTk):
         )
         hairline.pack(fill="x", padx=24, pady=(16, 24))
 
+        # --- PREDEFINIÇÃO (perfil de lote ativo: FedCorp / F&F / Notas
+        #     Diversas) — troca CNPJ emitente, identificação e carimbo de
+        #     uma vez, sem reconfigurar tudo a cada lote. ---
+        bloco_predef = registrar(
+            ctk.CTkFrame(container, corner_radius=0, fg_color=tema["fundo"]),
+            {"fg_color": "fundo"},
+        )
+        bloco_predef.pack(fill="x", padx=24, pady=(0, 24))
+
+        label_predef = registrar(
+            ctk.CTkLabel(bloco_predef, text="PREDEFINIÇÃO", font=(fonte, 11),
+                         text_color=tema["texto_secundario"], anchor="w"),
+            {"text_color": "texto_secundario"},
+        )
+        label_predef.pack(anchor="w", pady=(0, 4))
+
+        linha_predef = registrar(
+            ctk.CTkFrame(bloco_predef, corner_radius=0, fg_color=tema["fundo"]),
+            {"fg_color": "fundo"},
+        )
+        linha_predef.pack(fill="x")
+
+        # Cada botão é registrado no tema só pro hover (a cor de borda/texto
+        # que indica qual está ativo é responsabilidade de
+        # _atualizar_botoes_predefinicao, chamada logo abaixo e de novo
+        # sempre que o tema alterna — ver aplicar_tema).
+        self._botoes_predefinicao = {}
+        for i, chave in enumerate(ORDEM_PREDEFINICOES):
+            nome_perfil = self.config_app["predefinicoes"][chave]["nome"]
+            botao = registrar(
+                ctk.CTkButton(
+                    linha_predef, text=nome_perfil, corner_radius=0,
+                    fg_color="transparent", hover_color=tema["superficie"],
+                    border_width=1, font=(fonte, 13),
+                    command=lambda c=chave: self._trocar_predefinicao(c),
+                ),
+                {"hover_color": "superficie"},
+            )
+            botao.pack(side="left", padx=(0, 8) if i < len(ORDEM_PREDEFINICOES) - 1 else 0)
+            self._botoes_predefinicao[chave] = botao
+
+        self._atualizar_botoes_predefinicao()
+
         # --- CORPO ---
         corpo = registrar(
             ctk.CTkFrame(container, corner_radius=0, fg_color=tema["fundo"]),
@@ -1085,7 +1272,8 @@ class App(ctk.CTk):
 
         # a Tarefa 3 realoca este campo no modal de Configurações
         self.txt_tipo_servico = tk.Text(self._frame_oculto, width=30, height=3, wrap="none")
-        self.txt_tipo_servico.insert("1.0", self.config_app["tipo_servico"])
+        perfil_atual = self.config_app["predefinicoes"][self.predefinicao_ativa.get()]
+        self.txt_tipo_servico.insert("1.0", perfil_atual["tipo_servico"])
 
         self._atualizar_botao_processar()
         self._estilizar_ttk()
@@ -1111,6 +1299,97 @@ class App(ctk.CTk):
             self.botao_iniciar.configure(text=f"Processar {quantidade} PDFs", state="normal")
         else:
             self.botao_iniciar.configure(text="Processar PDFs", state="disabled")
+
+    def _trocar_predefinicao(self, chave):
+        """
+        Troca a predefinição ativa (FedCorp / F&F / Notas Diversas): aplica
+        os valores do perfil nas tk.Var vivas, persiste qual ficou ativa em
+        config.json, e atualiza os botões da tela principal.
+        """
+        if chave not in self.config_app["predefinicoes"]:
+            return
+
+        perfil = self.config_app["predefinicoes"][chave]
+        self.predefinicao_ativa.set(chave)
+        self.config_app["predefinicao_ativa"] = chave
+        salvar_config(self.config_app)
+
+        self.cnpj_emitente.set(perfil["cnpj_emitente"])
+        self.usar_match_nome_arquivo.set(perfil["usar_match_nome_arquivo"])
+        self.usar_ocr.set(perfil["usar_ocr"])
+        self.dpi_ocr.set(perfil["dpi_ocr"])
+        self.usar_ocr_regiao.set(perfil["usar_ocr_regiao"])
+        self.regiao_x0.set(perfil["regiao_x0"])
+        self.regiao_y0.set(perfil["regiao_y0"])
+        self.regiao_x1.set(perfil["regiao_x1"])
+        self.regiao_y1.set(perfil["regiao_y1"])
+        self.modo_texto.set(perfil["modo_texto"])
+        self.tamanho_fonte.set(perfil["tamanho_fonte"])
+        self.cor_texto.set(perfil["cor_texto"])
+        self.renomear_com_codigo.set(perfil["renomear_com_codigo"])
+        self.txt_tipo_servico.delete("1.0", "end")
+        self.txt_tipo_servico.insert("1.0", perfil["tipo_servico"])
+
+        self._atualizar_botoes_predefinicao()
+
+    def _perfil_ativo_modificado(self):
+        """
+        True se alguma das tk.Var "vivas" divergir do que está salvo na
+        predefinição ativa — ex: usuário mexeu em algo nas Configurações mas
+        ainda não clicou em Salvar. Usado só pra exibir o aviso "(modificado)"
+        no botão da tela principal; não bloqueia nada.
+        """
+        perfil = self.config_app["predefinicoes"].get(self.predefinicao_ativa.get())
+        if perfil is None:
+            return False
+        try:
+            atual = {
+                "cnpj_emitente": self.cnpj_emitente.get(),
+                "usar_match_nome_arquivo": self.usar_match_nome_arquivo.get(),
+                "usar_ocr": self.usar_ocr.get(),
+                "dpi_ocr": self.dpi_ocr.get(),
+                "usar_ocr_regiao": self.usar_ocr_regiao.get(),
+                "regiao_x0": self.regiao_x0.get(),
+                "regiao_y0": self.regiao_y0.get(),
+                "regiao_x1": self.regiao_x1.get(),
+                "regiao_y1": self.regiao_y1.get(),
+                "modo_texto": self.modo_texto.get(),
+                "tamanho_fonte": self.tamanho_fonte.get(),
+                "cor_texto": self.cor_texto.get(),
+                "renomear_com_codigo": self.renomear_com_codigo.get(),
+                "tipo_servico": self.txt_tipo_servico.get("1.0", "end-1c"),
+            }
+        except Exception:
+            return False
+        return any(atual[chave] != perfil.get(chave) for chave in atual)
+
+    def _atualizar_botoes_predefinicao(self):
+        """
+        Recolore os botões de predefinição da tela principal: o ativo com
+        contorno forte e texto primário, os demais em texto secundário.
+        Acrescenta "(modificado)" no ativo se as vars vivas divergirem do
+        que está salvo (ver _perfil_ativo_modificado).
+        """
+        if not hasattr(self, "_botoes_predefinicao"):
+            return
+        tema = self.tema_atual
+        ativa = self.predefinicao_ativa.get()
+        modificado = self._perfil_ativo_modificado()
+
+        for chave, botao in self._botoes_predefinicao.items():
+            nome_perfil = self.config_app["predefinicoes"][chave]["nome"]
+            try:
+                if chave == ativa:
+                    texto = f"{nome_perfil} (modificado)" if modificado else nome_perfil
+                    botao.configure(
+                        text=texto, border_color=tema["borda_forte"], text_color=tema["texto"],
+                    )
+                else:
+                    botao.configure(
+                        text=nome_perfil, border_color=tema["borda"], text_color=tema["texto_secundario"],
+                    )
+            except Exception:
+                pass
 
     # --------------------------------------------------------
     #  MODAL DE CONFIGURAÇÕES (Tarefa 3)
@@ -1152,9 +1431,11 @@ class App(ctk.CTk):
             "renomear_com_codigo": self.renomear_com_codigo.get(),
         }
 
+        nome_perfil = self.config_app["predefinicoes"][self.predefinicao_ativa.get()]["nome"]
+
         janela = ctk.CTkToplevel(self)
         self._janela_config = janela
-        janela.title("Configurações")
+        janela.title(f"Configurações — Editando: {nome_perfil}")
         janela.geometry("640x680")
         janela.minsize(560, 520)
         janela.resizable(True, True)
@@ -1423,11 +1704,15 @@ class App(ctk.CTk):
             self.tamanho_fonte.set(snapshot["tamanho_fonte"])
             self.cor_texto.set(snapshot["cor_texto"])
             self.renomear_com_codigo.set(snapshot["renomear_com_codigo"])
+            self._atualizar_botoes_predefinicao()
             janela.destroy()
 
         def salvar():
-            cnpj_norm = normalizar_cnpj(self.cnpj_emitente.get())
-            if not cnpj_valido(cnpj_norm):
+            cnpj_raw = self.cnpj_emitente.get().strip()
+            cnpj_norm = normalizar_cnpj(cnpj_raw)
+            # Vazio é válido (predefinições sem emitente fixo, ex: Notas
+            # Diversas); só bloqueia se foi preenchido e é inválido.
+            if cnpj_raw and not cnpj_valido(cnpj_norm):
                 messagebox.showerror(
                     "CNPJ inválido",
                     "O CNPJ da sua empresa não é válido. Confira os dígitos e tente novamente.",
@@ -1447,21 +1732,23 @@ class App(ctk.CTk):
             self.txt_tipo_servico.delete("1.0", "end")
             self.txt_tipo_servico.insert("1.0", novo_tipo_servico)
 
-            self.config_app["cnpj_emitente"] = self.cnpj_emitente.get()
-            self.config_app["usar_match_nome_arquivo"] = self.usar_match_nome_arquivo.get()
-            self.config_app["usar_ocr"] = self.usar_ocr.get()
-            self.config_app["dpi_ocr"] = self.dpi_ocr.get()
-            self.config_app["usar_ocr_regiao"] = self.usar_ocr_regiao.get()
-            self.config_app["regiao_x0"] = self.regiao_x0.get()
-            self.config_app["regiao_y0"] = self.regiao_y0.get()
-            self.config_app["regiao_x1"] = self.regiao_x1.get()
-            self.config_app["regiao_y1"] = self.regiao_y1.get()
-            self.config_app["modo_texto"] = self.modo_texto.get()
-            self.config_app["tamanho_fonte"] = self.tamanho_fonte.get()
-            self.config_app["cor_texto"] = self.cor_texto.get()
-            self.config_app["tipo_servico"] = novo_tipo_servico
-            self.config_app["renomear_com_codigo"] = self.renomear_com_codigo.get()
+            perfil = self.config_app["predefinicoes"][self.predefinicao_ativa.get()]
+            perfil["cnpj_emitente"] = cnpj_raw
+            perfil["usar_match_nome_arquivo"] = self.usar_match_nome_arquivo.get()
+            perfil["usar_ocr"] = self.usar_ocr.get()
+            perfil["dpi_ocr"] = self.dpi_ocr.get()
+            perfil["usar_ocr_regiao"] = self.usar_ocr_regiao.get()
+            perfil["regiao_x0"] = self.regiao_x0.get()
+            perfil["regiao_y0"] = self.regiao_y0.get()
+            perfil["regiao_x1"] = self.regiao_x1.get()
+            perfil["regiao_y1"] = self.regiao_y1.get()
+            perfil["modo_texto"] = self.modo_texto.get()
+            perfil["tamanho_fonte"] = self.tamanho_fonte.get()
+            perfil["cor_texto"] = self.cor_texto.get()
+            perfil["tipo_servico"] = novo_tipo_servico
+            perfil["renomear_com_codigo"] = self.renomear_com_codigo.get()
             salvar_config(self.config_app)
+            self._atualizar_botoes_predefinicao()
 
             janela.destroy()
 
@@ -2314,8 +2601,12 @@ class App(ctk.CTk):
             messagebox.showerror("Erro", "Selecione uma pasta de saída.")
             return
 
-        cnpj_emitente_norm = normalizar_cnpj(self.cnpj_emitente.get())
-        if len(cnpj_emitente_norm) != 14:
+        cnpj_emitente_raw = self.cnpj_emitente.get().strip()
+        cnpj_emitente_norm = normalizar_cnpj(cnpj_emitente_raw)
+        # Vazio é válido (predefinições sem emitente fixo, ex: Notas Diversas
+        # — lotes de administradoras variadas). Só bloqueia se foi preenchido
+        # mas o CNPJ digitado é inválido.
+        if cnpj_emitente_raw and len(cnpj_emitente_norm) != 14:
             messagebox.showerror("Erro", "CNPJ da empresa (campo 3) inválido.")
             return
 
@@ -2342,6 +2633,11 @@ class App(ctk.CTk):
                 messagebox.showerror("Erro", str(e))
                 return
 
+        # Ajuste que não é editável pelo modal — segue sempre o que a
+        # predefinição ativa define (não faz sentido "por sessão").
+        perfil_ativo = self.config_app["predefinicoes"][self.predefinicao_ativa.get()]
+        preferir_cadastrado_em_ambiguo = perfil_ativo["preferir_cadastrado_em_ambiguo"]
+
         self.botao_iniciar.configure(state="disabled")
         self.log_text.configure(state="normal")
         self.log_text.delete("1.0", "end")
@@ -2350,13 +2646,15 @@ class App(ctk.CTk):
         thread = threading.Thread(
             target=self._processar_em_thread,
             args=(entrada, saida, tamanho, cnpj_emitente_norm, self.usar_ocr.get(), int(self.dpi_ocr.get()),
-                  self.usar_match_nome_arquivo.get(), usar_ocr_regiao, retangulo_regiao),
+                  self.usar_match_nome_arquivo.get(), usar_ocr_regiao, retangulo_regiao,
+                  preferir_cadastrado_em_ambiguo),
             daemon=True,
         )
         thread.start()
 
     def _processar_em_thread(self, entrada, saida, tamanho, cnpj_emitente_norm, usar_ocr, dpi,
-                              usar_match_nome, usar_ocr_regiao, retangulo_regiao):
+                              usar_match_nome, usar_ocr_regiao, retangulo_regiao,
+                              preferir_cadastrado_em_ambiguo):
         modo = self.modo_texto.get()
         tipo_servico = self.txt_tipo_servico.get("1.0", "end-1c").strip()
         cor = self.cor_texto.get().strip() or "#000000"
@@ -2414,13 +2712,16 @@ class App(ctk.CTk):
                 sufixo_origem = ""
                 origem_humana = "pelo CNPJ do boleto"
 
-                # --- 1) Tenta casar pelo nome do arquivo, antes de abrir o PDF ---
+                # --- 1) Tenta casar pelo nome do arquivo, antes de abrir o PDF
+                #     (código exato no nome, ex: F&F; senão fuzzy pelo nome,
+                #     ex: FedCorp — ver buscar_por_nome_arquivo) ---
                 if usar_match_nome:
                     cnpj_nome, resultado = buscar_por_nome_arquivo(nome, self.cadastro)
                     if cnpj_nome is not None:
                         cnpj = cnpj_nome
-                        sufixo_origem = f" (via nome do arquivo, score {resultado:.2f})"
-                        origem_humana = "pelo nome do arquivo"
+                        sufixo_origem = f" (via {resultado})"
+                        origem_humana = ("pelo código no nome do arquivo" if resultado == "código no nome do arquivo"
+                                          else "pelo nome do arquivo")
                         total_match_nome += 1
 
                 # --- 2) Se não casou pelo nome, extrai do conteúdo do PDF ---
@@ -2456,6 +2757,16 @@ class App(ctk.CTk):
                                 total_ocr += 1
 
                     candidatos = extrair_cnpj_tomador(texto, cnpj_emitente_norm)
+
+                    # 2b.1) Lote sem emitente fixo (ex: Notas Diversas) — mais de
+                    #       um candidato costuma ser o emitente da nota (não
+                    #       cadastrado) + o condomínio tomador (cadastrado). Se
+                    #       sobrar exatamente um candidato já cadastrado, usa ele.
+                    if len(candidatos) > 1 and preferir_cadastrado_em_ambiguo:
+                        cadastrados = [c for c in candidatos if c in self.cadastro]
+                        if len(cadastrados) == 1:
+                            candidatos = cadastrados
+                            sufixo_origem += " (desempate: CNPJ cadastrado)"
 
                     # 2c) Nenhum CNPJ válido achado via OCR — re-tenta em DPI maior
                     #     (descarta leituras com dígito verificador errado, então um
