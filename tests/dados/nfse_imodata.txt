@@ -1,0 +1,151 @@
+AVISO DE DEBITO
+Cod: 11194Condominio: CONDOMINIO DO EDIFICIO MANHATAN
+Rio de Janeiro, 30 de abril de 2026
+Informamos a V.Sas. que estamos debitando em sua Conta Corrente, nesta data, o seguinte:
+DESCRICAO DOS SERVICOS
+TAXA DE ADMINISTRAÇÃO E SERVIÇOS REF ABRIL/2026
+VALOR TOTAL
+R$ 2.351,74
+Documento gerado automaticamente pelo sistema Workfluxe SaaS
+DANFSe v1.0
+Documento Auxiliar da NFS-e
+MUNICÍPIO DE RIO DE JANEIRO
+Chave de Acesso da NFS-e
+33045572231850191000104000000000283526044990328776
+Número da NFS-e
+2835
+Competência da NFS-e
+30/04/2026
+Data e Hora da emissão da NFS-e
+30/04/2026 15:51:36
+Número da DPS
+284726
+Série da DPS
+1
+Data e Hora da emissão da DPS
+30/04/2026 15:49:35
+A autenticidade desta NFS-e podeser verificada pela
+leitura deste código QR ou pela consulta da chave de
+acesso no portal nacional da NFS-e
+EMITENTE DA NFS-e
+Prestador do Serviço
+CNPJ / CPF / NIF
+31.850.191/0001-04
+Inscrição Municipal
+-
+Telefone
+(21) 2431-6111
+Nome / Nome Empresarial
+IMODATA ADMINISTRACAO COMPRA E VENDA DE IMOVEIS LTDA
+E-mail
+JEMS@IMODATA.NET
+Endereço
+RUA BARATA RIBEIRO, 774, COPACABANA
+Município
+Rio de Janeiro - RJ
+CEP
+22051-002
+Simples Nacional na Data de Competência
+Não Optante
+Regime de Apuração Tributária pelo SN
+-
+TOMADOR DO SERVIÇO CNPJ / CPF / NIF
+07.448.975/0001-26
+Inscrição Municipal
+-
+Telefone
+(02) 12240-6651
+Nome / Nome Empresarial
+CONDOMINIO DO EDIFICIO MANHATAN
+E-mail
+-
+Endereço
+AVENIDA ATLANTICA, 632, COPACABANA
+Município
+Rio de Janeiro - RJ
+CEP
+22010-000
+INTERMEDIÁRIO DO SERVIÇO NÃO IDENTIFICADO NA NFS-e
+SERVIÇO PRESTADO
+Código de Tributação Nacional
+17.12.01 - Administração em geral,
+inclusive de bens e negócios de...
+Código de Tributação Municipal
+005 - Administração de
+condomínios.
+Local da Prestação
+Rio de Janeiro - RJ
+País da Prestação
+-
+Descrição do Serviço
+TAXA DE ADMINISTRAÇÃO E SERVIÇOS REF ABRIL/2026
+TRIBUTAÇÃO MUNICIPAL
+Tributação do ISSQN
+Operação tributável
+País Resultado da Prestação do Serviço
+-
+Município de Incidênciado ISSQN
+Rio de Janeiro - RJ
+Regime Especial de Tributação
+Nenhum
+Tipo de Imunidade
+-
+Suspensão da Exigibilidade do ISSQN
+Não
+Número Processo Suspensão
+-
+Benefício Municipal
+-
+Valor do Serviço
+R$ 2.351,74
+Desconto Incondicionado
+-
+Total Deduções/Reduções
+-
+Cálculo do BM
+-
+BC ISSQN
+R$ 2.351,74
+Alíquota Aplicada
+5.00 %
+Retenção do ISSQN
+Não Retido
+ISSQN Apurado
+R$ 117,59
+TRIBUTAÇÃO FEDERAL
+IRRF
+-
+Contribuição Previdenciária - Retida
+-
+Contribuições Sociais - Retidas
+R$ 109,36
+Descrição Contrib. Sociais - Retidas
+3 - PIS/COFINS/CSLL Retidos
+PIS - Débito Apuração Própria
+R$ 15,29
+COFINS - Débito Apuração Própria
+R$ 70,55
+VALOR TOTAL DA NFS-E
+Valor do Serviço
+R$ 2.351,74
+Desconto Condicionado
+-
+Desconto Incondicionado
+-
+ISSQN Retido
+-
+Total das Retenções Federais
+R$ 109,36
+PIS/COFINS - Débito Apur. Própria
+R$ 85,84
+Valor Líquido da NFS-e
+R$ 2.242,38
+TOTAIS APROXIMADOS DOS TRIBUTOS
+Federais
+0.00 %
+Estaduais
+0.00 %
+Municipais
+0.00 %
+INFORMAÇÕES COMPLEMENTARES
+Powered by Nota Gateway

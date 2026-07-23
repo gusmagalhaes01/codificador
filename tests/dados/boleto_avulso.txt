@@ -1,0 +1,53 @@
+Instruções de Impressão
+- Imprima em impressora jato de tinta (ink jet) ou laser em qualidade normal ou alta (Não use modo econômico).
+- Utilize folha A4 (210 x 297 mm) ou Carta (216 x 279 mm) e margens mínimas à esquerda e à direita do formulário.
+- Corte na linha indicada. Não rasure, risque, fure ou dobre a região onde se encontra o código de barras.
+- Caso não apareça o código de barras no final, clique em F5 para atualizar esta tela.
+- Caso tenha problemas ao imprimir, copie a seqüencia numérica abaixo e pague no caixa eletrônico ou no internet banking:
+Linha Digitável: 34191.09008 02777.740412 02665.630006 8 14730000053800
+Número: 27777
+Valor: R$  538,00
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+Recibo do Pagador
+All Tec Segurança Eletrônica
+27.391.612/0001-09
+Rua Desembargador Lima Castro, 126
+24120-350 - Niterói - RJ
+341-7 34191.09008 02777.740412 02665.630006 8 14730000053800
+Beneficiário
+All Tec Segurança Eletrônica / CNPJ: 27.391.612/0001-09
+Rua Desembargador Lima Castro, 126 - Fonseca - 24120-350 - Niterói - RJ
+Vencimento Agencia/Codigo do beneficiário Número do documento Nosso número
+10/06/2026 0410 / 26656-3 27777 109/00027777-4
+Valor do documento (-) Descontos (+) Acréscimos (=) Valor cobrado
+R$  538,00
+Pagador
+CONDOMINIO VILLE DE BEAUVAIS / CNPJ: 29.273.778/0001-56
+Demonstrativo Autenticação mecânica
+Corte na linha pontilhada
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+341-7 34191.09008 02777.740412 02665.630006 8 14730000053800
+Local de pagamento Vencimento
+10/06/2026
+Beneficiário All Tec Segurança Eletrônica / CNPJ: 27.391.612/0001-09 Agência/Código beneficiário
+Rua Desembargador Lima Castro, 126 - Fonseca - 24120-350 - Niterói - RJ 0410 / 26656-3
+Data do documento Número do documento Espécie Doc. Aceite Data processamento Nosso número
+10/04/2026 27777 DM N 15/06/2026 109/00027777-4
+Uso do Banco Carteira Espécie Quantidade Valor Documento Valor Documento
+109 R$ 3/5 R$  538,00
+Instruções (texto de responsabilidade do beneficiário) (-) Desconto / Abatimentos)
+(-) Outras deduções
+(+) Mora / Multa
+(+) Outros acréscimos
+(=) Valor cobrado
+Pagador
+CONDOMINIO VILLE DE BEAUVAIS / CNPJ: 29.273.778/0001-56
+Rua Marquês de São Vicente, 67 - Gávea
+22451-041 - Rio de Janeiro - RJ
+Cód. Baixa
+Sacador/Avalista Autenticação mecânica - Ficha de Compensação
+Após o vencimento, cobrar  2% de multa
+Após o vencimento, cobrar 0,02% de juros de mora
+Boleto referente a NF-e de nº 4871
+Corte na linha pontilhada
+- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
