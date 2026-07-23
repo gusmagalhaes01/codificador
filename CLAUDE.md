@@ -269,3 +269,10 @@ no 6_0 — o `identificacao_por_cnpj_5_3.py` não tem nenhuma delas:
   (dicts `TEMA_CLARO`/`TEMA_ESCURO`). Todo widget CustomTkinter usa `corner_radius=0`.
 - Vocabulário da interface é para leigos: nunca expor "OCR" ou "DPI" em texto visível
   (usar "boletos escaneados", "qualidade de leitura").
+- Testes: `python -m unittest discover -s tests -p "test_*.py"` (ou duplo
+  clique em `rodar_testes.bat`). Usam `tests/cadastro_teste.py` (9 condomínios
+  fixos) e fixtures de texto em `tests/dados/`, nunca a planilha real. Cobrem
+  identificação por nome, extração de CNPJ, validação, desempate, nome de saída
+  e config/migração. A regra de desempate vive em `desempatar_por_cadastro`
+  (extraída do loop justamente para ser testável). Regenerar fixtures:
+  `python tests/_gerar_fixtures.py` (precisa dos PDFs-fonte, fora do repo).
