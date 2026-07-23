@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -17,6 +18,7 @@ import identificacao_por_cnpj_6_0 as app
 class TestConfig(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.tmp, ignore_errors=True)
         self._pasta_base_original = app.pasta_base
         app.pasta_base = lambda: self.tmp
 
