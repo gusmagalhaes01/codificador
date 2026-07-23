@@ -652,6 +652,22 @@ def buscar_por_nome_arquivo(nome_arquivo, cadastro):
     return melhor_cnpj, f"nome do arquivo, score {melhor_score:.2f}"
 
 
+def desempatar_por_cadastro(candidatos, cadastro):
+    """
+    Entre vários CNPJs candidatos, prefere o único que já está cadastrado.
+    Usado por lotes sem emitente fixo (ex: Notas Diversas), onde os candidatos
+    costumam ser o emitente da nota (não cadastrado) + o condomínio tomador
+    (cadastrado). Devolve [o_cadastrado] se houver exatamente um cadastrado;
+    caso contrário devolve a lista inalterada.
+    """
+    if len(candidatos) <= 1:
+        return candidatos
+    cadastrados = [c for c in candidatos if c in cadastro]
+    if len(cadastrados) == 1:
+        return cadastrados
+    return candidatos
+
+
 # ============================================================
 #  OVERLAY / ESCRITA NO PDF (igual às versões anteriores)
 # ============================================================
@@ -2762,10 +2778,10 @@ class App(ctk.CTk):
                     #       um candidato costuma ser o emitente da nota (não
                     #       cadastrado) + o condomínio tomador (cadastrado). Se
                     #       sobrar exatamente um candidato já cadastrado, usa ele.
-                    if len(candidatos) > 1 and preferir_cadastrado_em_ambiguo:
-                        cadastrados = [c for c in candidatos if c in self.cadastro]
-                        if len(cadastrados) == 1:
-                            candidatos = cadastrados
+                    if preferir_cadastrado_em_ambiguo:
+                        desempatados = desempatar_por_cadastro(candidatos, self.cadastro)
+                        if desempatados != candidatos:
+                            candidatos = desempatados
                             sufixo_origem += " (desempate: CNPJ cadastrado)"
 
                     # 2c) Nenhum CNPJ válido achado via OCR — re-tenta em DPI maior
