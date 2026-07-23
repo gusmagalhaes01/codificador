@@ -748,7 +748,7 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("Dark" if self.nome_tema == "escuro" else "Light")
 
         super().__init__()
-        self.title("Codificador v6.1.0")
+        self.title("Codificador v6.2.0")
         self.geometry("780x680")
         self.minsize(620, 420)
         self.resizable(True, True)
