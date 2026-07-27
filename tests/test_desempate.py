@@ -9,7 +9,7 @@ _AQUI = os.path.dirname(os.path.abspath(__file__))
 if _AQUI not in sys.path:
     sys.path.insert(0, _AQUI)
 
-import identificacao_por_cnpj_6_0 as app
+import logica as app
 from cadastro_teste import CADASTRO_TESTE
 
 IMODATA_EMITENTE = "31850191000104"   # não cadastrado

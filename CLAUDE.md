@@ -7,12 +7,17 @@ identifica a qual condomínio cada documento pertence (via CNPJ do tomador) e es
 o código do condomínio no PDF (rodapé ou canto superior), comparando com um cadastro
 em planilha `.xlsx`.
 
-Arquivo principal: `identificacao_por_cnpj_6_0.py` (interface CustomTkinter, redesign
-Swiss — ver seção "Redesign visual 6_0"). A versão anterior `identificacao_por_cnpj_5_3.py`
-(Tkinter/ttk) segue no repo como referência. A lógica de identificação começou
-byte-idêntica entre as duas (o 6_0 nasceu como redesign exclusivo de interface),
-mas divergiu depois em 3 pontos, só no 6_0 — ver "Divergências de lógica só no
-6_0 (pós-redesign)".
+Arquivo principal: `identificacao_por_cnpj_6_0.py` — só a interface CustomTkinter
+(classe `App`, redesign Swiss — ver seção "Redesign visual 6_0") e o `main`. Toda a
+lógica de negócio (extração/validação de CNPJ, busca por nome, desempate, config
+e predefinições, leitura de PDF/OCR, carimbo no PDF, persistência da planilha)
+vive em `logica.py` — módulo sem nenhuma dependência de interface, importado com
+`from logica import (...)` no topo do arquivo principal. É esse módulo que os
+testes (`tests/`) importam diretamente (`import logica as app`). A versão anterior
+`identificacao_por_cnpj_5_3.py` (Tkinter/ttk, monolítico, não modularizado) segue
+no repo como referência. A lógica de identificação começou byte-idêntica entre 5_3
+e 6_0 (o 6_0 nasceu como redesign exclusivo de interface), mas divergiu depois em
+3 pontos, só no 6_0 — ver "Divergências de lógica só no 6_0 (pós-redesign)".
 Cadastro de condomínios: `cadastro_condominios.xlsx` (colunas: CNPJ, Código, Nome)
 Configuração da interface: `config.json` (ao lado do script, gitignored) — 3
 predefinições de lote (FedCorp/F&F/Notas Diversas, ver seção "Predefinições de

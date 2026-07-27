@@ -8,7 +8,7 @@ import sys
 
 _RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _RAIZ)
-from identificacao_por_cnpj_6_0 import extrair_texto_pdf
+from logica import extrair_texto_pdf
 
 FONTES = {
     "fedcorp_recibo_hifen.txt": r"C:\Users\Dell\Downloads\BENEFICIO 07-2026 BOLETO\NF-669.pdf",
