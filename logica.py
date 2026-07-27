@@ -606,6 +606,64 @@ def buscar_por_nome_arquivo(nome_arquivo, cadastro):
     return melhor_cnpj, f"nome do arquivo, score {melhor_score:.2f}"
 
 
+def candidatos_por_nome(nome_arquivo, texto, cadastro, limite=3):
+    """
+    Sugere até `limite` CNPJs candidatos comparando o nome do arquivo (e o
+    texto extraído do PDF, se houver) contra os nomes do cadastro — usado só
+    como SUGESTÃO para escolha manual (nunca decide sozinho), diferente de
+    buscar_por_nome_arquivo, que bloqueia em caso de ambiguidade.
+
+    Chamada quando a extração de CNPJ do conteúdo não achou nenhum candidato
+    (arquivo escaneado sem CNPJ legível): em vez de deixar o pendente sem
+    nenhuma ação possível, oferece os nomes parecidos pro funcionário
+    escolher depois de abrir o PDF — a decisão final continua sendo por
+    CNPJ (do cadastro), só que escolhida por uma pessoa, não inferida
+    sozinha. Por isso NÃO aplica o corte de LIMIAR_DIFERENCA_AMBIGUA: é
+    assim que os dois "CONDE DE BONFIM" aparecem juntos na lista em vez de
+    sumirem, como aconteceria em buscar_por_nome_arquivo.
+
+    Devolve lista de CNPJs normalizados, do mais provável ao menos provável,
+    só os que atingem LIMIAR_SCORE_NOME; lista vazia se nada atingir o piso.
+    """
+    alvos = []
+    base = os.path.splitext(nome_arquivo)[0]
+    alvo_arquivo = remover_palavras_tipo_doc(normalizar_texto_busca(base))
+    if alvo_arquivo:
+        alvos.append(alvo_arquivo)
+    if texto:
+        nome_sugerido = sugerir_nome_condominio(texto)
+        if nome_sugerido:
+            alvo_texto = normalizar_texto_busca(nome_sugerido)
+            if alvo_texto:
+                alvos.append(alvo_texto)
+
+    if not alvos or not cadastro:
+        return []
+
+    melhor_score_por_cnpj = {}
+    for cnpj_norm, dados in cadastro.items():
+        nome_cad = normalizar_texto_busca(dados.get("nome", ""))
+        if not nome_cad:
+            continue
+        melhor = max(SequenceMatcher(None, alvo, nome_cad).ratio() for alvo in alvos)
+        melhor_score_por_cnpj[cnpj_norm] = melhor
+
+    candidatos = sorted(melhor_score_por_cnpj.items(), key=lambda kv: kv[1], reverse=True)
+    if not candidatos or candidatos[0][1] < LIMIAR_SCORE_NOME:
+        return []
+
+    # Inclui o melhor e qualquer outro perto o bastante dele (mesmo piso de
+    # "ambíguo" usado em buscar_por_nome_arquivo) — é assim que os dois
+    # "CONDE DE BONFIM" aparecem juntos, em vez de um deles ficar de fora só
+    # porque o score individual dele é um pouco mais baixo.
+    melhor_score = candidatos[0][1]
+    proximos = [
+        cnpj_norm for cnpj_norm, score in candidatos
+        if melhor_score - score < LIMIAR_DIFERENCA_AMBIGUA
+    ]
+    return proximos[:limite]
+
+
 def desempatar_por_cadastro(candidatos, cadastro):
     """
     Entre vários CNPJs candidatos, prefere o único que já está cadastrado.

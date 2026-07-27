@@ -54,10 +54,14 @@ Comparação:
 - Cada alvo é comparado contra todos os nomes do cadastro
   (`SequenceMatcher`, mesmo método de `buscar_por_nome_arquivo`); o maior
   score de cada CNPJ (considerando os dois alvos) é o que conta.
-- Filtra por `score >= LIMIAR_SCORE_NOME` (0.72 — mesmo piso do match
-  automático, não inventa um novo número).
-- **Sem** o corte de `LIMIAR_DIFERENCA_AMBIGUA`: é assim que os dois "CONDE
-  DE BONFIM" aparecem juntos na lista em vez de sumirem.
+- Só sugere alguma coisa se o melhor score atingir `LIMIAR_SCORE_NOME` (0.72
+  — mesmo piso do match automático). Atingindo esse piso, inclui o melhor
+  candidato **e** qualquer outro cujo score fique a menos de
+  `LIMIAR_DIFERENCA_AMBIGUA` (0.08) de distância dele — é o mesmo cálculo que
+  `buscar_por_nome_arquivo` usa pra decidir "é ambíguo", só que aqui, em vez
+  de descartar tudo, devolve o grupo inteiro. É assim que os dois "CONDE DE
+  BONFIM" aparecem juntos na lista em vez de sumirem (um deles sozinho não
+  bateria o piso de 0.72, mas fica perto o bastante do outro pra entrar).
 - Ordena por score decrescente, corta em `limite` (padrão 3).
 
 ## Onde entra no fluxo

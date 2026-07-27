@@ -66,7 +66,7 @@ from logica import (
     extrair_texto_ocr, extrair_texto_ocr_regiao, proximo_dpi_maior,
     extrair_cnpj_tomador, sugerir_nome_condominio,
     normalizar_texto_busca, remover_palavras_tipo_doc, _codigos_do_cadastro,
-    buscar_por_nome_arquivo, desempatar_por_cadastro,
+    buscar_por_nome_arquivo, desempatar_por_cadastro, candidatos_por_nome,
     criar_overlay, processar_pdf, carregar_cadastro, salvar_cadastro,
 )
 
@@ -2204,12 +2204,21 @@ class App(ctk.CTk):
                                 origem_humana = "pelo CNPJ (releitura)"
 
                 if len(candidatos) == 0:
-                    pendentes.append((nome, "CNPJ do tomador não encontrado no PDF" + sufixo_origem))
-                    msg = f"[{idx}/{len(arquivos)}] ⚠ {nome} — CNPJ não encontrado{sufixo_origem}"
-                    res_pendentes.append({
-                        "arquivo": nome, "caminho": caminho_entrada_pdf, "tipo": "nao_lido",
-                        "motivo": "Não foi possível ler", "cnpj": None, "nome_sugerido": None,
-                        "candidatos": None})
+                    candidatos_nome = candidatos_por_nome(nome, texto, self.cadastro)
+                    if candidatos_nome:
+                        pendentes.append((nome, "Nome parecido encontrado" + sufixo_origem))
+                        msg = f"[{idx}/{len(arquivos)}] ⚠ {nome} — nome parecido encontrado{sufixo_origem}"
+                        res_pendentes.append({
+                            "arquivo": nome, "caminho": caminho_entrada_pdf, "tipo": "ambiguo",
+                            "motivo": "Nome parecido encontrado", "cnpj": None, "nome_sugerido": None,
+                            "candidatos": candidatos_nome})
+                    else:
+                        pendentes.append((nome, "CNPJ do tomador não encontrado no PDF" + sufixo_origem))
+                        msg = f"[{idx}/{len(arquivos)}] ⚠ {nome} — CNPJ não encontrado{sufixo_origem}"
+                        res_pendentes.append({
+                            "arquivo": nome, "caminho": caminho_entrada_pdf, "tipo": "nao_lido",
+                            "motivo": "Não foi possível ler", "cnpj": None, "nome_sugerido": None,
+                            "candidatos": None})
                 elif len(candidatos) > 1:
                     lista = ", ".join(formatar_cnpj(c) for c in candidatos)
                     pendentes.append((nome, f"CNPJ ambíguo: {lista}" + sufixo_origem))

@@ -92,6 +92,17 @@ similaridade de nome sozinha.
   função de lógica de identificação foi tocada (as 14+ funções são byte-idênticas ao
   5_3) e o formato de `processamento.log`/`erros.log`/planilha foi preservado. Ver
   "Redesign visual 6_0".
+- **v6.6.0 — sugestão por nome nos pendentes "Não foi possível ler"**: quando a
+  extração de CNPJ do conteúdo não acha nenhum candidato (escaneado sem CNPJ
+  legível), `candidatos_por_nome()` (`logica.py`) tenta sugerir condomínios por
+  similaridade de nome (arquivo + texto OCR) e o pendente vira "Nome parecido
+  encontrado", habilitando o botão "Escolher" que antes ficava indisponível
+  (só "Abrir PDF"). Ao contrário de `buscar_por_nome_arquivo`, não aplica o
+  corte de ambiguidade que bloqueia decisão automática — aqui a escolha final é
+  sempre manual, então mostrar os candidatos parecidos (ex: os dois "CONDE DE
+  BONFIM" juntos) é o objetivo, não um bug. Mantém a regra de nunca identificar
+  **automaticamente** só por nome — só o funcionário decide, depois de abrir o
+  PDF. Ver "Cuidado: condomínios com nomes parecidos".
 
 ## Melhorias implementadas (a partir da versão 5_3)
 
