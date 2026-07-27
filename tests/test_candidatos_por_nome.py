@@ -42,6 +42,21 @@ class TestCandidatosPorNome(unittest.TestCase):
         candidatos = app.candidatos_por_nome("CONDE DE BONFIM.pdf", "", CADASTRO_TESTE, limite=1)
         self.assertEqual(len(candidatos), 1)
 
+    def test_distratores_nao_escondem_o_irmao_verdadeiro(self):
+        # Regressão: contra o cadastro real (~750 condomínios), nomes sem
+        # relação nenhuma mas com trechos parecidos ("CONDE DE ...") pontuam
+        # mais alto que "CENTRO COM CONDE DE BONFIM RES" e a empurravam pra
+        # fora do top-3 — só "CENTRO COM CONDE DE BONFIM" (sem "RES")
+        # aparecia. limite=8 (piso escolhido contra o cadastro real) resolve.
+        cadastro_com_distratores = dict(CADASTRO_TESTE)
+        cadastro_com_distratores.update({
+            "07832328000113": {"codigo": "10929", "nome": "VISCONDE DE CABO FRIO"},
+            "01527194000140": {"codigo": "11174", "nome": "CONDE DE VALMONT"},
+        })
+        candidatos = app.candidatos_por_nome("CONDE DE BONFIM.pdf", "", cadastro_com_distratores)
+        self.assertIn("05695194000100", candidatos)  # RES
+        self.assertIn("29361458000158", candidatos)  # sem RES
+
 
 if __name__ == "__main__":
     unittest.main()

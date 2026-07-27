@@ -34,15 +34,15 @@ inferido automaticamente.
 Nova função em `logica.py`, `candidatos_por_nome`:
 
 ```python
-def candidatos_por_nome(nome_arquivo, texto, cadastro, limite=3):
+def candidatos_por_nome(nome_arquivo, texto, cadastro, limite=8):
     """Sugere até `limite` CNPJs candidatos comparando o nome do arquivo e o
     texto extraído do PDF (se houver) contra os nomes do cadastro — usado só
     como SUGESTÃO para escolha manual (nunca decide sozinho), diferente de
     buscar_por_nome_arquivo que bloqueia em caso de ambiguidade. Descarta
     palavras de tipo de documento do nome do arquivo (mesmo tratamento de
     buscar_por_nome_arquivo). Devolve lista de CNPJs normalizados, do mais
-    provável ao menos provável, só os que atingem LIMIAR_SCORE_NOME; lista
-    vazia se nada atingir o piso."""
+    provável ao menos provável; lista vazia se o melhor candidato não
+    atingir LIMIAR_SCORE_NOME."""
 ```
 
 Comparação:
@@ -62,6 +62,14 @@ Comparação:
   de descartar tudo, devolve o grupo inteiro. É assim que os dois "CONDE DE
   BONFIM" aparecem juntos na lista em vez de sumirem (um deles sozinho não
   bateria o piso de 0.72, mas fica perto o bastante do outro pra entrar).
+  `limite=8` é só um teto de segurança pro popup não ficar absurdamente
+  longo — **testado contra a planilha real** (~750 condomínios): o grupo de
+  nomes parecidos com "CONDE DE BONFIM" tem 4 candidatos (os dois
+  verdadeiros + 2 falsos positivos por acaso), cabendo dentro do teto sem
+  cortar nenhum. Uma primeira versão usava `limite=3`, que cortava
+  exatamente o candidato certo quando havia falsos positivos com score mais
+  alto — só apareceu testando contra o cadastro real, não contra os 9
+  condomínios fixos dos testes automatizados.
 - Ordena por score decrescente, corta em `limite` (padrão 3).
 
 ## Onde entra no fluxo
@@ -105,8 +113,10 @@ fixo de testes (`tests/cadastro_teste.py`):
 - Texto OCR com nome do condomínio, nome do arquivo genérico (ex:
   "DIGITALIZACAO_001.pdf") → usa o alvo do texto, lista com o CNPJ certo.
 - `texto` vazio (string `""`) → não quebra, usa só o nome do arquivo.
-- `limite` respeitado quando há mais de 3 candidatos acima do piso (usar um
-  cadastro maior nesse teste específico, ou ajustar `limite` no teste).
+- `limite` respeitado (testado com `limite=1`).
+- Distratores com score mais alto que o candidato certo não escondem esse
+  candidato do resultado (regressão do bug encontrado testando contra a
+  planilha real — ver acima).
 
 ## Fora de escopo
 

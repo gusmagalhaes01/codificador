@@ -606,7 +606,7 @@ def buscar_por_nome_arquivo(nome_arquivo, cadastro):
     return melhor_cnpj, f"nome do arquivo, score {melhor_score:.2f}"
 
 
-def candidatos_por_nome(nome_arquivo, texto, cadastro, limite=3):
+def candidatos_por_nome(nome_arquivo, texto, cadastro, limite=8):
     """
     Sugere até `limite` CNPJs candidatos comparando o nome do arquivo (e o
     texto extraído do PDF, se houver) contra os nomes do cadastro — usado só
@@ -618,12 +618,20 @@ def candidatos_por_nome(nome_arquivo, texto, cadastro, limite=3):
     nenhuma ação possível, oferece os nomes parecidos pro funcionário
     escolher depois de abrir o PDF — a decisão final continua sendo por
     CNPJ (do cadastro), só que escolhida por uma pessoa, não inferida
-    sozinha. Por isso NÃO aplica o corte de LIMIAR_DIFERENCA_AMBIGUA: é
-    assim que os dois "CONDE DE BONFIM" aparecem juntos na lista em vez de
-    sumirem, como aconteceria em buscar_por_nome_arquivo.
+    sozinha.
 
-    Devolve lista de CNPJs normalizados, do mais provável ao menos provável,
-    só os que atingem LIMIAR_SCORE_NOME; lista vazia se nada atingir o piso.
+    Exige que o MELHOR score atinja LIMIAR_SCORE_NOME (0.72); a partir daí,
+    inclui também qualquer outro candidato a menos de LIMIAR_DIFERENCA_AMBIGUA
+    (0.08) de distância do melhor — mesmo cálculo de "é ambíguo" usado em
+    buscar_por_nome_arquivo, só que aqui, em vez de descartar tudo, devolve o
+    grupo inteiro. `limite` é só um teto de segurança pro popup não ficar
+    absurdamente longo, calibrado contra o cadastro real (~750 condomínios):
+    o grupo de nomes parecidos com "CONDE DE BONFIM" (os dois verdadeiros +
+    2 falsos positivos por acaso, ex: "CONDE DE VALMONT") tem 4 candidatos
+    dentro da janela — `limite=8` sobra margem sem cortar nenhum.
+
+    Devolve lista de CNPJs normalizados, do mais provável ao menos provável;
+    lista vazia se o melhor candidato não atingir LIMIAR_SCORE_NOME.
     """
     alvos = []
     base = os.path.splitext(nome_arquivo)[0]
@@ -652,10 +660,13 @@ def candidatos_por_nome(nome_arquivo, texto, cadastro, limite=3):
     if not candidatos or candidatos[0][1] < LIMIAR_SCORE_NOME:
         return []
 
-    # Inclui o melhor e qualquer outro perto o bastante dele (mesmo piso de
-    # "ambíguo" usado em buscar_por_nome_arquivo) — é assim que os dois
-    # "CONDE DE BONFIM" aparecem juntos, em vez de um deles ficar de fora só
-    # porque o score individual dele é um pouco mais baixo.
+    # Inclui o melhor e qualquer outro perto o bastante dele (mesmo cálculo
+    # de "ambíguo" de buscar_por_nome_arquivo) — é assim que os dois "CONDE
+    # DE BONFIM" aparecem juntos, mesmo o "RES" tendo score individual abaixo
+    # de LIMIAR_SCORE_NOME. `limite` é só um teto de segurança pro popup não
+    # ficar absurdamente longo — contra o cadastro real (~750 condomínios),
+    # o grupo de nomes parecidos com "CONDE DE BONFIM" tem 4 candidatos
+    # dentro da janela, então o padrão (8) sobra margem sem cortar nenhum.
     melhor_score = candidatos[0][1]
     proximos = [
         cnpj_norm for cnpj_norm, score in candidatos
