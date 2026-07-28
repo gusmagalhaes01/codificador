@@ -838,7 +838,6 @@ class App(ctk.CTk):
         janela.resizable(True, True)
         janela.configure(fg_color=tema["fundo"])
         janela.transient(self)
-        janela.grab_set()
 
         def rotulo_secao(parent, texto):
             lbl = ctk.CTkLabel(
@@ -1348,7 +1347,6 @@ class App(ctk.CTk):
         janela.title("Selecione a região com o mouse")
         janela.resizable(True, True)
         janela.transient(self)
-        janela.grab_set()
 
         ttk.Label(
             janela,
