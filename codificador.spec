@@ -3,12 +3,19 @@
 Receita de build do Codificador (PyInstaller).
 
 Uso:  pyinstaller --noconfirm codificador.spec
-      (ou duplo clique em gerar_exe.bat, que também confere o ambiente)
+      (ou duplo clique em gerar_exe.bat, que confere o ambiente, roda os
+      testes e monta o CODIFICADOR.zip de distribuição)
 
-Gera um único Codificador.exe em dist/. Escolhido --onefile por ser um
-arquivo só para distribuir; pasta_base() usa sys.executable quando
-frozen, então config.json, os logs e cadastro_condominios.xlsx continuam
-ficando AO LADO do .exe (e não dentro do pacote), como o app espera.
+Gera dist/Codificador/ — uma PASTA com o .exe e o _internal/, que é
+distribuída zipada como CODIFICADOR.zip. Modo --onedir de propósito, não
+--onefile: o --onefile extrairia ~40 MB no temp a cada abertura (app de
+uso diário, abertura lenta incomoda) e é mais suscetível a alarme falso de
+antivírus/SmartScreen. O preço é o usuário ter de manter a pasta inteira
+junta, o que o zip resolve.
+
+pasta_base() usa sys.executable quando frozen, então config.json, os logs
+e o cadastro_condominios.xlsx ficam AO LADO do .exe, dentro dessa pasta —
+por isso a planilha vai junto no zip (ver gerar_exe.bat).
 
 Pontos que já quebraram o exe antes e por isso estão explícitos aqui:
 
@@ -68,15 +75,13 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,  # binários vão para o _internal/ via COLLECT
     name="Codificador",
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    runtime_tmpdir=None,
     console=False,          # app gráfico: sem janela de console atrás
     disable_windowed_traceback=False,
     argv_emulation=False,
@@ -84,4 +89,14 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon="icone.ico",
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name="Codificador",     # resulta em dist/Codificador/
 )

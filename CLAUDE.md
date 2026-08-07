@@ -361,11 +361,18 @@ no 6_0 — o `identificacao_por_cnpj_5_3.py` não tem nenhuma delas:
   (dicts `TEMA_CLARO`/`TEMA_ESCURO`). Todo widget CustomTkinter usa `corner_radius=0`.
 - Vocabulário da interface é para leigos: nunca expor "OCR" ou "DPI" em texto visível
   (usar "boletos escaneados", "qualidade de leitura").
-- Gerar o `.exe`: `pyinstaller --noconfirm codificador.spec` (ou duplo clique
-  em `gerar_exe.bat`, que instala as dependências, roda os testes e só
-  empacota se passarem). A receita é `codificador.spec`, versionada de
+- Gerar a distribuição: duplo clique em `gerar_exe.bat` (instala as
+  dependências, roda os testes, só empacota se passarem, e monta o
+  `dist/CODIFICADOR.zip`). A receita é `codificador.spec`, versionada de
   propósito — o `.gitignore` ignora `*.spec` genéricos mas abre exceção pra
   ela, porque antes o build só existia na máquina de quem o fazia.
+  **O formato entregue é `--onedir` zipado, não `--onefile`**: o entregável é
+  o `CODIFICADOR.zip`, contendo a pasta `Codificador/` com o executável, o
+  `_internal/` e o `cadastro_condominios.xlsx` ao lado dele (é ali que
+  `pasta_base()` procura o cadastro e grava `config.json` e os logs). Com
+  `--onefile` o app extrairia ~40 MB no temp a cada abertura, num programa de
+  uso diário, e chamaria mais atenção do antivírus/SmartScreen. O usuário
+  precisa extrair a pasta inteira — o `.exe` não roda sozinho.
   **O ambiente do build precisa bater com `requirements.txt`**: o PyInstaller
   não empacota o que não está instalado, então gerar o exe numa máquina sem
   `winocr` produz um binário com a leitura de boletos escaneados morta, sem

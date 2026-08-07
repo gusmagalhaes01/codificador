@@ -21,18 +21,29 @@ if errorlevel 1 (
 )
 
 echo.
-echo [3/3] Empacotando...
+echo [3/4] Empacotando...
 python -m PyInstaller --noconfirm codificador.spec
 if errorlevel 1 goto erro
 
 echo.
+echo [4/4] Montando o CODIFICADOR.zip...
+rem A planilha vai DENTRO da pasta do exe: pasta_base() resolve para o
+rem diretorio do executavel, entao e ali que o app procura o cadastro e
+rem grava config.json e os logs.
+copy /Y cadastro_condominios.xlsx "dist\Codificador\" >nul
+if errorlevel 1 goto erro
+if exist "dist\CODIFICADOR.zip" del /Q "dist\CODIFICADOR.zip"
+powershell -NoProfile -Command "Compress-Archive -Path 'dist\Codificador' -DestinationPath 'dist\CODIFICADOR.zip' -Force"
+if errorlevel 1 goto erro
+
+echo.
 echo ============================================
-echo   Pronto: dist\Codificador.exe
+echo   Pronto: dist\CODIFICADOR.zip
 echo ============================================
 echo.
-echo Lembre-se: cadastro_condominios.xlsx precisa ficar
-echo NA MESMA PASTA do .exe (o app grava config.json e os
-echo logs ao lado dele).
+echo O zip contem a pasta Codificador\ com o executavel,
+echo o _internal\ e o cadastro_condominios.xlsx.
+echo Extrair a pasta INTEIRA - o exe nao roda sozinho.
 echo.
 pause
 exit /b 0
