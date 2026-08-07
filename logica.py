@@ -23,6 +23,7 @@ from pypdf import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
 from reportlab.lib.colors import HexColor
 from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Font
 
 # --- PyMuPDF para renderizar páginas como imagem ---
 try:
@@ -769,4 +770,245 @@ def salvar_cadastro(caminho, cadastro):
     sheet.column_dimensions["A"].width = 20
     sheet.column_dimensions["B"].width = 12
     sheet.column_dimensions["C"].width = 35
+    wb.save(caminho)
+
+
+# ============================================================
+#  EXTRAÇÃO DE DADOS DA NFS-e (DANFSe) PARA PLANILHA
+# ============================================================
+#
+#  Contrapartida do carimbo: em vez de escrever o código no PDF, lê os dados
+#  da nota e joga numa planilha. Vale só para NFS-e com texto nativo (DANFSe
+#  da prefeitura do Rio, como as da predefinição F&F), onde cada campo vem
+#  rotulado ("Rótulo\n \nValor").
+#
+#  Decisão importante: aqui NÃO se usa OCR, de propósito. CNPJ tem dígito
+#  verificador, então um erro de leitura é detectável (é o que sustenta a
+#  escada de DPI em extrair_cnpj_tomador); valor e data não têm nada disso —
+#  "1.234,56" lido como "1.234,58" passaria direto para uma planilha
+#  financeira sem ninguém perceber. Documento sem texto nativo é reportado
+#  como não lido, nunca "chutado".
+
+#  Títulos das seções do DANFSe. Servem para recortar o documento antes de
+#  procurar um rótulo: vários rótulos se repetem (ex: "Valor do Serviço"
+#  aparece em TRIBUTAÇÃO MUNICIPAL e em VALOR TOTAL DA NFS-E), e sem o
+#  recorte a leitura pegaria a ocorrência da seção errada.
+SECOES_DANFSE = [
+    "EMITENTE DA NFS-e",
+    "TOMADOR DO SERVI",
+    "INTERMEDI",
+    "SERVIÇO PRESTADO",
+    "TRIBUTAÇÃO MUNICIPAL",
+    "TRIBUTAÇÃO FEDERAL",
+    "VALOR TOTAL DA NFS",
+    "TOTAIS APROXIMADOS",
+    "INFORMAÇÕES COMPLEMENTARES",
+]
+
+
+def bloco_secao(texto, titulo):
+    """Recorta o trecho do DANFSe que vai de `titulo` até o início da próxima seção."""
+    inicio = texto.find(titulo)
+    if inicio == -1:
+        return ""
+    inicio += len(titulo)
+    fim = len(texto)
+    for outra in SECOES_DANFSE:
+        pos = texto.find(outra, inicio)
+        if pos != -1 and pos < fim:
+            fim = pos
+    return texto[inicio:fim]
+
+
+def campo_danfse(bloco, rotulo):
+    """
+    Valor que vem logo abaixo de um rótulo. O DANFSe usa "Rótulo\n \nValor";
+    no bloco de tributação federal vem sem a linha em branco ("Rótulo\nValor").
+    Só essas duas formas são aceitas — de propósito. Com um `\\s*` solto, um
+    campo vazio (ex: "Benefício Municipal", que às vezes não tem valor)
+    engoliria as linhas em branco e devolveria o RÓTULO seguinte como se
+    fosse o seu valor.
+    """
+    m = re.search(re.escape(rotulo) + r"[ \t]*\n[ \t]*\n?[ \t]*(.+)", bloco)
+    if not m:
+        return None
+    return m.group(1).strip() or None
+
+
+def converter_valor_br(texto_valor):
+    """'R$ 1.234,56' -> 1234.56. Campo vazio, '-' ou não-numérico -> None."""
+    if not texto_valor:
+        return None
+    limpo = texto_valor.replace("R$", "").strip()
+    if not limpo or limpo == "-":
+        return None
+    limpo = limpo.replace(".", "").replace(",", ".")
+    if not re.fullmatch(r"-?\d+(?:\.\d+)?", limpo):
+        return None  # não é número — provavelmente o campo estava vazio
+    return float(limpo)
+
+
+def converter_percentual(texto_valor):
+    """'5,00 %' -> 5.0"""
+    if not texto_valor:
+        return None
+    limpo = texto_valor.replace("%", "").strip().replace(".", "").replace(",", ".")
+    if not re.fullmatch(r"-?\d+(?:\.\d+)?", limpo):
+        return None
+    return float(limpo)
+
+
+def converter_data_br(texto_data):
+    """'21/07/2026' -> date; '21/07/2026 20:35:22' -> datetime."""
+    if not texto_data:
+        return None
+    m = re.search(r"(\d{2})/(\d{2})/(\d{4})(?:\s+(\d{2}):(\d{2}):(\d{2}))?", texto_data)
+    if not m:
+        return None
+    dia, mes, ano = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    try:
+        if m.group(4):
+            return datetime.datetime(ano, mes, dia, int(m.group(4)),
+                                      int(m.group(5)), int(m.group(6)))
+        return datetime.date(ano, mes, dia)
+    except ValueError:
+        return None
+
+
+def extrair_dados_nfse(texto):
+    """
+    Lê os campos de uma NFS-e (DANFSe) a partir do texto nativo do PDF.
+    Retorna dict com os campos, ou None se o documento não for um DANFSe —
+    caso do "Detalhamento do Faturamento", que vem no mesmo lote mas tem
+    outro layout.
+    """
+    pos_emitente = texto.find("EMITENTE DA NFS-e")
+    cabecalho = texto[:pos_emitente] if pos_emitente != -1 else texto
+
+    numero = campo_danfse(cabecalho, "Número da NFS-e")
+    if not numero:
+        return None
+
+    bloco_tomador = bloco_secao(texto, "TOMADOR DO SERVI")
+    bloco_municipal = bloco_secao(texto, "TRIBUTAÇÃO MUNICIPAL")
+    bloco_federal = bloco_secao(texto, "TRIBUTAÇÃO FEDERAL")
+    bloco_total = bloco_secao(texto, "VALOR TOTAL DA NFS")
+
+    cnpj_tomador = ""
+    m_cnpj = CNPJ_REGEX.search(bloco_tomador)
+    if m_cnpj:
+        candidato = normalizar_cnpj(m_cnpj.group(0))
+        if cnpj_valido(candidato):
+            cnpj_tomador = candidato
+
+    return {
+        "numero": numero,
+        "competencia": converter_data_br(campo_danfse(cabecalho, "Competência da NFS-e")),
+        "emissao": converter_data_br(campo_danfse(cabecalho, "Data e Hora da emissão da NFS-e")),
+        "cnpj_tomador": cnpj_tomador,
+        "nome_tomador": campo_danfse(bloco_tomador, "Nome / Nome Empresarial") or "",
+        "valor_servico": converter_valor_br(campo_danfse(bloco_total, "Valor do Serviço")),
+        "valor_liquido": converter_valor_br(campo_danfse(bloco_total, "Valor Líquido da NFS-e")),
+        "bc_issqn": converter_valor_br(campo_danfse(bloco_municipal, "BC ISSQN")),
+        "aliquota": converter_percentual(campo_danfse(bloco_municipal, "Alíquota Aplicada")),
+        "issqn": converter_valor_br(campo_danfse(bloco_municipal, "ISSQN Apurado")),
+        "retencao_issqn": campo_danfse(bloco_municipal, "Retenção do ISSQN") or "",
+        # Retenções federais — o que de fato é descontado da nota (somadas,
+        # batem com "Total das Retenções Federais" e explicam a diferença
+        # entre valor do serviço e valor líquido). "Contribuições Sociais -
+        # Retidas" já é o agregado de PIS+COFINS+CSLL retidos (os 4,65%), por
+        # isso não se guarda PIS e COFINS separados: aqueles dois campos do
+        # DANFSe são "Débito Apuração Própria", débito da própria empresa, que
+        # não desconta nada da nota e confundiria a conferência do líquido.
+        "previdencia_retida": converter_valor_br(
+            campo_danfse(bloco_federal, "Contribuição Previdenciária - Retida")),
+        "contrib_sociais_retidas": converter_valor_br(
+            campo_danfse(bloco_federal, "Contribuições Sociais - Retidas")),
+    }
+
+
+#  (rótulo da coluna, largura, formato numérico do Excel)
+COLUNAS_NFSE = [
+    ("Arquivo", 38, None),
+    ("Nº da NFS-e", 12, None),
+    ("Competência", 13, "DD/MM/YYYY"),
+    ("Data de emissão", 19, "DD/MM/YYYY HH:MM"),
+    ("CNPJ do tomador", 20, None),
+    ("Nome do tomador", 42, None),
+    ("Código", 10, None),
+    ("Valor do serviço", 16, "R$ #,##0.00"),
+    ("Valor líquido", 15, "R$ #,##0.00"),
+    ("BC ISSQN", 13, "R$ #,##0.00"),
+    ("Alíquota (%)", 12, "0.00"),
+    ("ISSQN apurado", 15, "R$ #,##0.00"),
+    ("Retenção do ISSQN", 18, None),
+    ("Prev. retida", 14, "R$ #,##0.00"),
+    ("Contrib. sociais retidas", 24, "R$ #,##0.00"),
+    ("Observação", 34, None),
+]
+
+
+def linha_planilha_nfse(nome_arquivo, dados, cadastro, observacao=""):
+    """
+    Monta a linha da planilha a partir dos dados extraídos. O código do
+    condomínio vem SEMPRE do cadastro pelo CNPJ do tomador — nunca por
+    semelhança de nome (ver "Cuidado: condomínios com nomes parecidos").
+    Se o CNPJ não estiver cadastrado, o código sai vazio e a observação avisa.
+    """
+    if dados is None:
+        return [nome_arquivo] + [None] * (len(COLUNAS_NFSE) - 2) + [observacao]
+
+    registro = cadastro.get(dados["cnpj_tomador"])
+    codigo = registro["codigo"] if registro else ""
+    if not registro and not observacao:
+        observacao = "CNPJ do tomador não está no cadastro"
+
+    return [
+        nome_arquivo,
+        dados["numero"],
+        dados["competencia"],
+        dados["emissao"],
+        formatar_cnpj(dados["cnpj_tomador"]) if dados["cnpj_tomador"] else "",
+        dados["nome_tomador"],
+        codigo,
+        dados["valor_servico"],
+        dados["valor_liquido"],
+        dados["bc_issqn"],
+        dados["aliquota"],
+        dados["issqn"],
+        dados["retencao_issqn"],
+        dados["previdencia_retida"],
+        dados["contrib_sociais_retidas"],
+        observacao,
+    ]
+
+
+def salvar_planilha_nfse(caminho, linhas):
+    """
+    Grava a planilha de extração. Valores monetários e datas vão como
+    números/datas de verdade (não texto), para poder somar e filtrar no Excel.
+    """
+    wb = Workbook()
+    sheet = wb.active
+    sheet.title = "Notas fiscais"
+
+    sheet.append([c[0] for c in COLUNAS_NFSE])
+    for celula in sheet[1]:
+        celula.font = Font(bold=True)
+
+    for linha in linhas:
+        sheet.append(linha)
+
+    for indice, (_, largura, formato) in enumerate(COLUNAS_NFSE, start=1):
+        letra = sheet.cell(row=1, column=indice).column_letter
+        sheet.column_dimensions[letra].width = largura
+        if formato:
+            for numero_linha in range(2, sheet.max_row + 1):
+                sheet.cell(row=numero_linha, column=indice).number_format = formato
+
+    # Cabeçalho fixo + autofiltro, para conferência no Excel
+    sheet.freeze_panes = "A2"
+    ultima_coluna = sheet.cell(row=1, column=len(COLUNAS_NFSE)).column_letter
+    sheet.auto_filter.ref = f"A1:{ultima_coluna}{sheet.max_row}"
+
     wb.save(caminho)
