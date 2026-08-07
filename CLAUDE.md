@@ -361,6 +361,18 @@ no 6_0 — o `identificacao_por_cnpj_5_3.py` não tem nenhuma delas:
   (dicts `TEMA_CLARO`/`TEMA_ESCURO`). Todo widget CustomTkinter usa `corner_radius=0`.
 - Vocabulário da interface é para leigos: nunca expor "OCR" ou "DPI" em texto visível
   (usar "boletos escaneados", "qualidade de leitura").
+- Gerar o `.exe`: `pyinstaller --noconfirm codificador.spec` (ou duplo clique
+  em `gerar_exe.bat`, que instala as dependências, roda os testes e só
+  empacota se passarem). A receita é `codificador.spec`, versionada de
+  propósito — o `.gitignore` ignora `*.spec` genéricos mas abre exceção pra
+  ela, porque antes o build só existia na máquina de quem o fazia.
+  **O ambiente do build precisa bater com `requirements.txt`**: o PyInstaller
+  não empacota o que não está instalado, então gerar o exe numa máquina sem
+  `winocr` produz um binário com a leitura de boletos escaneados morta, sem
+  erro visível. `gerar_exe.bat` cobre isso instalando os requirements antes.
+  Detalhes que já quebraram o exe (ícone via `sys._MEIPASS`, assets do
+  CustomTkinter, `hiddenimports` dos bindings `winrt.*`) estão comentados
+  dentro do `.spec`. Dependência de build fixada em `requirements-build.txt`.
 - Testes: `python -m unittest discover -s tests -p "test_*.py"` (ou duplo
   clique em `rodar_testes.bat`). Usam `tests/cadastro_teste.py` (9 condomínios
   fixos) e fixtures de texto em `tests/dados/`, nunca a planilha real. Cobrem

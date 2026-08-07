@@ -1,0 +1,3 @@
+# Dependência só para gerar o .exe — não é necessária para rodar o app
+# a partir do código. Ver codificador.spec e gerar_exe.bat.
+pyinstaller==6.21.0
