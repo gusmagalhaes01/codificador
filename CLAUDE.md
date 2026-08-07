@@ -10,8 +10,8 @@ em planilha `.xlsx`.
 Arquivo principal: `identificacao_por_cnpj_6_0.py` — só a interface CustomTkinter
 (classe `App`, redesign Swiss — ver seção "Redesign visual 6_0") e o `main`. Toda a
 lógica de negócio (extração/validação de CNPJ, busca por nome, desempate, config
-e predefinições, leitura de PDF/OCR, carimbo no PDF, persistência da planilha)
-vive em `logica.py` — módulo sem nenhuma dependência de interface, importado com
+e predefinições, leitura de PDF/OCR, carimbo no PDF, persistência da planilha,
+extração de dados das NFS-e) vive em `logica.py` — módulo sem nenhuma dependência de interface, importado com
 `from logica import (...)` no topo do arquivo principal. É esse módulo que os
 testes (`tests/`) importam diretamente (`import logica as app`). A versão anterior
 `identificacao_por_cnpj_5_3.py` (Tkinter/ttk, monolítico, não modularizado) segue
@@ -92,6 +92,14 @@ similaridade de nome sozinha.
   função de lógica de identificação foi tocada (as 14+ funções são byte-idênticas ao
   5_3) e o formato de `processamento.log`/`erros.log`/planilha foi preservado. Ver
   "Redesign visual 6_0".
+- **v6.7.0 — extração das NFS-e para planilha (aba 2)**: nova aba que lê as
+  notas de uma pasta e gera um `.xlsx` com os dados de cada uma (identificação,
+  tomador, código, valores, ISSQN e retenções federais). Lógica em `logica.py`
+  (`extrair_dados_nfse` e companhia), interface em `_montar_aba_extracao`,
+  testes em `tests/test_extracao_nfse.py`. Decisão central: **não usar OCR
+  nessa funcionalidade** — ver seção "Extrair dados das NFS-e para planilha"
+  para o raciocínio e os números da validação. Nada da codificação de PDFs foi
+  alterado; as abas de Cadastro e Logs só foram renumeradas (3 e 4).
 - **v6.6.0 — sugestão por nome nos pendentes "Não foi possível ler"**: quando a
   extração de CNPJ do conteúdo não acha nenhum candidato (escaneado sem CNPJ
   legível), `candidatos_por_nome()` (`logica.py`) tenta sugerir condomínios por
@@ -250,6 +258,73 @@ continuam do jeito que eram. Os botões de predefinição mostram
 "(modificado)" quando as `tk.Var` vivas divergem do que está salvo no perfil
 (`_perfil_ativo_modificado`) — só indicativo, não bloqueia nada.
 
+## Extrair dados das NFS-e para planilha (aba 2, v6.7.0)
+
+Contrapartida do carimbo: em vez de **escrever** o código no PDF, **lê** os dados
+das notas e gera um `.xlsx`. Nasceu do fluxo F&F — as notas daquele lote são
+DANFSe da prefeitura do Rio, com texto nativo e rotulado.
+
+**Interface** (`_montar_aba_extracao`): pasta com as notas + destino da planilha
+(sugerido automaticamente ao escolher a pasta) + botão primário cobalto
+"Extrair dados de N notas" (mesmo papel do "Processar" na tela Principal — é a
+extensão natural da regra do cobalto: o botão primário da tela). Só a pasta
+escolhida, sem subpastas. Não altera os PDFs.
+
+**Por que aqui NÃO se usa OCR (decisão deliberada):** CNPJ tem dígito
+verificador, então uma leitura errada é detectável — é isso que sustenta a
+escada de DPI em `extrair_cnpj_tomador`. Valor e data não têm nada disso:
+`1.234,56` lido como `1.234,58` entraria numa planilha financeira sem ninguém
+perceber. Nota sem texto nativo é reportada como "Nota escaneada — não foi
+possível ler", nunca chutada.
+
+**Como a leitura é feita** (`logica.py`):
+- `bloco_secao` + `SECOES_DANFSE` recortam o documento por seção antes de
+  procurar o rótulo. Necessário porque rótulos se repetem — "Valor do Serviço"
+  aparece em TRIBUTAÇÃO MUNICIPAL **e** em VALOR TOTAL DA NFS-E, e o
+  "Nome / Nome Empresarial" do EMITENTE vem antes do mesmo rótulo no TOMADOR.
+- `campo_danfse` aceita só `Rótulo\n \nValor` e `Rótulo\nValor` (esta segunda
+  no bloco de tributação federal). **Não usar `\s*` solto**: campos vazios
+  existem no DANFSe (ex: "Benefício Municipal") e um regex frouxo devolveria o
+  **rótulo seguinte** como se fosse o valor. Os conversores
+  (`converter_valor_br`/`converter_percentual`) são a última defesa — devolvem
+  `None` para qualquer coisa que não seja número.
+- `linha_planilha_nfse` monta a linha; o **código vem sempre do cadastro pelo
+  CNPJ do tomador**, nunca por semelhança de nome. CNPJ não cadastrado → código
+  vazio + observação, nunca um código inventado.
+- `salvar_planilha_nfse` grava valores como `float` e datas como `date`/
+  `datetime` (não texto), com formato de moeda/data, painel congelado e
+  autofiltro — dá pra somar e filtrar no Excel direto.
+
+**Retenções federais — por que estas colunas e não PIS/COFINS:** a planilha traz
+"Prev. retida" (*Contribuição Previdenciária - Retida*) e "Contrib. sociais
+retidas" (*Contribuições Sociais - Retidas*), que é o **agregado de
+PIS+COFINS+CSLL retidos** (os 4,65%). São elas que descontam da nota: somadas,
+batem com "Total das Retenções Federais" e explicam a diferença entre valor do
+serviço e valor líquido. Os campos *PIS/COFINS - Débito Apuração Própria*, que
+existem no DANFSe, **não** entram na planilha de propósito — são débito da
+própria empresa, não descontam nada da nota, e lado a lado com a retenção
+seriam confundidos numa conferência de valores. Campo sem retenção vem como
+"-" no DANFSe e vira **célula vazia, nunca 0** (0 significaria "reteve zero").
+Conferido nos 3.347 PDFs de julho/2026: `serviço − retenções = líquido` fecha
+nas 3.134 NFS-e, das quais 34 têm retenção de contribuições sociais.
+- Documento que não é DANFSe (ex: "Detalhamento do Faturamento", que vem no
+  mesmo lote) → `extrair_dados_nfse` devolve `None` e a linha sai só com nome e
+  motivo.
+
+**Validação contra os dados reais** (~2.700 PDFs de julho/2026): conferência
+campo a campo contra uma nota lida à mão deu 0 divergências; em 200 PDFs, 186
+NFS-e reconhecidas sem nenhum campo vazio e com `ISSQN = BC × alíquota`
+fechando em todas; e em 1.955 arquivos o código deduzido do CNPJ bateu com o
+código já presente no nome do arquivo em 1.948 de 1.951 (99,85%).
+
+**Divergências reais achadas nos dados** (não são bugs do programa):
+- `10871 Esperança` (PCMSO/PGR/ESOCIAL) são na verdade notas do **10872 PAIVA**
+  — trazem no tomador o CNPJ `86.846.763/0001-73`, que no cadastro é o 10872. O
+  cadastro está coerente; o **nome dos arquivos** é que está errado, provável
+  troca entre códigos vizinhos. Bom exemplo de por que se identifica por CNPJ.
+- `PCMSO 11095 Serra Azul.pdf` e `PCMSO 10710 Martinica.pdf` estão em pastas
+  PCMSO mas são "Detalhamento do Faturamento", não NFS-e.
+
 ## Divergências de lógica só no 6_0 (pós-redesign)
 
 O redesign 6_0 nasceu como reforma **exclusiva de interface** (lógica
@@ -290,6 +365,10 @@ no 6_0 — o `identificacao_por_cnpj_5_3.py` não tem nenhuma delas:
   clique em `rodar_testes.bat`). Usam `tests/cadastro_teste.py` (9 condomínios
   fixos) e fixtures de texto em `tests/dados/`, nunca a planilha real. Cobrem
   identificação por nome, extração de CNPJ, validação, desempate, nome de saída
-  e config/migração. A regra de desempate vive em `desempatar_por_cadastro`
+  e config/migração, além da extração de dados das NFS-e
+  (`test_extracao_nfse.py`, sobre as fixtures `nfse_ff.txt` — nota sem
+  retenção federal — e `nfse_ff_retido.txt` — com retenção
+  "3 - PIS/COFINS/CSLL Retidos"). A regra de
+  desempate vive em `desempatar_por_cadastro`
   (extraída do loop justamente para ser testável). Regenerar fixtures:
   `python tests/_gerar_fixtures.py` (precisa dos PDFs-fonte, fora do repo).
