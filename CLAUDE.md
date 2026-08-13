@@ -103,6 +103,19 @@ similaridade de nome sozinha.
   BONFIM" juntos) é o objetivo, não um bug. Mantém a regra de nunca identificar
   **automaticamente** só por nome — só o funcionário decide, depois de abrir o
   PDF. Ver "Cuidado: condomínios com nomes parecidos".
+- **Protocolo de Recebimento de Documento (Correios/Imodata)**: novo tipo de
+  documento reconhecido, além de boleto/NFS-e — recibo de entrega escaneado,
+  sem CNPJ nenhum, mas com o código do condomínio já pronto no texto (ex:
+  `W700A VILLARS (10005) Protocolo de Recebimento de Documento...`).
+  `extrair_codigo_protocolo_correio()` (`logica.py`) detecta o marcador e
+  extrai o código automaticamente pelo conteúdo (não é uma predefinição —
+  funciona misturado com boletos normais no mesmo lote); resolve o CNPJ via
+  o mesmo índice reverso código→CNPJ de `buscar_por_nome_arquivo`. Código não
+  cadastrado vira pendente "Código não cadastrado" (`cnpj: None`, já que o
+  documento não tem CNPJ pra oferecer). Validado com 4 arquivos reais contra
+  a planilha real antes de liberar, mesma disciplina que pegou o bug do
+  `candidatos_por_nome`. Ver spec
+  `docs/superpowers/specs/2026-08-13-protocolo-correio-design.md`.
 
 ## Melhorias implementadas (a partir da versão 5_3)
 

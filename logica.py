@@ -498,6 +498,29 @@ def sugerir_nome_condominio(texto):
 
 
 # ============================================================
+#  PROTOCOLO DE RECEBIMENTO DE DOCUMENTO (Correios/Imodata)
+# ============================================================
+
+MARCADOR_PROTOCOLO_CORREIO = "Protocolo de Recebimento de Documento"
+
+
+def extrair_codigo_protocolo_correio(texto):
+    """
+    Reconhece o "Protocolo de Recebimento de Documento" (recibo de entrega
+    dos Correios, formato Imodata) — sem CNPJ nenhum no documento, mas com
+    o código do condomínio já pronto no texto, ex: "W700A VILLARS (10005)
+    Protocolo de Recebimento de Documento...".
+
+    Devolve o código (string) se o marcador aparecer com um código antes
+    dele; None se o marcador não aparecer (documento de outro tipo — CNPJ
+    continua sendo o caminho normal) ou se aparecer sem um código
+    reconhecível. Não confirma se o código está cadastrado, só extrai.
+    """
+    m = re.search(r"\((\d+)\)\s*" + re.escape(MARCADOR_PROTOCOLO_CORREIO), texto, re.IGNORECASE)
+    return m.group(1) if m else None
+
+
+# ============================================================
 #  MATCH POR NOME DE ARQUIVO (tentativa antes de abrir o PDF)
 # ============================================================
 

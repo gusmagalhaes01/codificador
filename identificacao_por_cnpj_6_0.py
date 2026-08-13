@@ -64,7 +64,7 @@ from logica import (
     carregar_config, salvar_config,
     normalizar_cnpj, formatar_cnpj, extrair_texto_pdf, cnpj_valido,
     extrair_texto_ocr, extrair_texto_ocr_regiao, proximo_dpi_maior,
-    extrair_cnpj_tomador, sugerir_nome_condominio,
+    extrair_cnpj_tomador, sugerir_nome_condominio, extrair_codigo_protocolo_correio,
     normalizar_texto_busca, remover_palavras_tipo_doc, _codigos_do_cadastro,
     buscar_por_nome_arquivo, desempatar_por_cadastro, candidatos_por_nome,
     criar_overlay, processar_pdf, carregar_cadastro, salvar_cadastro,
@@ -121,7 +121,7 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("Dark" if self.nome_tema == "escuro" else "Light")
 
         super().__init__()
-        self.title("Codificador v6.6.0")
+        self.title("Codificador v6.7.0")
         self.geometry("780x680")
         self.minsize(620, 420)
         self.resizable(True, True)
@@ -2130,6 +2130,7 @@ class App(ctk.CTk):
                 texto = ""
                 sufixo_origem = ""
                 origem_humana = "pelo CNPJ do boleto"
+                codigo_protocolo = None
 
                 # --- 1) Tenta casar pelo nome do arquivo, antes de abrir o PDF
                 #     (código exato no nome, ex: F&F; senão fuzzy pelo nome,
@@ -2175,33 +2176,55 @@ class App(ctk.CTk):
                                 origem_humana = "pelo CNPJ do boleto"
                                 total_ocr += 1
 
-                    candidatos = extrair_cnpj_tomador(texto, cnpj_emitente_norm)
+                    # 2a.1) "Protocolo de Recebimento de Documento" dos Correios
+                    #       (Imodata): sem CNPJ nenhum, mas com o código do
+                    #       condomínio já pronto no texto — tenta antes do
+                    #       caminho de CNPJ, que não acharia nada nesse formato.
+                    codigo_protocolo = extrair_codigo_protocolo_correio(texto)
+                    if codigo_protocolo is not None:
+                        cnpj_do_protocolo = _codigos_do_cadastro(self.cadastro).get(codigo_protocolo)
+                        if cnpj_do_protocolo:
+                            candidatos = [cnpj_do_protocolo]
+                            sufixo_origem = " (via código do protocolo dos Correios)"
+                            origem_humana = "pelo código do protocolo dos Correios"
+                        else:
+                            candidatos = []
+                    else:
+                        candidatos = extrair_cnpj_tomador(texto, cnpj_emitente_norm)
 
-                    # 2b.1) Lote sem emitente fixo (ex: Notas Diversas) — mais de
-                    #       um candidato costuma ser o emitente da nota (não
-                    #       cadastrado) + o condomínio tomador (cadastrado). Se
-                    #       sobrar exatamente um candidato já cadastrado, usa ele.
-                    if preferir_cadastrado_em_ambiguo:
-                        desempatados = desempatar_por_cadastro(candidatos, self.cadastro)
-                        if desempatados != candidatos:
-                            candidatos = desempatados
-                            sufixo_origem += " (desempate: CNPJ cadastrado)"
+                        # 2b.1) Lote sem emitente fixo (ex: Notas Diversas) — mais de
+                        #       um candidato costuma ser o emitente da nota (não
+                        #       cadastrado) + o condomínio tomador (cadastrado). Se
+                        #       sobrar exatamente um candidato já cadastrado, usa ele.
+                        if preferir_cadastrado_em_ambiguo:
+                            desempatados = desempatar_por_cadastro(candidatos, self.cadastro)
+                            if desempatados != candidatos:
+                                candidatos = desempatados
+                                sufixo_origem += " (desempate: CNPJ cadastrado)"
 
-                    # 2c) Nenhum CNPJ válido achado via OCR — re-tenta em DPI maior
-                    #     (descarta leituras com dígito verificador errado, então um
-                    #     resultado vazio pode ser fruto de OCR ruim, não de PDF sem CNPJ)
-                    if not candidatos and usado_ocr and usar_ocr and OCR_DISPONIVEL:
-                        proximo = proximo_dpi_maior(dpi_usado)
-                        if proximo:
-                            texto_retry = extrair_texto_ocr(caminho_entrada_pdf, dpi=proximo)
-                            candidatos_retry = extrair_cnpj_tomador(texto_retry, cnpj_emitente_norm)
-                            if candidatos_retry:
-                                texto = texto_retry
-                                candidatos = candidatos_retry
-                                sufixo_origem = f" (via OCR, re-tentativa DPI {proximo})"
-                                origem_humana = "pelo CNPJ (releitura)"
+                        # 2c) Nenhum CNPJ válido achado via OCR — re-tenta em DPI maior
+                        #     (descarta leituras com dígito verificador errado, então um
+                        #     resultado vazio pode ser fruto de OCR ruim, não de PDF sem CNPJ)
+                        if not candidatos and usado_ocr and usar_ocr and OCR_DISPONIVEL:
+                            proximo = proximo_dpi_maior(dpi_usado)
+                            if proximo:
+                                texto_retry = extrair_texto_ocr(caminho_entrada_pdf, dpi=proximo)
+                                candidatos_retry = extrair_cnpj_tomador(texto_retry, cnpj_emitente_norm)
+                                if candidatos_retry:
+                                    texto = texto_retry
+                                    candidatos = candidatos_retry
+                                    sufixo_origem = f" (via OCR, re-tentativa DPI {proximo})"
+                                    origem_humana = "pelo CNPJ (releitura)"
 
-                if len(candidatos) == 0:
+                if len(candidatos) == 0 and codigo_protocolo is not None:
+                    detalhe = f"Código {codigo_protocolo} (protocolo dos Correios) não cadastrado"
+                    pendentes.append((nome, detalhe))
+                    msg = f"[{idx}/{len(arquivos)}] ⚠ {nome} — {detalhe}"
+                    res_pendentes.append({
+                        "arquivo": nome, "caminho": caminho_entrada_pdf, "tipo": "nao_cadastrado",
+                        "motivo": "Código não cadastrado", "cnpj": None, "nome_sugerido": None,
+                        "candidatos": None})
+                elif len(candidatos) == 0:
                     candidatos_nome = candidatos_por_nome(nome, texto, self.cadastro)
                     if candidatos_nome:
                         pendentes.append((nome, "Nome parecido encontrado" + sufixo_origem))
