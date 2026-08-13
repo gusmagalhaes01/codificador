@@ -111,8 +111,8 @@ similaridade de nome sozinha.
   BONFIM" juntos) é o objetivo, não um bug. Mantém a regra de nunca identificar
   **automaticamente** só por nome — só o funcionário decide, depois de abrir o
   PDF. Ver "Cuidado: condomínios com nomes parecidos".
-- **Protocolo de Recebimento de Documento (Correios/Imodata)**: novo tipo de
-  documento reconhecido, além de boleto/NFS-e — recibo de entrega escaneado,
+- **v6.8.0 — Protocolo de Recebimento de Documento (Correios/Imodata)**: novo
+  tipo de documento reconhecido, além de boleto/NFS-e — recibo de entrega escaneado,
   sem CNPJ nenhum, mas com o código do condomínio já pronto no texto (ex:
   `W700A VILLARS (10005) Protocolo de Recebimento de Documento...`).
   `extrair_codigo_protocolo_correio()` (`logica.py`) detecta o marcador e
