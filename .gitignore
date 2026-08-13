@@ -6,6 +6,10 @@ CODIFICADOR.zip
 config.json
 build/
 dist/
+# Specs gerados na hora pelo PyInstaller ficam de fora, mas a receita de
+# build do projeto é versionada de propósito — sem ela, só quem tem o
+# ambiente montado consegue gerar o .exe.
 *.spec
+!codificador.spec
 .pytest_cache/
 tests/__pycache__/

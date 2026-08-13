@@ -68,6 +68,7 @@ from logica import (
     normalizar_texto_busca, remover_palavras_tipo_doc, _codigos_do_cadastro,
     buscar_por_nome_arquivo, desempatar_por_cadastro, candidatos_por_nome,
     criar_overlay, processar_pdf, carregar_cadastro, salvar_cadastro,
+    extrair_dados_nfse, linha_planilha_nfse, salvar_planilha_nfse,
 )
 
 
@@ -172,6 +173,10 @@ class App(ctk.CTk):
         self.form_codigo = tk.StringVar()
         self.form_nome = tk.StringVar()
 
+        # Variáveis - aba de extração de notas para planilha
+        self.pasta_notas = tk.StringVar()
+        self.arquivo_planilha_saida = tk.StringVar()
+
         self._montar_interface()
         self._atualizar_tabela_cadastro()
         self._carregar_log_em_tela()
@@ -269,13 +274,18 @@ class App(ctk.CTk):
         self.notebook = notebook
 
         self.aba_processar = ttk.Frame(notebook)
+        self.aba_extracao = ttk.Frame(notebook)
         self.aba_cadastro = ttk.Frame(notebook)
         self.aba_logs = ttk.Frame(notebook)
         notebook.add(self.aba_processar, text="1. Processamento")
-        notebook.add(self.aba_cadastro, text="2. Cadastro de Condomínios")
-        notebook.add(self.aba_logs, text="3. Logs")
+        notebook.add(self.aba_extracao, text="2. Extrair dados")
+        notebook.add(self.aba_cadastro, text="3. Cadastro de Condomínios")
+        notebook.add(self.aba_logs, text="4. Logs")
 
+        # A ordem importa: _montar_aba_processar cria self._widgets_tema, que
+        # _montar_aba_extracao usa para registrar os widgets dela no tema.
         self._montar_aba_processar(self.aba_processar)
+        self._montar_aba_extracao(self.aba_extracao)
         self._montar_aba_cadastro(self.aba_cadastro)
         self._montar_aba_logs(self.aba_logs)
 
@@ -1919,6 +1929,286 @@ class App(ctk.CTk):
     # --------------------------------------------------------
     #  ABA 3 — LOGS
     # --------------------------------------------------------
+    # --------------------------------------------------------
+    #  ABA 2 — EXTRAIR DADOS DAS NOTAS PARA PLANILHA
+    # --------------------------------------------------------
+    def _montar_aba_extracao(self, parent_externo):
+        """
+        Contrapartida do carimbo: em vez de escrever o código no PDF, lê os
+        dados das NFS-e da pasta e gera uma planilha. Mesma linguagem visual
+        da tela Principal (Swiss, cantos retos, cobalto só no botão primário).
+        """
+        tema = self.tema_atual
+        fonte = familia_fonte()
+
+        def registrar(widget, mapa):
+            self._widgets_tema.append((widget, mapa))
+            for prop, chave in mapa.items():
+                try:
+                    widget.configure(**{prop: tema[chave]})
+                except Exception:
+                    pass
+            return widget
+
+        container = registrar(
+            ctk.CTkFrame(parent_externo, corner_radius=0, fg_color=tema["fundo"]),
+            {"fg_color": "fundo"},
+        )
+        container.pack(fill="both", expand=True)
+
+        # --- CABEÇALHO ---
+        bloco_titulo = registrar(
+            ctk.CTkFrame(container, corner_radius=0, fg_color=tema["fundo"]),
+            {"fg_color": "fundo"},
+        )
+        bloco_titulo.pack(fill="x", padx=24, pady=(24, 0))
+
+        titulo = registrar(
+            ctk.CTkLabel(bloco_titulo, text="Extrair dados", font=(fonte, 20),
+                         text_color=tema["texto"], anchor="w"),
+            {"text_color": "texto"},
+        )
+        titulo.pack(anchor="w")
+
+        subtitulo = registrar(
+            ctk.CTkLabel(bloco_titulo, text="NOTAS FISCAIS PARA PLANILHA", font=(fonte, 11),
+                         text_color=tema["texto_secundario"], anchor="w"),
+            {"text_color": "texto_secundario"},
+        )
+        subtitulo.pack(anchor="w")
+
+        hairline = registrar(
+            ctk.CTkFrame(container, height=1, corner_radius=0, fg_color=tema["borda"]),
+            {"fg_color": "borda"},
+        )
+        hairline.pack(fill="x", padx=24, pady=(16, 24))
+
+        # --- CORPO ---
+        corpo = registrar(
+            ctk.CTkFrame(container, corner_radius=0, fg_color=tema["fundo"]),
+            {"fg_color": "fundo"},
+        )
+        corpo.pack(fill="both", expand=True, padx=24)
+        corpo.columnconfigure(0, weight=1)
+
+        def montar_campo(linha_grid, rotulo, variavel, comando_trocar):
+            label = registrar(
+                ctk.CTkLabel(corpo, text=rotulo, font=(fonte, 11),
+                             text_color=tema["texto_secundario"], anchor="w"),
+                {"text_color": "texto_secundario"},
+            )
+            label.grid(row=linha_grid, column=0, sticky="w", pady=(0, 4))
+
+            linha = registrar(
+                ctk.CTkFrame(corpo, corner_radius=0, fg_color=tema["fundo"]),
+                {"fg_color": "fundo"},
+            )
+            linha.grid(row=linha_grid + 1, column=0, sticky="ew", pady=(0, 16))
+            linha.columnconfigure(0, weight=1)
+
+            entry = registrar(
+                ctk.CTkEntry(linha, textvariable=variavel, corner_radius=0,
+                             fg_color=tema["superficie"], border_width=1,
+                             border_color=tema["borda"], text_color=tema["texto"],
+                             font=(fonte, 13)),
+                {"fg_color": "superficie", "border_color": "borda", "text_color": "texto"},
+            )
+            entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+
+            botao = registrar(
+                ctk.CTkButton(
+                    linha, text="Trocar", corner_radius=0, width=90,
+                    fg_color="transparent", hover_color=tema["superficie"],
+                    border_width=1, border_color=tema["borda_forte"],
+                    text_color=tema["texto"], font=(fonte, 13), command=comando_trocar,
+                ),
+                {"hover_color": "superficie", "border_color": "borda_forte", "text_color": "texto"},
+            )
+            botao.grid(row=0, column=1)
+
+        montar_campo(0, "PASTA COM AS NOTAS", self.pasta_notas, self._escolher_pasta_notas)
+        montar_campo(2, "SALVAR PLANILHA EM", self.arquivo_planilha_saida,
+                     self._escolher_planilha_saida)
+
+        # --- Botão primário (mesmo papel do "Processar" na tela Principal) ---
+        self.botao_extrair = registrar(
+            ctk.CTkButton(
+                corpo, text="Extrair dados", corner_radius=0, height=44, font=(fonte, 15),
+                fg_color=tema["acento"], hover_color=tema["acento_hover"],
+                text_color=tema["sobre_acento"], border_width=0,
+                command=self._iniciar_extracao,
+            ),
+            {"fg_color": "acento", "hover_color": "acento_hover", "text_color": "sobre_acento"},
+        )
+        self.botao_extrair.grid(row=4, column=0, sticky="ew", pady=(8, 8))
+
+        explicacao = registrar(
+            ctk.CTkLabel(
+                corpo,
+                text=("Lê as notas fiscais da pasta e gera uma planilha com os dados de cada "
+                      "uma. Não altera os PDFs. Notas escaneadas não são lidas — só as que "
+                      "têm texto."),
+                font=(fonte, 13), text_color=tema["texto_terciario"],
+                justify="left", anchor="w", wraplength=640,
+            ),
+            {"text_color": "texto_terciario"},
+        )
+        explicacao.grid(row=5, column=0, sticky="w", pady=(0, 16))
+
+        self.barra_extracao = ttk.Progressbar(corpo, mode="determinate")
+        self.barra_extracao.grid(row=6, column=0, sticky="ew", pady=(0, 8))
+
+        self.label_status_extracao = registrar(
+            ctk.CTkLabel(corpo, text="", font=(fonte, 13),
+                         text_color=tema["texto_secundario"], anchor="w"),
+            {"text_color": "texto_secundario"},
+        )
+        self.label_status_extracao.grid(row=7, column=0, sticky="w", pady=(0, 24))
+
+        self._atualizar_botao_extrair()
+
+    def _escolher_pasta_notas(self):
+        pasta = filedialog.askdirectory(title="Selecione a pasta com as notas fiscais")
+        if pasta:
+            self.pasta_notas.set(pasta)
+            # Sugere um destino junto da pasta escolhida, para o usuário não
+            # precisar decidir nada quando só quer a planilha rapidamente.
+            nome_pasta = os.path.basename(os.path.normpath(pasta)) or "notas"
+            self.arquivo_planilha_saida.set(
+                os.path.join(pasta, f"dados_notas_{nome_pasta}.xlsx"))
+        self._atualizar_botao_extrair()
+
+    def _escolher_planilha_saida(self):
+        atual = self.arquivo_planilha_saida.get().strip()
+        caminho = filedialog.asksaveasfilename(
+            title="Salvar planilha como",
+            defaultextension=".xlsx",
+            filetypes=[("Excel", "*.xlsx")],
+            initialfile=os.path.basename(atual) if atual else "dados_notas.xlsx",
+            initialdir=os.path.dirname(atual) if atual else None,
+        )
+        if caminho:
+            self.arquivo_planilha_saida.set(caminho)
+        self._atualizar_botao_extrair()
+
+    def _atualizar_botao_extrair(self):
+        """Conta os *.pdf da pasta escolhida e ajusta texto/estado do botão."""
+        pasta = self.pasta_notas.get().strip()
+        quantidade = 0
+        if pasta and os.path.isdir(pasta):
+            try:
+                quantidade = sum(1 for f in os.listdir(pasta) if f.lower().endswith(".pdf"))
+            except Exception:
+                quantidade = 0
+
+        if quantidade > 0 and self.arquivo_planilha_saida.get().strip():
+            plural = "nota" if quantidade == 1 else "notas"
+            self.botao_extrair.configure(
+                text=f"Extrair dados de {quantidade} {plural}", state="normal")
+        else:
+            self.botao_extrair.configure(text="Extrair dados", state="disabled")
+
+    def _iniciar_extracao(self):
+        pasta = self.pasta_notas.get().strip()
+        destino = self.arquivo_planilha_saida.get().strip()
+
+        if not pasta or not os.path.isdir(pasta):
+            messagebox.showerror("Erro", "Selecione a pasta com as notas fiscais.")
+            return
+        if not destino:
+            messagebox.showerror("Erro", "Escolha onde salvar a planilha.")
+            return
+        if os.path.isfile(destino) and not messagebox.askyesno(
+            "Substituir planilha",
+            f"Este arquivo já existe e será substituído:\n\n{destino}\n\nContinuar?"
+        ):
+            return
+
+        self.botao_extrair.configure(state="disabled")
+        self.label_status_extracao.configure(text="Lendo as notas...")
+
+        thread = threading.Thread(
+            target=self._extrair_em_thread, args=(pasta, destino), daemon=True)
+        thread.start()
+
+    def _extrair_em_thread(self, pasta, destino):
+        """
+        Lê cada PDF da pasta escolhida (sem entrar em subpastas) e monta as
+        linhas da planilha. Sem OCR de propósito — ver a nota em logica.py,
+        seção de extração: valor e data não têm dígito verificador, então uma
+        leitura errada entraria na planilha sem ninguém perceber.
+        """
+        arquivos = sorted(f for f in os.listdir(pasta) if f.lower().endswith(".pdf"))
+        total = len(arquivos)
+        self.after(0, lambda: self.barra_extracao.configure(maximum=total, value=0))
+
+        linhas = []
+        extraidas = 0
+        ignoradas = 0
+        sem_cadastro = 0
+
+        for indice, nome in enumerate(arquivos, 1):
+            caminho = os.path.join(pasta, nome)
+            self.after(0, lambda i=indice, n=nome:
+                       self.label_status_extracao.configure(text=f"Lendo {i} de {total}: {n}"))
+
+            dados = None
+            observacao = ""
+            try:
+                texto = extrair_texto_pdf(caminho)
+                if len(texto.strip()) < LIMITE_TEXTO_MINIMO:
+                    observacao = "Nota escaneada — não foi possível ler"
+                else:
+                    dados = extrair_dados_nfse(texto)
+                    if dados is None:
+                        observacao = "Não é uma nota fiscal (outro tipo de documento)"
+            except Exception as e:
+                observacao = f"Erro ao ler: {e}"
+
+            linha = linha_planilha_nfse(nome, dados, self.cadastro, observacao)
+            linhas.append(linha)
+
+            if dados is None:
+                ignoradas += 1
+            else:
+                extraidas += 1
+                if not linha[6]:           # coluna "Código" vazia
+                    sem_cadastro += 1
+
+            self.after(0, lambda v=indice: self.barra_extracao.configure(value=v))
+
+        try:
+            salvar_planilha_nfse(destino, linhas)
+        except Exception as e:
+            self.after(0, lambda: self.label_status_extracao.configure(
+                text="Não foi possível salvar a planilha."))
+            self.after(0, self._atualizar_botao_extrair)
+            self.after(0, lambda: messagebox.showerror(
+                "Erro ao salvar",
+                f"Não foi possível gravar a planilha:\n{e}\n\n"
+                "Se ela estiver aberta no Excel, feche e tente de novo."))
+            return
+
+        resumo = f"{extraidas} nota(s) extraída(s)"
+        if sem_cadastro:
+            resumo += f" · {sem_cadastro} com CNPJ fora do cadastro"
+        if ignoradas:
+            resumo += f" · {ignoradas} arquivo(s) ignorado(s)"
+
+        self.after(0, lambda: self.label_status_extracao.configure(text=resumo))
+        self.after(0, self._atualizar_botao_extrair)
+        self.after(0, lambda: self._concluir_extracao(destino, resumo))
+
+    def _concluir_extracao(self, destino, resumo):
+        if messagebox.askyesno(
+            "Planilha pronta",
+            f"{resumo}.\n\nSalva em:\n{destino}\n\nAbrir a planilha agora?"
+        ):
+            try:
+                os.startfile(destino)
+            except Exception as e:
+                messagebox.showerror("Erro", f"Não foi possível abrir a planilha:\n{e}")
+
     def _montar_aba_logs(self, parent):
         fonte = familia_fonte()
 

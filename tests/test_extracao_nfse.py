@@ -1,0 +1,198 @@
+import datetime
+import os
+import shutil
+import sys
+import tempfile
+import unittest
+
+_RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _RAIZ not in sys.path:
+    sys.path.insert(0, _RAIZ)
+_AQUI = os.path.dirname(os.path.abspath(__file__))
+if _AQUI not in sys.path:
+    sys.path.insert(0, _AQUI)
+
+import logica as app
+from cadastro_teste import CADASTRO_TESTE
+
+KLOSTERS = "01195716000154"
+
+
+def ler(nome):
+    caminho = os.path.join(_AQUI, "dados", nome)
+    with open(caminho, encoding="utf-8") as f:
+        return f.read()
+
+
+class TestExtracaoNfse(unittest.TestCase):
+    """Campos lidos da NFS-e da F&F (fixture nfse_ff.txt, tomador KLOSTERS)."""
+
+    def setUp(self):
+        self.dados = app.extrair_dados_nfse(ler("nfse_ff.txt"))
+
+    def test_identificacao_da_nota(self):
+        self.assertEqual(self.dados["numero"], "7884")
+        self.assertEqual(self.dados["competencia"], datetime.date(2026, 6, 25))
+        self.assertEqual(self.dados["emissao"], datetime.datetime(2026, 6, 25, 0, 32, 31))
+
+    def test_tomador_nao_pega_dados_do_emitente(self):
+        # O bloco do EMITENTE vem antes e tem os mesmos rótulos (CNPJ,
+        # "Nome / Nome Empresarial"). Sem o recorte por seção, a leitura
+        # devolveria a F&F em vez do condomínio.
+        self.assertEqual(self.dados["cnpj_tomador"], KLOSTERS)
+        self.assertEqual(self.dados["nome_tomador"], "KLOSTERS")
+
+    def test_valores(self):
+        self.assertEqual(self.dados["valor_servico"], 78.61)
+        self.assertEqual(self.dados["valor_liquido"], 78.61)
+        self.assertEqual(self.dados["bc_issqn"], 78.61)
+        self.assertEqual(self.dados["aliquota"], 5.0)
+        self.assertEqual(self.dados["issqn"], 3.93)
+        self.assertEqual(self.dados["retencao_issqn"], "Não Retido")
+
+    def test_sem_retencao_federal_vira_vazio(self):
+        # Nota sem retenção: os dois campos vêm como "-" no DANFSe. Têm de
+        # virar célula vazia, nunca 0 — 0 significaria "reteve zero".
+        self.assertIsNone(self.dados["previdencia_retida"])
+        self.assertIsNone(self.dados["contrib_sociais_retidas"])
+        self.assertEqual(self.dados["valor_liquido"], self.dados["valor_servico"])
+
+    def test_issqn_bate_com_bc_vezes_aliquota(self):
+        # Conferência independente: se algum dos três fosse lido errado,
+        # a conta não fecharia.
+        calculado = round(self.dados["bc_issqn"] * self.dados["aliquota"] / 100, 2)
+        self.assertAlmostEqual(calculado, self.dados["issqn"], places=2)
+
+    def test_documento_que_nao_e_nfse(self):
+        # Boleto não tem "Número da NFS-e" — deve ser recusado, não chutado.
+        self.assertIsNone(app.extrair_dados_nfse(ler("boleto_avulso.txt")))
+
+
+class TestRetencaoFederal(unittest.TestCase):
+    """
+    Nota com retenção ("3 - PIS/COFINS/CSLL Retidos", fixture nfse_ff_retido).
+    "Contribuições Sociais - Retidas" já é o agregado de PIS+COFINS+CSLL — é o
+    que desconta da nota. Os campos "PIS/COFINS - Débito Apuração Própria" do
+    DANFSe são débito próprio da empresa e NÃO entram na planilha, justamente
+    para não serem confundidos com retenção.
+    """
+
+    def setUp(self):
+        self.dados = app.extrair_dados_nfse(ler("nfse_ff_retido.txt"))
+
+    def test_contribuicoes_sociais_retidas(self):
+        self.assertEqual(self.dados["contrib_sociais_retidas"], 15.10)
+
+    def test_previdenciaria_nao_retida_fica_vazia(self):
+        self.assertIsNone(self.dados["previdencia_retida"])
+
+    def test_retencao_explica_a_diferenca_ate_o_liquido(self):
+        # Conferência independente: serviço − retenções = líquido.
+        # Se a retenção fosse lida do campo errado (ex: o PIS de apuração
+        # própria, R$ 2,11), esta conta não fecharia.
+        retido = (self.dados["contrib_sociais_retidas"] or 0) + \
+                 (self.dados["previdencia_retida"] or 0)
+        self.assertAlmostEqual(
+            self.dados["valor_servico"] - retido, self.dados["valor_liquido"], places=2)
+
+    def test_nao_confunde_com_pis_cofins_de_apuracao_propria(self):
+        # PIS 2,11 e COFINS 9,74 existem no documento; nenhum dos dois pode
+        # aparecer como retenção.
+        self.assertNotIn(self.dados["contrib_sociais_retidas"], (2.11, 9.74, 11.85))
+
+
+class TestCampoVazioNaoPuxaRotuloSeguinte(unittest.TestCase):
+    """
+    "Benefício Municipal" vem sem valor no DANFSe, seguido direto pelo rótulo
+    "Valor do Serviço". Um regex frouxo devolveria "Valor do Serviço" como se
+    fosse o valor do benefício — e num campo monetário isso viraria lixo na
+    planilha. A conversão é a última linha de defesa.
+    """
+
+    def test_conversao_rejeita_rotulo_lido_como_valor(self):
+        bloco = app.bloco_secao(ler("nfse_ff.txt"), "TRIBUTAÇÃO MUNICIPAL")
+        bruto = app.campo_danfse(bloco, "Benefício Municipal")
+        self.assertIsNone(app.converter_valor_br(bruto))
+
+    def test_valor_do_servico_vem_da_secao_de_totais(self):
+        texto = ler("nfse_ff.txt")
+        bloco_total = app.bloco_secao(texto, "VALOR TOTAL DA NFS")
+        self.assertNotIn("TRIBUTAÇÃO", bloco_total)
+        self.assertEqual(
+            app.converter_valor_br(app.campo_danfse(bloco_total, "Valor do Serviço")), 78.61)
+
+
+class TestConversores(unittest.TestCase):
+    def test_valor_br(self):
+        self.assertEqual(app.converter_valor_br("R$ 1.234,56"), 1234.56)
+        self.assertEqual(app.converter_valor_br("R$ 0,00"), 0.0)
+        self.assertIsNone(app.converter_valor_br("-"))
+        self.assertIsNone(app.converter_valor_br(""))
+        self.assertIsNone(app.converter_valor_br(None))
+        self.assertIsNone(app.converter_valor_br("Não Retido"))
+
+    def test_percentual(self):
+        self.assertEqual(app.converter_percentual("5,00 %"), 5.0)
+        self.assertEqual(app.converter_percentual("2,5%"), 2.5)
+        self.assertIsNone(app.converter_percentual("-"))
+
+    def test_data(self):
+        self.assertEqual(app.converter_data_br("21/07/2026"), datetime.date(2026, 7, 21))
+        self.assertEqual(app.converter_data_br("21/07/2026 20:35:22"),
+                         datetime.datetime(2026, 7, 21, 20, 35, 22))
+        self.assertIsNone(app.converter_data_br("-"))
+        self.assertIsNone(app.converter_data_br("32/13/2026"))
+
+
+class TestLinhaDaPlanilha(unittest.TestCase):
+    def setUp(self):
+        self.dados = app.extrair_dados_nfse(ler("nfse_ff.txt"))
+
+    def test_codigo_vem_do_cadastro_pelo_cnpj(self):
+        linha = app.linha_planilha_nfse("PGR 10004 Klosters.pdf", self.dados, CADASTRO_TESTE)
+        self.assertEqual(linha[0], "PGR 10004 Klosters.pdf")
+        self.assertEqual(linha[6], "10004")     # código do cadastro
+        self.assertEqual(linha[15], "")         # sem observação
+
+    def test_cnpj_fora_do_cadastro_avisa_e_nao_inventa_codigo(self):
+        linha = app.linha_planilha_nfse("nota.pdf", self.dados, {})
+        self.assertEqual(linha[6], "")
+        self.assertIn("não está no cadastro", linha[15])
+
+    def test_documento_ignorado_vira_linha_so_com_motivo(self):
+        linha = app.linha_planilha_nfse("outro.pdf", None, CADASTRO_TESTE, "Não é uma NFS-e")
+        self.assertEqual(linha[0], "outro.pdf")
+        self.assertEqual(linha[15], "Não é uma NFS-e")
+        self.assertTrue(all(c is None for c in linha[1:15]))
+
+
+class TestPlanilhaGerada(unittest.TestCase):
+    def setUp(self):
+        self.pasta = tempfile.mkdtemp(prefix="teste_nfse_")
+        self.destino = os.path.join(self.pasta, "saida.xlsx")
+
+    def tearDown(self):
+        shutil.rmtree(self.pasta, ignore_errors=True)
+
+    def test_valores_e_datas_sao_numeros_e_datas_nao_texto(self):
+        from openpyxl import load_workbook
+
+        dados = app.extrair_dados_nfse(ler("nfse_ff.txt"))
+        linha = app.linha_planilha_nfse("PGR 10004 Klosters.pdf", dados, CADASTRO_TESTE)
+        app.salvar_planilha_nfse(self.destino, [linha])
+
+        sheet = load_workbook(self.destino).active
+        self.assertEqual(sheet.max_row, 2)
+        self.assertEqual([c.value for c in sheet[1]], [c[0] for c in app.COLUNAS_NFSE])
+
+        gravada = [c.value for c in sheet[2]]
+        # Somar no Excel só funciona se for número de verdade, não texto
+        self.assertIsInstance(gravada[7], (int, float))
+        self.assertEqual(gravada[7], 78.61)
+        self.assertIsInstance(gravada[2], datetime.datetime)
+        self.assertEqual(sheet.freeze_panes, "A2")
+        self.assertIsNotNone(sheet.auto_filter.ref)
+
+
+if __name__ == "__main__":
+    unittest.main()
