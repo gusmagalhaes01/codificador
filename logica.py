@@ -521,6 +521,12 @@ def extrair_codigo_protocolo_correio(texto):
     return m.group(1) if m else None
 
 
+def montar_texto_protocolo_correio(codigo, nome, cnpj_normalizado):
+    """Formata a linha única carimbada nos protocolos dos Correios:
+    "10005 VILLARS - 07.945.453/0001-30"."""
+    return f"{codigo} {nome} - {formatar_cnpj(cnpj_normalizado)}"
+
+
 # ============================================================
 #  MATCH POR NOME DE ARQUIVO (tentativa antes de abrir o PDF)
 # ============================================================
@@ -719,21 +725,39 @@ def desempatar_por_cadastro(candidatos, cadastro):
 #  OVERLAY / ESCRITA NO PDF (igual às versões anteriores)
 # ============================================================
 
-def criar_overlay(largura, altura, texto, fonte, tamanho, cor, x, y, centralizado):
+MARGEM_LATERAL_ROTACIONADO = 20  # pontos da borda direita, carimbo do protocolo dos Correios
+
+
+def criar_overlay(largura, altura, texto, fonte, tamanho, cor, x, y, centralizado, angulo=0):
     """Desenha `texto` no PDF. Se tiver quebras de linha ("\n"), cada linha é
-    desenhada empilhada, a primeira em cima e as seguintes abaixo dela."""
+    desenhada empilhada, a primeira em cima e as seguintes abaixo dela.
+
+    `angulo=90` é um modo especial (protocolo dos Correios, ver
+    montar_texto_protocolo_correio): ignora x/y/centralizado e desenha uma
+    linha única rotacionada 90° (sentido anti-horário — lê de baixo pra
+    cima), colada perto da borda direita e verticalmente centralizada."""
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=(largura, altura))
     c.setFont(fonte, tamanho)
     c.setFillColor(HexColor(cor))
 
-    altura_linha = tamanho * 1.2
-    for i, linha in enumerate(texto.split("\n")):
-        x_linha = x
-        if centralizado:
-            largura_texto = c.stringWidth(linha, fonte, tamanho)
-            x_linha = (largura - largura_texto) / 2
-        c.drawString(x_linha, y - i * altura_linha, linha)
+    if angulo == 90:
+        largura_texto = c.stringWidth(texto, fonte, tamanho)
+        x_rotacionado = largura - MARGEM_LATERAL_ROTACIONADO
+        y_rotacionado = (altura - largura_texto) / 2
+        c.saveState()
+        c.translate(x_rotacionado, y_rotacionado)
+        c.rotate(90)
+        c.drawString(0, 0, texto)
+        c.restoreState()
+    else:
+        altura_linha = tamanho * 1.2
+        for i, linha in enumerate(texto.split("\n")):
+            x_linha = x
+            if centralizado:
+                largura_texto = c.stringWidth(linha, fonte, tamanho)
+                x_linha = (largura - largura_texto) / 2
+            c.drawString(x_linha, y - i * altura_linha, linha)
 
     c.save()
     buffer.seek(0)
@@ -750,6 +774,7 @@ def processar_pdf(caminho_entrada, caminho_saida, texto, config):
             largura, altura, texto,
             config["fonte"], config["tamanho"], config["cor"],
             config["x"], config["y"], config["centralizado"],
+            config.get("angulo", 0),
         )
         overlay_page = PdfReader(overlay_buffer).pages[0]
         pagina.merge_page(overlay_page)

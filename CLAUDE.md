@@ -124,6 +124,17 @@ similaridade de nome sozinha.
   a planilha real antes de liberar, mesma disciplina que pegou o bug do
   `candidatos_por_nome`. Ver spec
   `docs/superpowers/specs/2026-08-13-protocolo-correio-design.md`.
+- **v6.9.0 — carimbo lateral rotacionado no protocolo dos Correios**: os
+  documentos identificados via `extrair_codigo_protocolo_correio` passam a
+  receber um carimbo diferente do rodapé/canto superior normais — uma linha
+  única (`"{código} {nome} - {CNPJ}"`, via `montar_texto_protocolo_correio`)
+  rotacionada 90° (lê de baixo pra cima), colada na margem direita,
+  verticalmente centralizada. Automático só pra esse tipo de documento, não
+  depende de `modo_texto`. `criar_overlay()` ganhou o parâmetro opcional
+  `angulo` (padrão `0`, comportamento antigo preservado) pra isso. Testado
+  com um PDF real (protocolo do VILLARS) e confirmado que a IA do
+  Superlógica conseguiu reconhecer o código carimbado. Ver spec
+  `docs/superpowers/specs/2026-08-13-carimbo-lateral-protocolo-design.md`.
 
 ## Melhorias implementadas (a partir da versão 5_3)
 

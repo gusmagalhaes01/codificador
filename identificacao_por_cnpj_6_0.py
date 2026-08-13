@@ -65,6 +65,7 @@ from logica import (
     normalizar_cnpj, formatar_cnpj, extrair_texto_pdf, cnpj_valido,
     extrair_texto_ocr, extrair_texto_ocr_regiao, proximo_dpi_maior,
     extrair_cnpj_tomador, sugerir_nome_condominio, extrair_codigo_protocolo_correio,
+    montar_texto_protocolo_correio,
     normalizar_texto_busca, remover_palavras_tipo_doc, _codigos_do_cadastro,
     buscar_por_nome_arquivo, desempatar_por_cadastro, candidatos_por_nome,
     criar_overlay, processar_pdf, carregar_cadastro, salvar_cadastro,
@@ -122,7 +123,7 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("Dark" if self.nome_tema == "escuro" else "Light")
 
         super().__init__()
-        self.title("Codificador v6.8.0")
+        self.title("Codificador v6.9.0")
         self.geometry("780x680")
         self.minsize(620, 420)
         self.resizable(True, True)
@@ -2556,13 +2557,20 @@ class App(ctk.CTk):
                     else:
                         codigo = registro["codigo"]
                         condominio = registro["nome"]
-                        if modo == "rodape":
+                        if codigo_protocolo is not None:
+                            # Protocolo dos Correios: carimbo lateral rotacionado,
+                            # automático — não usa modo_texto/tipo_servico.
+                            texto_pdf = montar_texto_protocolo_correio(codigo, condominio, cnpj)
+                            config_arquivo = {**config, "angulo": 90}
+                        elif modo == "rodape":
                             texto_pdf = f"{codigo} {condominio} - {tipo_servico}".strip()
+                            config_arquivo = config
                         else:
                             texto_pdf = codigo
+                            config_arquivo = config
                         if renomear:
                             caminho_saida_pdf = os.path.join(saida, nome_saida_com_codigo(nome, codigo))
-                        processar_pdf(caminho_entrada_pdf, caminho_saida_pdf, texto_pdf, config)
+                        processar_pdf(caminho_entrada_pdf, caminho_saida_pdf, texto_pdf, config_arquivo)
                         sucesso += 1
                         texto_pdf_log = texto_pdf.replace("\n", " / ")
                         msg = f"[{idx}/{len(arquivos)}] ✓ {nome} → '{texto_pdf_log}'{sufixo_origem}"
