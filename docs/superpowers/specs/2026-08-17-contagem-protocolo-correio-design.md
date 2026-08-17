@@ -107,6 +107,23 @@ Tesseract.
 Nenhum dos três lê o valor manuscrito de forma confiável: o RapidOCR leu
 `1.70` onde o papel diz 7,70. O valor vem sempre do cálculo.
 
+### RapidOCR como reserva opcional
+
+O winocr continua sendo o motor. O RapidOCR entra **só quando o winocr não
+existe ou levanta erro** — máquina sem o motor nativo, idioma ausente, falha
+de inicialização. Não entra quando o winocr lê e a contagem não confere: nesse
+caso o caminho continua sendo qualidade maior e, persistindo, pendente. Uma
+leitura que funcionou nunca é substituída.
+
+**Dependência opcional, fora do pacote.** O `rapidocr` não entra no
+`requirements.txt` nem no `.spec`: o código importa se existir e segue sem ele
+se não existir, do mesmo jeito que já faz com o `winocr` (`OCR_DISPONIVEL`).
+O `CODIFICADOR.zip` continua com o tamanho de hoje. Quem instalar o RapidOCR
+na própria máquina ganha a reserva; quem só recebe o zip não perde nada que
+já tivesse.
+
+Vale só para a aba dos protocolos. A aba 1 não muda.
+
 ### Detalhe do teste do Tesseract
 
 Com `pytesseract` + Tesseract 5.4 e o modelo `por` (tessdata_best), os quatro

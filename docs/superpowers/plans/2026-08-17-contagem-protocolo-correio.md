@@ -636,6 +636,156 @@ git commit -m "Permite OCR do documento inteiro (max_paginas=None)"
 
 ---
 
+### Task 4b: RapidOCR como reserva opcional (`logica.py`)
+
+**Files:**
+- Modify: `logica.py` (após `extrair_texto_ocr`)
+- Test: `tests/test_protocolo_contagem.py` (acrescentar classe)
+
+**Interfaces:**
+- Consumes: `extrair_texto_ocr`, `OCR_DISPONIVEL` (já existem).
+- Produces:
+  - `RAPIDOCR_DISPONIVEL: bool`
+  - `extrair_texto_rapidocr(caminho, dpi=300) -> str`
+  - `extrair_texto_escaneado(caminho, dpi=300) -> str` — winocr com RapidOCR de reserva
+
+**Regra:** a reserva entra **só** quando o winocr não existe ou levanta erro.
+Nunca quando ele lê e a contagem não confere — aí o caminho continua sendo
+qualidade maior e, persistindo, pendente. Dependência opcional: não entra no
+`requirements.txt` nem no `.spec`, e a ausência dela não pode quebrar nada.
+
+- [ ] **Step 1: Write the failing test**
+
+Acrescentar a `tests/test_protocolo_contagem.py`:
+
+```python
+class TestReservaDeOcr(unittest.TestCase):
+    """A reserva é escolhida por uma função pura, testável sem nenhum dos
+    dois motores instalados."""
+
+    def test_usa_winocr_quando_disponivel(self):
+        self.assertEqual(app.motor_de_ocr(tem_winocr=True, tem_rapidocr=True), "winocr")
+        self.assertEqual(app.motor_de_ocr(tem_winocr=True, tem_rapidocr=False), "winocr")
+
+    def test_cai_para_rapidocr_sem_winocr(self):
+        self.assertEqual(app.motor_de_ocr(tem_winocr=False, tem_rapidocr=True), "rapidocr")
+
+    def test_sem_nenhum_motor(self):
+        self.assertIsNone(app.motor_de_ocr(tem_winocr=False, tem_rapidocr=False))
+
+    def test_flag_de_disponibilidade_existe(self):
+        self.assertIsInstance(app.RAPIDOCR_DISPONIVEL, bool)
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `python -m unittest tests.test_protocolo_contagem.TestReservaDeOcr -v`
+Expected: FAIL — `AttributeError: module 'logica' has no attribute 'motor_de_ocr'`
+
+- [ ] **Step 3: Write minimal implementation**
+
+Junto do bloco onde `OCR_DISPONIVEL` é definido, acrescentar o import opcional:
+
+```python
+#  Reserva opcional: modelos PP-OCR (do PaddleOCR) rodando em ONNX. NÃO entra
+#  no requirements.txt nem no .spec — quem tiver instalado na própria máquina
+#  ganha a reserva, e o CODIFICADOR.zip continua do tamanho de hoje.
+try:
+    from rapidocr import RapidOCR
+    RAPIDOCR_DISPONIVEL = True
+except Exception:
+    RapidOCR = None
+    RAPIDOCR_DISPONIVEL = False
+
+_rapidocr_motor = None
+```
+
+E após `extrair_texto_ocr`:
+
+```python
+def motor_de_ocr(tem_winocr=None, tem_rapidocr=None):
+    """
+    Qual motor usar: "winocr", "rapidocr" ou None se nenhum existir. O winocr
+    sempre ganha quando está disponível — a reserva cobre a máquina onde o
+    motor nativo não existe, não a leitura que deu resultado ruim.
+
+    Os parâmetros existem para o teste; em produção ficam None e a função
+    consulta as flags do módulo.
+    """
+    if tem_winocr is None:
+        tem_winocr = OCR_DISPONIVEL
+    if tem_rapidocr is None:
+        tem_rapidocr = RAPIDOCR_DISPONIVEL
+    if tem_winocr:
+        return "winocr"
+    if tem_rapidocr:
+        return "rapidocr"
+    return None
+
+
+def extrair_texto_rapidocr(caminho, dpi=300):
+    """
+    OCR pelos modelos PP-OCR em ONNX. Devolve um bloco de texto por região
+    detectada, separados por quebra de linha — é a estrutura real da tabela
+    do protocolo, e as regexes de contagem funcionam igual.
+    """
+    global _rapidocr_motor
+    if not RAPIDOCR_DISPONIVEL:
+        raise RuntimeError("RapidOCR não disponível.")
+
+    import numpy as np
+    if _rapidocr_motor is None:
+        _rapidocr_motor = RapidOCR()   # carregar os modelos é caro; reaproveita
+
+    pedacos = []
+    doc = fitz.open(caminho)
+    try:
+        for pagina in doc:
+            pix = pagina.get_pixmap(dpi=dpi)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            resultado = _rapidocr_motor(np.array(img))
+            textos = getattr(resultado, "txts", None)
+            if textos is None:                      # API antiga: (lista, tempo)
+                textos = [linha[1] for linha in (resultado[0] or [])]
+            pedacos.extend(textos or [])
+    finally:
+        doc.close()
+    return "\n".join(pedacos)
+
+
+def extrair_texto_escaneado(caminho, dpi=300):
+    """
+    Texto de um PDF escaneado, com o winocr na frente e o RapidOCR de reserva.
+    A reserva só entra quando o winocr não existe ou quebra — uma leitura que
+    funcionou nunca é substituída.
+    """
+    if OCR_DISPONIVEL:
+        try:
+            return extrair_texto_ocr(caminho, max_paginas=None, dpi=dpi)
+        except Exception:
+            if not RAPIDOCR_DISPONIVEL:
+                raise
+    if RAPIDOCR_DISPONIVEL:
+        return extrair_texto_rapidocr(caminho, dpi=dpi)
+    raise RuntimeError(
+        "Nenhum leitor de documentos escaneados disponível. "
+        "Instale: pip install pymupdf winocr")
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `python -m unittest discover -s tests -p "test_*.py"`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add logica.py tests/test_protocolo_contagem.py
+git commit -m "RapidOCR como reserva opcional quando o winocr não existe"
+```
+
+---
+
 ### Task 5: Planilha dos protocolos (`logica.py`)
 
 **Files:**
@@ -887,7 +1037,7 @@ git commit -m "Planilha dos protocolos com linha de total"
 - Test: verificação manual (interface não tem teste automatizado neste projeto)
 
 **Interfaces:**
-- Consumes: `extrair_dados_protocolo_correio`, `conferir_contagem_protocolo`, `valor_protocolo`, `montar_texto_valor_protocolo`, `formatar_reais`, `linha_planilha_protocolo`, `salvar_planilha_protocolo`, `COLUNAS_PROTOCOLO`, `paginas_para_ocr` (Tasks 1, 2, 4, 5); `montar_texto_protocolo_correio`, `_codigos_do_cadastro`, `extrair_texto_pdf`, `extrair_texto_ocr`, `proximo_dpi_maior`, `processar_pdf`, `formatar_cnpj`, `LIMITE_TEXTO_MINIMO` (já existiam).
+- Consumes: `extrair_dados_protocolo_correio`, `conferir_contagem_protocolo`, `valor_protocolo`, `montar_texto_valor_protocolo`, `formatar_reais`, `linha_planilha_protocolo`, `salvar_planilha_protocolo`, `COLUNAS_PROTOCOLO`, `paginas_para_ocr`, `extrair_texto_escaneado` (Tasks 1, 2, 4, 4b, 5); `montar_texto_protocolo_correio`, `_codigos_do_cadastro`, `extrair_texto_pdf`, `extrair_texto_ocr`, `proximo_dpi_maior`, `processar_pdf`, `formatar_cnpj`, `LIMITE_TEXTO_MINIMO` (já existiam).
 - Produces: nada consumido por tasks posteriores.
 
 - [ ] **Step 1: Ampliar o import e declarar as variáveis da aba**
@@ -898,6 +1048,7 @@ Em `identificacao_por_cnpj_6_0.py`, acrescentar ao `from logica import (...)` (l
     extrair_dados_protocolo_correio, conferir_contagem_protocolo,
     valor_protocolo, montar_texto_valor_protocolo, formatar_reais,
     linha_planilha_protocolo, salvar_planilha_protocolo,
+    extrair_texto_escaneado,
 ```
 
 Após a linha 179 (`self.arquivo_planilha_saida = tk.StringVar()`):
@@ -1272,11 +1423,12 @@ Inserir após `_pedir_tarifa`:
 
     def _ler_texto_protocolo(self, caminho, dpi):
         """Texto nativo se houver; senão o documento inteiro pelo leitor de
-        escaneados. Todas as páginas — parar na 2ª perderia unidades."""
+        escaneados (winocr, com RapidOCR de reserva se estiver instalado).
+        Todas as páginas — parar na 2ª perderia unidades."""
         texto = extrair_texto_pdf(caminho)
         if len(texto.strip()) >= LIMITE_TEXTO_MINIMO:
             return texto
-        return extrair_texto_ocr(caminho, max_paginas=None, dpi=dpi)
+        return extrair_texto_escaneado(caminho, dpi=dpi)
 
     def _processar_protocolos_em_thread(self, pasta, pasta_saida, destino, tarifa):
         arquivos = sorted(f for f in os.listdir(pasta) if f.lower().endswith(".pdf"))
