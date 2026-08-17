@@ -527,6 +527,68 @@ def montar_texto_protocolo_correio(codigo, nome, cnpj_normalizado):
     return f"{codigo} {nome} - {formatar_cnpj(cnpj_normalizado)}"
 
 
+RE_LISTANDO_PROTOCOLO = re.compile(r"Listando\s+(\d+)\s+unidade", re.IGNORECASE)
+#  O winocr devolve a página numa linha só, então nada de (?m)^ aqui. O
+#  (?:\s*[-–—])+ cobre o traço duplicado que o OCR produz às vezes
+#  ("702 - - Enny Marins de Lima", visto no protocolo real do ASTORIA).
+RE_UNIDADE_PROTOCOLO = re.compile(r"\b\d{1,4}(?:\s*[-–—])+\s*[A-Za-zÀ-ÿ]")
+RE_ENTREGA_PROTOCOLO = re.compile(r"\bCorreio\b", re.IGNORECASE)
+RE_CABECALHO_PROTOCOLO = re.compile(
+    r"([^()\n]{0,60}?)\s*\(\d+\)\s*" + re.escape(MARCADOR_PROTOCOLO_CORREIO),
+    re.IGNORECASE,
+)
+
+
+def extrair_dados_protocolo_correio(texto):
+    """
+    Lê um Protocolo de Recebimento de Documento e devolve o que é preciso
+    para cobrar por ele. `None` se o documento não for um protocolo.
+
+    Três contagens independentes porque cada uma falha de um jeito: o
+    "Listando N unidades" impresso é a fonte do valor, e as outras duas
+    servem para confirmá-lo (ver conferir_contagem_protocolo).
+    """
+    texto = texto or ""
+    if MARCADOR_PROTOCOLO_CORREIO.lower() not in texto.lower():
+        return None
+
+    cabecalho = RE_CABECALHO_PROTOCOLO.search(texto)
+    listando = RE_LISTANDO_PROTOCOLO.search(texto)
+
+    #  A contagem de linhas olha só o que vem ANTES do "Listando": depois
+    #  dele só há rodapé (CEP, telefone) e números que o OCR inventa lendo
+    #  o valor manuscrito — nada disso é unidade.
+    corpo = texto[:listando.start()] if listando else texto
+
+    return {
+        "codigo": extrair_codigo_protocolo_correio(texto),
+        "condominio": cabecalho.group(1).strip() if cabecalho else "",
+        "total_impresso": int(listando.group(1)) if listando else None,
+        "linhas_contadas": len(RE_UNIDADE_PROTOCOLO.findall(corpo)),
+        "entregas_contadas": len(RE_ENTREGA_PROTOCOLO.findall(texto)),
+    }
+
+
+def conferir_contagem_protocolo(dados):
+    """
+    Decide se dá para confiar na contagem. Devolve (aceito, motivo).
+
+    O total impresso manda; basta que UM dos dois conferidores concorde com
+    ele. Sem o total impresso não se aceita nada, mesmo que os conferidores
+    concordem entre si — contar linhas por OCR sozinho é chute com cara de
+    precisão, e o resultado aqui vira dinheiro cobrado.
+    """
+    total = dados.get("total_impresso")
+    if total is None:
+        return False, 'Não foi possível ler o total impresso ("Listando N unidades")'
+
+    linhas = dados.get("linhas_contadas", 0)
+    entregas = dados.get("entregas_contadas", 0)
+    if total == linhas or total == entregas:
+        return True, ""
+    return False, f"Listando {total}, mas foram contadas {linhas} e {entregas} unidades"
+
+
 # ============================================================
 #  MATCH POR NOME DE ARQUIVO (tentativa antes de abrir o PDF)
 # ============================================================
