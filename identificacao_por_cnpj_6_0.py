@@ -2465,7 +2465,7 @@ class App(ctk.CTk):
             except (InvalidOperation, ValueError):
                 aviso.configure(text="Digite um número, como 3,85.")
                 return
-            if valor <= 0:
+            if not valor.is_finite() or valor <= 0:
                 aviso.configure(text="O valor precisa ser maior que zero.")
                 return
             resultado["valor"] = valor
@@ -2579,6 +2579,7 @@ class App(ctk.CTk):
         carimbados = 0
         pendentes = 0
         ignorados = 0
+        falhas_carimbo = 0
 
         for indice, nome in enumerate(arquivos, 1):
             caminho = os.path.join(pasta, nome)
@@ -2612,10 +2613,15 @@ class App(ctk.CTk):
                                 texto_maior = extrair_texto_escaneado(caminho, dpi=dpi_maior)
                                 novos = extrair_dados_protocolo_correio(texto_maior)
                                 if novos:
-                                    dados_novos = novos
-                                    aceito_novo, motivo_novo = conferir_contagem_protocolo(dados_novos)
-                                    dados = dados_novos
-                                    aceito, motivo = aceito_novo, motivo_novo
+                                    aceito_novo, motivo_novo = conferir_contagem_protocolo(novos)
+                                    #  Só adota a 2ª leitura quando ela ACEITA a
+                                    #  contagem — se a 2ª leitura vier pior (ex:
+                                    #  embaralhou o cabeçalho e perdeu o
+                                    #  "Listando"), manter a 1ª leitura preserva
+                                    #  o código e o motivo que o funcionário usa
+                                    #  pra conferir o papel.
+                                    if aceito_novo:
+                                        dados, aceito, motivo = novos, aceito_novo, motivo_novo
                             except Exception:
                                 #  A re-tentativa falhou (ex.: leitor de
                                 #  escaneados indisponível) — mantém o motivo
@@ -2626,7 +2632,12 @@ class App(ctk.CTk):
                     else:
                         observacao = motivo
             except Exception as e:
-                observacao = f"Erro ao ler: {e}"
+                if isinstance(e, RuntimeError) and "leitor de documentos escaneados" in str(e):
+                    #  Mensagem técnica de logica.py, não tocada — aqui só se
+                    #  traduz pra linguagem de leigo antes de ir pra planilha.
+                    observacao = "Não foi possível ler protocolos escaneados nesta máquina."
+                else:
+                    observacao = f"Erro ao ler: {e}"
 
             if unidades is not None:
                 try:
@@ -2635,6 +2646,7 @@ class App(ctk.CTk):
                     carimbados += 1
                 except Exception as e:
                     observacao = f"Erro ao carimbar: {e}"
+                    falhas_carimbo += 1
             elif dados is None:
                 ignorados += 1
             else:
@@ -2660,6 +2672,9 @@ class App(ctk.CTk):
         total_valor = sum(l[indice_coluna_valor] for l in linhas
                           if isinstance(l[indice_coluna_valor], float))
         resumo = f"{carimbados} protocolo(s) · {formatar_reais(total_valor)}"
+        if falhas_carimbo:
+            plural = "não carimbado" if falhas_carimbo == 1 else "não carimbados"
+            resumo += f" · {falhas_carimbo} {plural}"
         if pendentes:
             resumo += f" · {pendentes} sem conferir"
         if ignorados:
@@ -2684,8 +2699,8 @@ class App(ctk.CTk):
         registro = self.cadastro.get(cnpj) if cnpj else None
 
         #  Posição do carimbo de valor a partir do tamanho real da 1ª página
-        #  do PDF — MARGEM_VALOR_PROTOCOLO_X/Y eram fixos para A4 e caíam
-        #  fora da folha em páginas menores.
+        #  do PDF — uma margem fixa pra A4 cairia fora da folha em páginas
+        #  menores.
         primeira_pagina = PdfReader(caminho).pages[0]
         largura_pagina = float(primeira_pagina.mediabox.width)
         altura_pagina = float(primeira_pagina.mediabox.height)
