@@ -73,7 +73,7 @@ from logica import (
     extrair_dados_protocolo_correio, conferir_contagem_protocolo,
     valor_protocolo, montar_texto_valor_protocolo, formatar_reais,
     linha_planilha_protocolo, salvar_planilha_protocolo,
-    extrair_texto_escaneado,
+    extrair_texto_escaneado, COLUNAS_PROTOCOLO,
 )
 
 
@@ -97,9 +97,11 @@ TEMA_ESCURO = {
 
 #  Posição do carimbo de valor no protocolo dos Correios: canto superior
 #  direito, no espaço em branco do documento. O rodapé foi descartado porque
-#  protocolos de duas páginas têm conteúdo lá embaixo.
-MARGEM_VALOR_PROTOCOLO_X = 567   # 595pt (A4) - 28pt de margem
-MARGEM_VALOR_PROTOCOLO_Y = 814   # 842pt (A4) - 28pt de margem
+#  protocolos de duas páginas têm conteúdo lá embaixo. A margem é fixa em
+#  pontos, mas a posição final (x/y) é calculada em cima do tamanho real da
+#  1ª página de cada PDF (ver _carimbar_protocolo) — páginas menores que A4
+#  não teriam esse canto disponível se x/y ficassem fixos em 567/814.
+MARGEM_VALOR_PROTOCOLO = 28
 
 
 def familia_fonte():
@@ -2499,7 +2501,8 @@ class App(ctk.CTk):
         try:
             tamanho = int(self.tamanho_fonte.get())
         except ValueError:
-            tamanho = int(DEFAULTS_CONFIG["predefinicoes"]["fedcorp"]["tamanho_fonte"])
+            perfil_ativo = self.predefinicao_ativa.get()
+            tamanho = int(DEFAULTS_CONFIG["predefinicoes"][perfil_ativo]["tamanho_fonte"])
 
         cor = self.cor_texto.get().strip() or "#000000"
         modo = self.modo_texto.get()
@@ -2523,7 +2526,8 @@ class App(ctk.CTk):
         if not pasta_saida:
             messagebox.showerror("Erro", "Escolha onde salvar os PDFs carimbados.")
             return
-        if os.path.normpath(pasta_saida) == os.path.normpath(pasta):
+        if os.path.normcase(os.path.abspath(os.path.normpath(pasta_saida))) == \
+                os.path.normcase(os.path.abspath(os.path.normpath(pasta))):
             messagebox.showerror(
                 "Erro", "A pasta de saída precisa ser diferente da pasta de origem, "
                         "para não sobrescrever os protocolos originais.")
@@ -2552,11 +2556,16 @@ class App(ctk.CTk):
     def _ler_texto_protocolo(self, caminho, dpi):
         """Texto nativo se houver; senão o documento inteiro pelo leitor de
         escaneados (winocr, com RapidOCR de reserva se estiver instalado).
-        Todas as páginas — parar na 2ª perderia unidades."""
+        Todas as páginas — parar na 2ª perderia unidades.
+
+        Devolve (texto, usou_leitor_escaneado): o segundo valor diz se foi
+        preciso recorrer ao leitor de escaneados, para o chamador só tentar
+        de novo em qualidade maior quando a leitura já não era confiável
+        (texto nativo não deveria virar uma segunda tentativa por OCR)."""
         texto = extrair_texto_pdf(caminho)
         if len(texto.strip()) >= LIMITE_TEXTO_MINIMO:
-            return texto
-        return extrair_texto_escaneado(caminho, dpi=dpi)
+            return texto, False
+        return extrair_texto_escaneado(caminho, dpi=dpi), True
 
     def _processar_protocolos_em_thread(self, pasta, pasta_saida, destino, tarifa):
         arquivos = sorted(f for f in os.listdir(pasta) if f.lower().endswith(".pdf"))
@@ -2582,24 +2591,36 @@ class App(ctk.CTk):
             observacao = ""
             try:
                 dpi = config.get("dpi", 300)
-                texto = self._ler_texto_protocolo(caminho, dpi)
+                texto, usou_leitor_escaneado = self._ler_texto_protocolo(caminho, dpi)
                 dados = extrair_dados_protocolo_correio(texto)
 
                 if dados is None:
                     observacao = "Não é um protocolo dos Correios"
                 else:
                     aceito, motivo = conferir_contagem_protocolo(dados)
-                    if not aceito:
+                    if not aceito and usou_leitor_escaneado:
                         #  Uma re-tentativa em qualidade maior, como já se faz
-                        #  quando o CNPJ sai com checksum inválido.
+                        #  quando o CNPJ sai com checksum inválido — só faz
+                        #  sentido quando a leitura original já veio do leitor
+                        #  de escaneados; texto nativo não confere de novo por
+                        #  esse caminho, e uma falha aqui não pode apagar o
+                        #  motivo original (é a informação que o funcionário
+                        #  usa pra conferir o papel).
                         dpi_maior = proximo_dpi_maior(dpi)
                         if dpi_maior and dpi_maior != dpi:
-                            texto = extrair_texto_ocr(caminho, max_paginas=None,
-                                                      dpi=dpi_maior)
-                            novos = extrair_dados_protocolo_correio(texto)
-                            if novos:
-                                dados = novos
-                                aceito, motivo = conferir_contagem_protocolo(dados)
+                            try:
+                                texto_maior = extrair_texto_escaneado(caminho, dpi=dpi_maior)
+                                novos = extrair_dados_protocolo_correio(texto_maior)
+                                if novos:
+                                    dados_novos = novos
+                                    aceito_novo, motivo_novo = conferir_contagem_protocolo(dados_novos)
+                                    dados = dados_novos
+                                    aceito, motivo = aceito_novo, motivo_novo
+                            except Exception:
+                                #  A re-tentativa falhou (ex.: leitor de
+                                #  escaneados indisponível) — mantém o motivo
+                                #  já apurado pela 1ª conferência.
+                                pass
                     if aceito:
                         unidades = dados["total_impresso"]
                     else:
@@ -2635,7 +2656,9 @@ class App(ctk.CTk):
                 "Se ela estiver aberta no Excel, feche e tente de novo."))
             return
 
-        total_valor = sum(l[5] for l in linhas if isinstance(l[5], float))
+        indice_coluna_valor = [c[0] for c in COLUNAS_PROTOCOLO].index("Valor")
+        total_valor = sum(l[indice_coluna_valor] for l in linhas
+                          if isinstance(l[indice_coluna_valor], float))
         resumo = f"{carimbados} protocolo(s) · {formatar_reais(total_valor)}"
         if pendentes:
             resumo += f" · {pendentes} sem conferir"
@@ -2660,6 +2683,15 @@ class App(ctk.CTk):
         cnpj = codigos.get(dados.get("codigo") or "")
         registro = self.cadastro.get(cnpj) if cnpj else None
 
+        #  Posição do carimbo de valor a partir do tamanho real da 1ª página
+        #  do PDF — MARGEM_VALOR_PROTOCOLO_X/Y eram fixos para A4 e caíam
+        #  fora da folha em páginas menores.
+        primeira_pagina = PdfReader(caminho).pages[0]
+        largura_pagina = float(primeira_pagina.mediabox.width)
+        altura_pagina = float(primeira_pagina.mediabox.height)
+        x_valor = largura_pagina - MARGEM_VALOR_PROTOCOLO
+        y_valor = altura_pagina - MARGEM_VALOR_PROTOCOLO
+
         config_carimbo = dict(config)
         config_carimbo["angulo"] = 90
         if registro:
@@ -2672,8 +2704,8 @@ class App(ctk.CTk):
             config_carimbo["angulo"] = 0
             config_carimbo["centralizado"] = False
             config_carimbo["alinhamento"] = "direita"
-            config_carimbo["x"] = MARGEM_VALOR_PROTOCOLO_X
-            config_carimbo["y"] = MARGEM_VALOR_PROTOCOLO_Y
+            config_carimbo["x"] = x_valor
+            config_carimbo["y"] = y_valor
 
         extras = []
         if registro:
@@ -2682,8 +2714,8 @@ class App(ctk.CTk):
                 "fonte": config["fonte"],
                 "tamanho": config["tamanho"],
                 "cor": config["cor"],
-                "x": MARGEM_VALOR_PROTOCOLO_X,
-                "y": MARGEM_VALOR_PROTOCOLO_Y,
+                "x": x_valor,
+                "y": y_valor,
                 "centralizado": False,
                 "angulo": 0,
                 "alinhamento": "direita",
