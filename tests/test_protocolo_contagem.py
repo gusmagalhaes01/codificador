@@ -13,22 +13,52 @@ import logica as app
 
 # O winocr devolve a página inteira numa linha só e com as colunas fora de
 # ordem — os "Correio" da coluna Entrega saem todos no fim, depois do rodapé.
+# O endereço no rodapé ("774 - andar") simula a barra de "774 / 10° andar"
+# lida como traço pelo OCR — dígito-traço-letra, no mesmo formato de uma
+# linha de unidade (ver test_rodape_nao_vira_unidade: sem o corte por
+# "Listando", essa linha entraria na contagem por engano).
 # Nomes fictícios de propósito: fixture não guarda nome de morador real.
 PROTOCOLO_OK = (
     "W700A KLOSTERS (10004) Protocolo de Recebimento de Documento Unidade "
     "401 - Fulano de Tal 402 - Beltrano Silva 403 - Cicrano Souza "
     "Listando 3 unidades Imodata - Condominios e Imoveis "
-    "Rua Barata Ribeiro, 774 / 100 andar Copacabana } RJ -22.051-002 "
+    "Rua Barata Ribeiro, 774 - andar Copacabana } RJ -22.051-002 "
     "matriz@imodata.net - (21) 3816-7800 Assinatura Entrega "
     "Correio Correio Correio 1155 1 de 1"
 )
 
 # Caso real do protocolo de 15 unidades: o OCR duplicou o traço numa linha
-# ("702 - - Enny"), então a regex de unidade conta 2 e o "Correio" conta 3.
+# ("702 - - Enny"). RE_UNIDADE_PROTOCOLO usa (?:\s*[-–—])+, que absorve
+# quantos traços vierem — a linha ainda casa como uma única unidade, então
+# os três números concordam (3/3/3). Não é um caso de divergência: é o caso
+# que prova que esse detalhe da regex não derruba a contagem.
 PROTOCOLO_TRACO_DUPLO = (
     "W700A KLOSTERS (10004) Protocolo de Recebimento de Documento Unidade "
     "401 - Fulano de Tal 402 - - Beltrano Silva 403 - Cicrano Souza "
     "Listando 3 unidades Assinatura Entrega Correio Correio Correio 1 de 1"
+)
+
+# Falha real de OCR: um "1" reconhecido como "l" minúsculo (401 -> 40l).
+# RE_UNIDADE_PROTOCOLO exige \d{1,4} puro, então essa linha não casa — a
+# regex de unidade erra sozinha, mas a contagem de "Correio" não depende do
+# número da unidade e continua correta.
+PROTOCOLO_UNIDADE_COM_LETRA = (
+    "W700A KLOSTERS (10004) Protocolo de Recebimento de Documento Unidade "
+    "401 - Fulano de Tal 40l - Beltrano Silva 403 - Cicrano Souza "
+    "Listando 3 unidades Assinatura Entrega "
+    "Correio Correio Correio 1 de 1"
+)
+
+# Outra falha real de OCR, na coluna Entrega: um "Correio" sai como
+# "Correlo" (i minúsculo lido como l). RE_ENTREGA_PROTOCOLO exige a palavra
+# exata, então essa ocorrência não conta — a contagem de "Correio" erra
+# sozinha, mas a regex de unidade não depende dessa coluna e continua
+# correta.
+PROTOCOLO_CORREIO_MAL_LIDO = (
+    "W700A KLOSTERS (10004) Protocolo de Recebimento de Documento Unidade "
+    "401 - Fulano de Tal 402 - Beltrano Silva 403 - Cicrano Souza "
+    "Listando 3 unidades Assinatura Entrega "
+    "Correio Correio Correlo 1 de 1"
 )
 
 PROTOCOLO_SEM_LISTANDO = (
@@ -52,6 +82,12 @@ class TestExtracaoProtocolo(unittest.TestCase):
     def test_texto_vazio_nao_quebra(self):
         self.assertIsNone(app.extrair_dados_protocolo_correio(""))
 
+    def test_texto_none_nao_quebra(self):
+        """Justifica o guard `texto = texto or ""`: sem ele, `None.lower()`
+        estouraria AttributeError em vez de devolver None como os demais
+        casos de "não é protocolo"."""
+        self.assertIsNone(app.extrair_dados_protocolo_correio(None))
+
     def test_le_codigo_e_condominio_do_cabecalho(self):
         dados = app.extrair_dados_protocolo_correio(PROTOCOLO_OK)
         self.assertEqual(dados["codigo"], "10004")
@@ -64,14 +100,23 @@ class TestExtracaoProtocolo(unittest.TestCase):
         self.assertEqual(dados["entregas_contadas"], 3)
 
     def test_rodape_nao_vira_unidade(self):
-        """CEP, telefone e o manuscrito lido pelo OCR ficam depois do
-        "Listando" e não podem entrar na contagem de linhas."""
+        """O corte `corpo = texto[:listando.start()]` existe porque o
+        rodapé de PROTOCOLO_OK tem algo que casaria com RE_UNIDADE_PROTOCOLO
+        se entrasse na conta: o endereço "774 - andar" é dígito-traço-letra,
+        o mesmo formato de uma linha de unidade. Sem o corte, linhas_contadas
+        seria 4 (as 3 unidades reais + essa linha do rodapé), não 3."""
         dados = app.extrair_dados_protocolo_correio(PROTOCOLO_OK)
         self.assertEqual(dados["linhas_contadas"], 3)
 
-    def test_traco_duplicado_derruba_a_regex_mas_nao_a_contagem(self):
+    def test_traco_duplicado_e_tolerado_pela_regex_de_unidade(self):
+        """O traço duplicado que o OCR às vezes produz ("402 - - Beltrano")
+        não derruba RE_UNIDADE_PROTOCOLO — o `(?:\\s*[-–—])+` absorve os dois
+        traços e a linha ainda casa como uma unidade só. Os três números
+        concordam entre si (3/3/3); não há divergência para o "Correio"
+        salvar."""
         dados = app.extrair_dados_protocolo_correio(PROTOCOLO_TRACO_DUPLO)
         self.assertEqual(dados["total_impresso"], 3)
+        self.assertEqual(dados["linhas_contadas"], 3)
         self.assertEqual(dados["entregas_contadas"], 3)
 
     def test_sem_listando_o_total_e_none(self):
@@ -86,11 +131,35 @@ class TestConferenciaProtocolo(unittest.TestCase):
         self.assertTrue(aceito)
         self.assertEqual(motivo, "")
 
-    def test_aceita_quando_so_um_conferidor_bate(self):
-        """Traço duplicado: a regex de unidade erra, o "Correio" salva."""
-        dados = app.extrair_dados_protocolo_correio(PROTOCOLO_TRACO_DUPLO)
-        aceito, _ = app.conferir_contagem_protocolo(dados)
+    def test_aceita_quando_regex_de_unidade_falha_mas_entregas_confirma(self):
+        """Divergência real: "40l" (letra no lugar do dígito) derruba a
+        regex de unidade (2, não 3), mas a contagem de "Correio" não olha
+        para o número da unidade e continua batendo com o total (3) —
+        é ela quem sustenta a aceitação."""
+        dados = app.extrair_dados_protocolo_correio(PROTOCOLO_UNIDADE_COM_LETRA)
+        self.assertEqual(dados["total_impresso"], 3)
+        self.assertEqual(dados["linhas_contadas"], 2)
+        self.assertEqual(dados["entregas_contadas"], 3)
+        self.assertNotEqual(dados["linhas_contadas"], dados["entregas_contadas"])
+
+        aceito, motivo = app.conferir_contagem_protocolo(dados)
         self.assertTrue(aceito)
+        self.assertEqual(motivo, "")
+
+    def test_aceita_quando_entregas_falha_mas_regex_de_unidade_confirma(self):
+        """Divergência real, no outro sentido: "Correlo" derruba a contagem
+        de "Correio" (2, não 3), mas a regex de unidade não depende da
+        coluna Entrega e continua batendo com o total (3) — é ela quem
+        sustenta a aceitação."""
+        dados = app.extrair_dados_protocolo_correio(PROTOCOLO_CORREIO_MAL_LIDO)
+        self.assertEqual(dados["total_impresso"], 3)
+        self.assertEqual(dados["linhas_contadas"], 3)
+        self.assertEqual(dados["entregas_contadas"], 2)
+        self.assertNotEqual(dados["linhas_contadas"], dados["entregas_contadas"])
+
+        aceito, motivo = app.conferir_contagem_protocolo(dados)
+        self.assertTrue(aceito)
+        self.assertEqual(motivo, "")
 
     def test_recusa_sem_total_impresso(self):
         dados = app.extrair_dados_protocolo_correio(PROTOCOLO_SEM_LISTANDO)
@@ -100,9 +169,15 @@ class TestConferenciaProtocolo(unittest.TestCase):
 
     def test_recusa_quando_nenhum_conferidor_bate(self):
         dados = app.extrair_dados_protocolo_correio(PROTOCOLO_DIVERGENTE)
+        self.assertEqual(dados["linhas_contadas"], 1)
+        self.assertEqual(dados["entregas_contadas"], 1)
+
         aceito, motivo = app.conferir_contagem_protocolo(dados)
         self.assertFalse(aceito)
-        self.assertIn("3", motivo)
+        # A mensagem precisa informar as contagens divergentes (1 e 1), não
+        # só repetir o "3" do total impresso — que apareceria de qualquer
+        # forma por vir do "Listando 3".
+        self.assertEqual(motivo, "Listando 3, mas foram contadas 1 e 1 unidades")
 
 
 if __name__ == "__main__":
