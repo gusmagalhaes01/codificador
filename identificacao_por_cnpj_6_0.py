@@ -2468,7 +2468,17 @@ class App(ctk.CTk):
             if not valor.is_finite() or valor <= 0:
                 aviso.configure(text="O valor precisa ser maior que zero.")
                 return
-            if valor != valor.quantize(Decimal("0.01")):
+            try:
+                arredondado = valor.quantize(Decimal("0.01"))
+            except InvalidOperation:
+                #  Número absurdamente grande (ex.: trinta dígitos, ou
+                #  1e30) — o quantize não consegue arredondar dentro da
+                #  precisão do contexto. Mesmo aviso inline das outras
+                #  entradas inválidas, em vez de deixar a exceção subir
+                #  pro handler global e virar popup técnico.
+                aviso.configure(text="Digite um número, como 3,85.")
+                return
+            if valor != arredondado:
                 #  Mais de duas casas decimais produz um carimbo com conta
                 #  que não fecha no papel (ex.: 100 un × R$ 3,86 = R$ 385,50,
                 #  quando a tarifa digitada era 3,855) e, na planilha, uma
@@ -2598,6 +2608,13 @@ class App(ctk.CTk):
             dados = None
             unidades = None
             observacao = ""
+            #  Só fica True quando dá pra concluir, com segurança, que o
+            #  arquivo de fato NÃO é um protocolo dos Correios (texto nativo,
+            #  sem o marcador) — é o único caso que deve contar como
+            #  "ignorado" no resumo. "Não foi possível ler" e erro de leitura
+            #  ficam False aqui e caem no bucket de pendência lá embaixo: são
+            #  cobranças que ficaram de fora do lote, não documentos alheios.
+            nao_e_protocolo = False
             try:
                 dpi = config.get("dpi", 300)
                 texto, usou_leitor_escaneado = self._ler_texto_protocolo(caminho, dpi)
@@ -2630,8 +2647,11 @@ class App(ctk.CTk):
                             pass
 
                 if dados is None:
-                    observacao = ("Não foi possível ler o documento" if usou_leitor_escaneado
-                                  else "Não é um protocolo dos Correios")
+                    if usou_leitor_escaneado:
+                        observacao = "Não foi possível ler o documento"
+                    else:
+                        observacao = "Não é um protocolo dos Correios"
+                        nao_e_protocolo = True
                 else:
                     aceito, motivo = conferir_contagem_protocolo(dados)
                     if not aceito and usou_leitor_escaneado and not ja_tentou_de_novo:
@@ -2682,9 +2702,14 @@ class App(ctk.CTk):
                 except Exception as e:
                     observacao = f"Erro ao carimbar: {e}"
                     falhas_carimbo += 1
-            elif dados is None:
+            elif nao_e_protocolo:
                 ignorados += 1
             else:
+                #  Cobre tanto "contagem a conferir" (dados veio, mas a
+                #  conferência recusou) quanto "não foi possível ler"/erro de
+                #  leitura (dados ficou None sem ser por não-ser-protocolo) —
+                #  as duas são cobranças que ficaram de fora do lote, mesma
+                #  pendência sob a ótica de quem vai olhar o resumo.
                 pendentes += 1
 
             linhas.append(linha_planilha_protocolo(
@@ -2717,9 +2742,9 @@ class App(ctk.CTk):
             resumo += (f" (inclui {falhas_carimbo} {plural} — "
                        "a cobrança vale mesmo sem o carimbo)")
         if pendentes:
-            resumo += f" · {pendentes} sem conferir"
+            resumo += f" · {pendentes} pendente(s) (não lido(s) ou contagem a conferir)"
         if ignorados:
-            resumo += f" · {ignorados} ignorado(s)"
+            resumo += f" · {ignorados} ignorado(s) (não é protocolo dos Correios)"
 
         self.after(0, lambda: self.label_status_protocolos.configure(text=resumo))
         self.after(0, self._atualizar_botao_protocolos)

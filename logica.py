@@ -1320,7 +1320,7 @@ def linha_planilha_protocolo(nome_arquivo, dados, cadastro, tarifa=None,
         #  de contagem recusada) em vez de sobrescrevê-la — um protocolo pode
         #  estar pendente E sem código cadastrado ao mesmo tempo.
         motivo_codigo = ("Código não identificado no documento" if not codigo
-                          else "Código não cadastrado")
+                         else "Código não cadastrado")
         observacao = f"{observacao}; {motivo_codigo}" if observacao else motivo_codigo
 
     if unidades is None:
