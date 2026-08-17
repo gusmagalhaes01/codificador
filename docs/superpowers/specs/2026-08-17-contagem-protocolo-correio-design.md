@@ -50,17 +50,49 @@ Devolve `None` se o documento não for um protocolo (o marcador
 | `linhas_contadas` | regex das linhas de unidade |
 | `entregas_contadas` | ocorrências de `Correio` na coluna Entrega |
 
-Regexes:
+Regexes (validadas contra o `winocr` real nos quatro protocolos de
+referência — ver "Como o OCR realmente devolve o texto"):
 
 ```python
 RE_LISTANDO = re.compile(r"Listando\s+(\d+)\s+unidade", re.IGNORECASE)
-RE_LINHA_UNIDADE = re.compile(r"(?m)^\s*(\d{1,4})\s*[-–—]\s*\S")
+RE_UNIDADE = re.compile(r"\b\d{1,4}(?:\s*[-–—])+\s*[A-Za-zÀ-ÿ]")
 RE_ENTREGA = re.compile(r"\bCorreio\b", re.IGNORECASE)
 ```
 
-Dois conferidores em vez de um porque o OCR nem sempre preserva o início das
-linhas: se a tabela sair concatenada, `RE_LINHA_UNIDADE` erra e a contagem de
-`Correio` (uma ocorrência por linha entregue) ainda acerta.
+`RE_UNIDADE` é aplicada só no trecho **antes** do `Listando`, para não contar
+números do rodapé (CEP, telefone) como unidades. `RE_ENTREGA` é aplicada no
+texto inteiro; `\b` impede que "Correios" (plural, no rodapé) seja contado.
+
+Dois conferidores em vez de um porque cada um falha de um jeito diferente. No
+protocolo de 15 unidades o OCR leu `702 - - Enny Marins de Lima`, com traço
+duplicado — daí o `(?:\s*[-–—])+` no lugar de um traço só.
+
+### Como o OCR realmente devolve o texto
+
+O `winocr` entrega a página inteira **numa única linha**, sem `\n`, e com as
+colunas fora de ordem — os "Correio" da coluna Entrega vêm todos no fim, depois
+do rodapé. Exemplo real (protocolo do VILLARS, 300 DPI):
+
+```
+W700A VILLARS (10005) Protocolo de Recebimento de Documento Unidade
+401 - Carmen Lucia Vides Gomes 402 - Carmen Lucia Vides Gomes
+Listando 2 unidades Imodata - Condomínios e Imóveis Rua Barata Ribeiro,
+774 / 100 andar Copacabana } RJ -22.051-002 matriz@imodata.net -
+(21) 3816-7800 Assinatura Entrega Correio Correio 170 1 de 1
+```
+
+Nenhuma regex pode depender de início de linha (`(?m)^`) nem da ordem das
+colunas. O `170` no fim é o OCR tentando ler o `7,70` manuscrito — ruído
+esperado, e mais um motivo para o valor vir do cálculo e nunca do papel.
+
+Conferência das três contagens nos quatro protocolos de referência:
+
+| Protocolo | Esperado | `Listando` | `RE_UNIDADE` | `RE_ENTREGA` |
+|---|---:|---:|---:|---:|
+| -001 VILLARS | 2 | 2 | 2 | 2 |
+| -002 ASTORIA | 15 | 15 | 15 | 15 |
+| -003 CARMEM | 3 | 3 | 3 | 3 |
+| -004 DIDEROT | 12 | 12 | 12 | 12 |
 
 ### `conferir_contagem_protocolo(dados)`
 
