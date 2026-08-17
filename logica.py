@@ -312,10 +312,20 @@ def cnpj_valido(cnpj_normalizado):
 LIMITE_TEXTO_MINIMO = 30  # abaixo disso, consideramos que o PDF não tem texto legível
 
 
+def paginas_para_ocr(total_paginas, max_paginas):
+    """Quantas páginas o OCR deve ler. `max_paginas=None` significa todas —
+    usado pelos protocolos dos Correios, onde parar na 2ª página perderia
+    unidades em silêncio."""
+    if max_paginas is None:
+        return total_paginas
+    return min(total_paginas, max(0, max_paginas))
+
+
 def extrair_texto_ocr(caminho, max_paginas=2, dpi=300):
     """
-    Renderiza as primeiras páginas do PDF como imagem e roda OCR usando
-    o motor nativo do Windows (winocr) — sem programas externos instalados.
+    Renderiza páginas do PDF como imagem e roda OCR usando o motor nativo do
+    Windows (winocr) — sem programas externos instalados. Lê no máximo
+    `max_paginas` páginas; `max_paginas=None` lê o documento inteiro.
     Tenta português (pt-BR) primeiro; se não disponível, usa inglês (en-US).
     """
     if not OCR_DISPONIVEL:
@@ -324,8 +334,9 @@ def extrair_texto_ocr(caminho, max_paginas=2, dpi=300):
     textos = []
     doc = fitz.open(caminho)
     try:
+        limite = paginas_para_ocr(doc.page_count, max_paginas)
         for i, pagina in enumerate(doc):
-            if i >= max_paginas:
+            if i >= limite:
                 break
             pix = pagina.get_pixmap(dpi=dpi)
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)

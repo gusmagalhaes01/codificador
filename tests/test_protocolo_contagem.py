@@ -221,5 +221,23 @@ class TestValorProtocolo(unittest.TestCase):
         self.assertEqual(texto, "15 un × R$ 3,85 = R$ 57,75")
 
 
+class TestPaginasParaOcr(unittest.TestCase):
+    """A regra de quantas páginas ler foi extraída para uma função pura
+    justamente para ser testável sem winocr (que só existe no Windows)."""
+
+    def test_none_le_todas(self):
+        self.assertEqual(app.paginas_para_ocr(5, None), 5)
+
+    def test_limite_menor_que_o_documento(self):
+        self.assertEqual(app.paginas_para_ocr(5, 2), 2)
+
+    def test_limite_maior_que_o_documento(self):
+        self.assertEqual(app.paginas_para_ocr(1, 2), 1)
+
+    def test_limite_zero_ou_negativo_nao_le_nada(self):
+        self.assertEqual(app.paginas_para_ocr(5, 0), 0)
+        self.assertEqual(app.paginas_para_ocr(5, -1), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
