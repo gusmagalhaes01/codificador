@@ -239,5 +239,96 @@ class TestPaginasParaOcr(unittest.TestCase):
         self.assertEqual(app.paginas_para_ocr(5, -1), 0)
 
 
+class TestReservaDeOcr(unittest.TestCase):
+    """A reserva é escolhida por uma função pura, testável sem nenhum dos
+    dois motores instalados."""
+
+    def test_usa_winocr_quando_disponivel(self):
+        self.assertEqual(app.motor_de_ocr(tem_winocr=True, tem_rapidocr=True), "winocr")
+        self.assertEqual(app.motor_de_ocr(tem_winocr=True, tem_rapidocr=False), "winocr")
+
+    def test_cai_para_rapidocr_sem_winocr(self):
+        self.assertEqual(app.motor_de_ocr(tem_winocr=False, tem_rapidocr=True), "rapidocr")
+
+    def test_sem_nenhum_motor(self):
+        self.assertIsNone(app.motor_de_ocr(tem_winocr=False, tem_rapidocr=False))
+
+    def test_flag_de_disponibilidade_existe(self):
+        self.assertIsInstance(app.RAPIDOCR_DISPONIVEL, bool)
+
+    def test_rapidocr_nao_instalado_neste_ambiente(self):
+        """Trava esse fato do ambiente de teste: o pacote rapidocr é
+        dependência opcional e não deve estar instalado aqui (nem entrar no
+        requirements.txt). Se este teste falhar porque RAPIDOCR_DISPONIVEL
+        virou True, alguém instalou o pacote sem querer."""
+        self.assertFalse(app.RAPIDOCR_DISPONIVEL)
+
+    def test_ordem_dos_parametros_nao_pode_inverter_a_precedencia(self):
+        """Motor_de_ocr recebe (tem_winocr, tem_rapidocr) nessa ordem. Se
+        alguém inverter a precedência dentro da função (checar rapidocr
+        antes do winocr), este caso com os dois motores presentes ainda
+        precisa devolver "winocr" — é a regra central da task: a reserva
+        nunca troca de lugar com uma leitura que funcionou."""
+        self.assertEqual(app.motor_de_ocr(True, True), "winocr")
+
+    def test_extrair_texto_escaneado_usa_winocr_quando_da_certo(self):
+        """Sem RapidOCR instalado neste ambiente, extrair_texto_escaneado
+        precisa delegar para extrair_texto_ocr (winocr) e devolver o texto
+        dele sem tentar nenhuma reserva. Substituímos extrair_texto_ocr por
+        um stub para não depender do motor nativo estar presente na máquina
+        de teste."""
+        chamadas = []
+
+        def _stub_ocr(caminho, max_paginas=2, dpi=300):
+            chamadas.append((caminho, max_paginas, dpi))
+            return "texto lido pelo winocr"
+
+        ocr_original = app.extrair_texto_ocr
+        disponivel_original = app.OCR_DISPONIVEL
+        app.extrair_texto_ocr = _stub_ocr
+        app.OCR_DISPONIVEL = True
+        try:
+            resultado = app.extrair_texto_escaneado("arquivo.pdf", dpi=200)
+        finally:
+            app.extrair_texto_ocr = ocr_original
+            app.OCR_DISPONIVEL = disponivel_original
+
+        self.assertEqual(resultado, "texto lido pelo winocr")
+        self.assertEqual(len(chamadas), 1)
+        self.assertEqual(chamadas[0], ("arquivo.pdf", None, 200))
+
+    def test_extrair_texto_escaneado_sem_nenhum_motor_levanta_erro(self):
+        """Sem winocr disponível e sem RapidOCR instalado (situação real
+        deste ambiente), extrair_texto_escaneado tem que levantar erro, não
+        devolver texto vazio silenciosamente."""
+        disponivel_original = app.OCR_DISPONIVEL
+        app.OCR_DISPONIVEL = False
+        try:
+            self.assertFalse(app.RAPIDOCR_DISPONIVEL)
+            with self.assertRaises(RuntimeError):
+                app.extrair_texto_escaneado("arquivo.pdf")
+        finally:
+            app.OCR_DISPONIVEL = disponivel_original
+
+    def test_extrair_texto_escaneado_propaga_erro_do_winocr_sem_rapidocr(self):
+        """Winocr disponível mas quebrando na leitura: sem RapidOCR
+        instalado neste ambiente, o erro do winocr precisa subir, não ser
+        engolido em silêncio."""
+        def _stub_ocr_quebrado(caminho, max_paginas=2, dpi=300):
+            raise RuntimeError("falha simulada do winocr")
+
+        ocr_original = app.extrair_texto_ocr
+        disponivel_original = app.OCR_DISPONIVEL
+        app.extrair_texto_ocr = _stub_ocr_quebrado
+        app.OCR_DISPONIVEL = True
+        try:
+            self.assertFalse(app.RAPIDOCR_DISPONIVEL)
+            with self.assertRaises(RuntimeError):
+                app.extrair_texto_escaneado("arquivo.pdf")
+        finally:
+            app.extrair_texto_ocr = ocr_original
+            app.OCR_DISPONIVEL = disponivel_original
+
+
 if __name__ == "__main__":
     unittest.main()
