@@ -17,6 +17,7 @@ import os
 import re
 import sys
 import unicodedata
+from decimal import Decimal, ROUND_HALF_UP
 from difflib import SequenceMatcher
 
 from pypdf import PdfReader, PdfWriter
@@ -587,6 +588,34 @@ def conferir_contagem_protocolo(dados):
     if total == linhas or total == entregas:
         return True, ""
     return False, f"Listando {total}, mas foram contadas {linhas} e {entregas} unidades"
+
+
+# ============================================================
+#  VALOR DO PROTOCOLO (unidades × tarifa) E TEXTOS DO CARIMBO
+# ============================================================
+
+def valor_protocolo(unidades, tarifa):
+    """
+    unidades × tarifa em Decimal, duas casas. Dinheiro não passa por float:
+    a tarifa vira Decimal a partir da string para não herdar o erro de
+    representação binária (3.85 float não é exatamente 3,85).
+    """
+    tarifa_decimal = tarifa if isinstance(tarifa, Decimal) else Decimal(str(tarifa))
+    bruto = Decimal(int(unidades)) * tarifa_decimal
+    return bruto.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def formatar_reais(valor):
+    """1234.5 -> "R$ 1.234,50" (formato brasileiro)."""
+    texto = f"{Decimal(str(valor)):,.2f}"
+    return "R$ " + texto.replace(",", "\x00").replace(".", ",").replace("\x00", ".")
+
+
+def montar_texto_valor_protocolo(unidades, tarifa, valor):
+    """Linha carimbada no topo direito: "15 un × R$ 3,85 = R$ 57,75".
+    Mostra a conta, não só o resultado, para conferir no papel sem
+    precisar refazer a multiplicação."""
+    return f"{unidades} un × {formatar_reais(tarifa)} = {formatar_reais(valor)}"
 
 
 # ============================================================

@@ -180,5 +180,46 @@ class TestConferenciaProtocolo(unittest.TestCase):
         self.assertEqual(motivo, "Listando 3, mas foram contadas 1 e 1 unidades")
 
 
+from decimal import Decimal
+
+
+class TestValorProtocolo(unittest.TestCase):
+    def test_multiplicacao_simples(self):
+        self.assertEqual(app.valor_protocolo(15, Decimal("3.85")), Decimal("57.75"))
+
+    def test_aceita_tarifa_float_sem_perder_centavo(self):
+        """1.015 como float carrega erro de representação binária
+        (1.0150000000000000088...): convertida direto para Decimal (sem
+        passar por str primeiro) o excedente somado ao restante do float
+        arredonda para BAIXO (1.01). Só Decimal(str(tarifa)) preserva os
+        três dígitos exatos e arredonda para CIMA (1.02) — é essa diferença
+        que o teste precisa detectar, não só "bate com o valor esperado".
+        Com (12, 3.85) do brief original, as duas conversões dão 46.20 e o
+        teste passaria mesmo com o bug (Decimal(tarifa) sem str()); troquei
+        para (1, 1.015) para o teste realmente falhar se a implementação
+        perder o str()."""
+        self.assertEqual(app.valor_protocolo(1, 1.015), Decimal("1.02"))
+
+    def test_lote_de_referencia_fecha(self):
+        """Os quatro protocolos reais de 24/07/2026, conferidos contra os
+        valores escritos à mão no papel."""
+        total = sum(app.valor_protocolo(u, Decimal("3.85")) for u in (2, 15, 3, 12))
+        self.assertEqual(total, Decimal("123.20"))
+
+    def test_arredonda_meio_centavo_para_cima(self):
+        self.assertEqual(app.valor_protocolo(1, Decimal("3.855")), Decimal("3.86"))
+
+    def test_zero_unidades(self):
+        self.assertEqual(app.valor_protocolo(0, Decimal("3.85")), Decimal("0.00"))
+
+    def test_formata_em_reais(self):
+        self.assertEqual(app.formatar_reais(Decimal("57.75")), "R$ 57,75")
+        self.assertEqual(app.formatar_reais(Decimal("1234.50")), "R$ 1.234,50")
+
+    def test_texto_do_carimbo_mostra_a_conta(self):
+        texto = app.montar_texto_valor_protocolo(15, Decimal("3.85"), Decimal("57.75"))
+        self.assertEqual(texto, "15 un × R$ 3,85 = R$ 57,75")
+
+
 if __name__ == "__main__":
     unittest.main()
