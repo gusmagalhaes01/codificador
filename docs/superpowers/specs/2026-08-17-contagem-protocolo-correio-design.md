@@ -85,7 +85,29 @@ Nenhuma regex pode depender de início de linha (`(?m)^`) nem da ordem das
 colunas. O `170` no fim é o OCR tentando ler o `7,70` manuscrito — ruído
 esperado, e mais um motivo para o valor vir do cálculo e nunca do papel.
 
-### Tesseract foi testado e descartado (2026-08-17)
+### Tesseract e RapidOCR foram testados e descartados (2026-08-17)
+
+Os três motores empatam em 4/4 nos sinais que este recurso usa. O winocr ganha
+em tudo o que os diferencia:
+
+| | winocr | Tesseract 5.4 + `por` | RapidOCR (PP-OCRv6) |
+|---|:--:|:--:|:--:|
+| Marcador / `Listando` / `Correio` | 4/4 | 4/4 | 4/4 |
+| Contagem por linha | — | 4/4 | 4/4 |
+| Tempo por documento | 0,37–0,45s | 1,98–3,88s | 3,80–5,40s |
+| Peso na distribuição | 0 (nativo) | ~58 MB + exe externo | ~200 MB+ |
+
+O RapidOCR (modelos PP-OCR do PaddleOCR via ONNX — o PaddlePaddle em si não
+tem wheel para Python 3.14) é o melhor dos alternativos: devolve blocos de
+texto com coordenadas, que é a estrutura real da tabela, e leu o CEP correto
+onde o Tesseract errou. **Se um dia for preciso saber quais unidades
+receberam, e não apenas quantas, é esse o motor a revisitar** — não o
+Tesseract.
+
+Nenhum dos três lê o valor manuscrito de forma confiável: o RapidOCR leu
+`1.70` onde o papel diz 7,70. O valor vem sempre do cálculo.
+
+### Detalhe do teste do Tesseract
 
 Com `pytesseract` + Tesseract 5.4 e o modelo `por` (tessdata_best), os quatro
 protocolos deram 4/4 em todos os sinais — inclusive a contagem por linha, que
