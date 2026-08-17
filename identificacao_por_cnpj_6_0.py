@@ -2468,6 +2468,14 @@ class App(ctk.CTk):
             if not valor.is_finite() or valor <= 0:
                 aviso.configure(text="O valor precisa ser maior que zero.")
                 return
+            if valor != valor.quantize(Decimal("0.01")):
+                #  Mais de duas casas decimais produz um carimbo com conta
+                #  que não fecha no papel (ex.: 100 un × R$ 3,86 = R$ 385,50,
+                #  quando a tarifa digitada era 3,855) e, na planilha, uma
+                #  coluna Tarifa que não bate com Unidades × Tarifa quando
+                #  alguém recalcula a partir do valor exibido.
+                aviso.configure(text="No máximo duas casas decimais, como 3,85.")
+                return
             resultado["valor"] = valor
             janela.destroy()
 
@@ -2595,11 +2603,38 @@ class App(ctk.CTk):
                 texto, usou_leitor_escaneado = self._ler_texto_protocolo(caminho, dpi)
                 dados = extrair_dados_protocolo_correio(texto)
 
+                #  Teto de UMA re-tentativa por arquivo, some com a que já
+                #  existia para a contagem divergente — nunca duas re-leituras
+                #  no mesmo arquivo. `ja_tentou_de_novo` é o que garante isso:
+                #  se o marcador do protocolo já não foi achado na 1ª leitura
+                #  e a 2ª (qualidade maior) também não achar, a checagem de
+                #  contagem abaixo não tenta uma 3ª leitura.
+                ja_tentou_de_novo = False
+                if dados is None and usou_leitor_escaneado:
+                    #  Sem o marcador do protocolo não dá para saber se é
+                    #  porque o documento não é um protocolo dos Correios ou
+                    #  porque a leitura na qualidade "Rápida" simplesmente não
+                    #  pegou o texto — só texto nativo (não veio do leitor de
+                    #  escaneados) sustenta a conclusão "não é um protocolo"
+                    #  sem re-tentar.
+                    dpi_maior = proximo_dpi_maior(dpi)
+                    if dpi_maior and dpi_maior != dpi:
+                        ja_tentou_de_novo = True
+                        try:
+                            texto_maior = extrair_texto_escaneado(caminho, dpi=dpi_maior)
+                            dados = extrair_dados_protocolo_correio(texto_maior)
+                        except Exception:
+                            #  A re-tentativa falhou — dados continua None,
+                            #  e a observação abaixo reflete "não foi possível
+                            #  ler", não "não é um protocolo".
+                            pass
+
                 if dados is None:
-                    observacao = "Não é um protocolo dos Correios"
+                    observacao = ("Não foi possível ler o documento" if usou_leitor_escaneado
+                                  else "Não é um protocolo dos Correios")
                 else:
                     aceito, motivo = conferir_contagem_protocolo(dados)
-                    if not aceito and usou_leitor_escaneado:
+                    if not aceito and usou_leitor_escaneado and not ja_tentou_de_novo:
                         #  Uma re-tentativa em qualidade maior, como já se faz
                         #  quando o CNPJ sai com checksum inválido — só faz
                         #  sentido quando a leitura original já veio do leitor
@@ -2671,10 +2706,16 @@ class App(ctk.CTk):
         indice_coluna_valor = [c[0] for c in COLUNAS_PROTOCOLO].index("Valor")
         total_valor = sum(l[indice_coluna_valor] for l in linhas
                           if isinstance(l[indice_coluna_valor], float))
-        resumo = f"{carimbados} protocolo(s) · {formatar_reais(total_valor)}"
+        #  O valor é devido pela entrega, não pelo carimbo ter dado certo —
+        #  então o total cobra também o(s) protocolo(s) que falharam ao
+        #  carimbar (ver falhas_carimbo abaixo). O texto do resumo precisa
+        #  deixar isso explícito, sem ambiguidade, ou parece que o total só
+        #  cobre os "carimbados".
+        resumo = f"{carimbados} protocolo(s) carimbado(s) · {formatar_reais(total_valor)} no total"
         if falhas_carimbo:
             plural = "não carimbado" if falhas_carimbo == 1 else "não carimbados"
-            resumo += f" · {falhas_carimbo} {plural}"
+            resumo += (f" (inclui {falhas_carimbo} {plural} — "
+                       "a cobrança vale mesmo sem o carimbo)")
         if pendentes:
             resumo += f" · {pendentes} sem conferir"
         if ignorados:
@@ -2701,9 +2742,11 @@ class App(ctk.CTk):
         #  Posição do carimbo de valor a partir do tamanho real da 1ª página
         #  do PDF — uma margem fixa pra A4 cairia fora da folha em páginas
         #  menores.
-        primeira_pagina = PdfReader(caminho).pages[0]
+        leitor_medida = PdfReader(caminho)
+        primeira_pagina = leitor_medida.pages[0]
         largura_pagina = float(primeira_pagina.mediabox.width)
         altura_pagina = float(primeira_pagina.mediabox.height)
+        leitor_medida.close()
         x_valor = largura_pagina - MARGEM_VALOR_PROTOCOLO
         y_valor = altura_pagina - MARGEM_VALOR_PROTOCOLO
 

@@ -66,6 +66,33 @@ class TestLinhaPlanilhaProtocolo(unittest.TestCase):
         self.assertTrue(all(c is None for c in linha[3:6]))
         self.assertEqual(linha[6], "Não é um protocolo dos Correios")
 
+    def test_codigo_nao_cadastrado_concatena_com_observacao_existente(self):
+        """Achado da revisão: `if not registro and not observacao` fazia
+        "Código não cadastrado" desaparecer quando já havia outra observação
+        (ex.: motivo de contagem recusada) — um protocolo pode estar pendente
+        E com código fora do cadastro ao mesmo tempo, e as duas informações
+        precisam sobreviver na planilha."""
+        linha = app.linha_planilha_protocolo(
+            "p.pdf", DADOS_NAO_CADASTRADO, CADASTRO_TESTE,
+            observacao="Listando 3, mas foram contadas 2 e 2 unidades")
+        self.assertIn("Listando 3", linha[6])
+        self.assertIn("Código não cadastrado", linha[6])
+
+    def test_codigo_nao_lido_distingue_de_codigo_nao_cadastrado(self):
+        """Achado da revisão: quando o código não foi lido do documento
+        (`codigo` vazio/None), a mensagem não pode dizer "não cadastrado" —
+        isso manda a pessoa procurar no cadastro um código que na verdade
+        nunca existiu, quando o problema é a leitura, não o cadastro."""
+        dados_sem_codigo = {
+            "codigo": None, "condominio": "W700A SEM CODIGO",
+            "total_impresso": 3, "linhas_contadas": 3, "entregas_contadas": 3,
+        }
+        linha = app.linha_planilha_protocolo(
+            "p.pdf", dados_sem_codigo, CADASTRO_TESTE,
+            tarifa=Decimal("3.85"), unidades=3)
+        self.assertNotEqual(linha[6], "Código não cadastrado")
+        self.assertIn("não identificado", linha[6].lower())
+
     def test_valor_e_decimal_convertido_pra_float_nunca_texto(self):
         """Reforço: dinheiro tem que sobreviver como número, não como str —
         uma implementação que devolvesse str(valor) passaria despercebida

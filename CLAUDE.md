@@ -408,8 +408,18 @@ ordem espacial das colunas em vez de só contar ocorrências no texto corrido.
 reais, fora do repo — os valores vieram de números manuscritos nas próprias
 folhas): 2 unidades / R$ 7,70, 15 / R$ 57,75, 3 / R$ 11,55 e 12 / R$ 46,20,
 com tarifa de R$ 3,85 — total R$ 123,20. As fixtures de teste automatizado
-(`tests/test_protocolo_correio.py`) são sintéticas, sem nome de morador,
+(`tests/test_protocolo_contagem.py`) são sintéticas, sem nome de morador,
 seguindo a mesma disciplina das fixtures de NFS-e.
+
+**Margem de segurança real da conferência:** o desenho de
+`conferir_contagem_protocolo` falha para o lado seguro (rejeita quando os
+conferidores não concordam com o `Listando`), mas a redundância observada no
+lote real é menor do que "dois de dois". No protocolo `-003` (3 unidades), a
+200 DPI, `Listando 3` foi confirmado por só **um** dos dois conferidores —
+contagem de linhas deu 1 (subcontou), contagem de "Correio" deu 3 (bateu). A
+aceitação passou porque basta um dos dois, não porque os dois concordaram.
+Quem for endurecer essa regra (ex.: exigir os dois conferidores) precisa
+saber que isso teria recusado um protocolo real do lote de aceitação.
 
 ## Divergências de lógica só no 6_0 (pós-redesign)
 

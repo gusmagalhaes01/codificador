@@ -917,9 +917,10 @@ def criar_overlay(largura, altura, texto, fonte, tamanho, cor, x, y, centralizad
     desenhada empilhada, a primeira em cima e as seguintes abaixo dela.
 
     `angulo=90` é um modo especial (protocolo dos Correios, ver
-    montar_texto_protocolo_correio): ignora x/y/centralizado e desenha uma
-    linha única rotacionada 90° (sentido anti-horário — lê de baixo pra
-    cima), colada perto da borda direita e verticalmente centralizada.
+    montar_texto_protocolo_correio): ignora x/y/centralizado/alinhamento e
+    desenha uma linha única rotacionada 90° (sentido anti-horário — lê de
+    baixo pra cima), colada perto da borda direita e verticalmente
+    centralizada.
 
     `alinhamento` ("esquerda", "centro", "direita") vale para o modo normal:
     "direita" faz o texto TERMINAR em x, usado pelo carimbo do valor no topo
@@ -1311,8 +1312,16 @@ def linha_planilha_protocolo(nome_arquivo, dados, cadastro, tarifa=None,
         registro = cadastro.get(cnpj) if cnpj else None
 
     condominio = registro["nome"] if registro else dados.get("condominio", "")
-    if not registro and not observacao:
-        observacao = "Código não cadastrado"
+    if not registro:
+        #  Duas causas distintas: sem código não tem o que procurar no
+        #  cadastro (o documento não trouxe/o leitor não achou); com código
+        #  e sem bater no cadastro, o código foi lido mas não está
+        #  cadastrado. Concatena com uma observação já existente (ex.: motivo
+        #  de contagem recusada) em vez de sobrescrevê-la — um protocolo pode
+        #  estar pendente E sem código cadastrado ao mesmo tempo.
+        motivo_codigo = ("Código não identificado no documento" if not codigo
+                          else "Código não cadastrado")
+        observacao = f"{observacao}; {motivo_codigo}" if observacao else motivo_codigo
 
     if unidades is None:
         return [nome_arquivo, condominio, codigo, None, None, None, observacao]

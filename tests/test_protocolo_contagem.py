@@ -189,8 +189,8 @@ class TestValorProtocolo(unittest.TestCase):
 
     def test_aceita_tarifa_float_sem_perder_centavo(self):
         """1.015 como float carrega erro de representação binária
-        (1.0150000000000000088...): convertida direto para Decimal (sem
-        passar por str primeiro) o excedente somado ao restante do float
+        (1.0149999999999999023...): convertida direto para Decimal (sem
+        passar por str primeiro) o déficit somado ao restante do float
         arredonda para BAIXO (1.01). Só Decimal(str(tarifa)) preserva os
         três dígitos exatos e arredonda para CIMA (1.02) — é essa diferença
         que o teste precisa detectar, não só "bate com o valor esperado".
@@ -207,7 +207,13 @@ class TestValorProtocolo(unittest.TestCase):
         self.assertEqual(total, Decimal("123.20"))
 
     def test_arredonda_meio_centavo_para_cima(self):
-        self.assertEqual(app.valor_protocolo(1, Decimal("3.855")), Decimal("3.86"))
+        """3,845 (não 3,855) de propósito: ROUND_HALF_UP e ROUND_HALF_EVEN só
+        divergem quando o dígito à esquerda do meio-centavo é ímpar. Com
+        3,855 os dois modos dão 3,86 e o teste passaria mesmo trocando
+        ROUND_HALF_UP por ROUND_HALF_EVEN em valor_protocolo; com 3,845,
+        ROUND_HALF_UP dá 3,85 e ROUND_HALF_EVEN dá 3,84 — só assim o teste
+        prova qual modo está em uso (confirmado rodando os dois à parte)."""
+        self.assertEqual(app.valor_protocolo(1, Decimal("3.845")), Decimal("3.85"))
 
     def test_zero_unidades(self):
         self.assertEqual(app.valor_protocolo(0, Decimal("3.85")), Decimal("0.00"))
@@ -256,12 +262,27 @@ class TestReservaDeOcr(unittest.TestCase):
     def test_flag_de_disponibilidade_existe(self):
         self.assertIsInstance(app.RAPIDOCR_DISPONIVEL, bool)
 
-    def test_rapidocr_nao_instalado_neste_ambiente(self):
-        """Trava esse fato do ambiente de teste: o pacote rapidocr é
-        dependência opcional e não deve estar instalado aqui (nem entrar no
-        requirements.txt). Se este teste falhar porque RAPIDOCR_DISPONIVEL
-        virou True, alguém instalou o pacote sem querer."""
-        self.assertFalse(app.RAPIDOCR_DISPONIVEL)
+    def test_rapidocr_nao_entra_no_pacote(self):
+        """A reserva é opcional por máquina (ver comentário em logica.py):
+        quem quiser pode instalar `rapidocr` localmente para ganhar a
+        reserva, e isso é o uso previsto, não um erro. O que não pode
+        acontecer é o pacote entrar na distribuição — `requirements.txt` (usado
+        por `gerar_exe.bat` para montar o ambiente de build) e
+        `codificador.spec` (hiddenimports do PyInstaller) não podem citar
+        `rapidocr`. Checar o ambiente de teste (RAPIDOCR_DISPONIVEL) como a
+        versão antiga deste teste fazia quebrava exatamente para quem
+        instalasse a reserva de propósito — e `gerar_exe.bat` só empacota se
+        a suíte inteira passar, travando o build de quem fizesse isso.
+        Este teste passa com ou sem rapidocr instalado nesta máquina."""
+        raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+        with open(os.path.join(raiz, "requirements.txt"), encoding="utf-8") as f:
+            requirements = f.read()
+        self.assertNotIn("rapidocr", requirements.lower())
+
+        with open(os.path.join(raiz, "codificador.spec"), encoding="utf-8") as f:
+            spec = f.read()
+        self.assertNotIn("rapidocr", spec.lower())
 
     def test_ordem_dos_parametros_nao_pode_inverter_a_precedencia(self):
         """Motor_de_ocr recebe (tem_winocr, tem_rapidocr) nessa ordem. Se
