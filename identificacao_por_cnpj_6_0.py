@@ -2486,6 +2486,212 @@ class App(ctk.CTk):
         self.wait_window(janela)
         return resultado["valor"]
 
+    def montar_config_atual(self):
+        """
+        Monta o dict de configuração do carimbo (fonte, tamanho, cor, posição
+        e qualidade de leitura) a partir dos campos da aba 1 — a mesma
+        predefinição em uso na sessão. Usado por telas que carimbam PDFs fora
+        do fluxo de identificação por CNPJ, como a aba de protocolos dos
+        Correios (posição/cor do texto principal seguem o que já está
+        configurado; o carimbo lateral e o do valor da aba 3 sobrepõem x/y
+        conforme o próprio layout do protocolo pede).
+        """
+        try:
+            tamanho = int(self.tamanho_fonte.get())
+        except ValueError:
+            tamanho = int(DEFAULTS_CONFIG["predefinicoes"]["fedcorp"]["tamanho_fonte"])
+
+        cor = self.cor_texto.get().strip() or "#000000"
+        modo = self.modo_texto.get()
+        if modo == "rodape":
+            config = {"fonte": "Helvetica-Bold", "tamanho": tamanho, "cor": cor,
+                      "x": 0, "y": 90, "centralizado": True}
+        else:
+            config = {"fonte": "Helvetica-Bold", "tamanho": tamanho, "cor": cor,
+                      "x": 120, "y": 815, "centralizado": False}
+        config["dpi"] = int(self.dpi_ocr.get())
+        return config
+
+    def _iniciar_protocolos(self):
+        pasta = self.pasta_protocolos.get().strip()
+        pasta_saida = self.pasta_protocolos_saida.get().strip()
+        destino = self.arquivo_planilha_protocolos.get().strip()
+
+        if not pasta or not os.path.isdir(pasta):
+            messagebox.showerror("Erro", "Selecione a pasta com os protocolos.")
+            return
+        if not pasta_saida:
+            messagebox.showerror("Erro", "Escolha onde salvar os PDFs carimbados.")
+            return
+        if os.path.normpath(pasta_saida) == os.path.normpath(pasta):
+            messagebox.showerror(
+                "Erro", "A pasta de saída precisa ser diferente da pasta de origem, "
+                        "para não sobrescrever os protocolos originais.")
+            return
+        if not destino:
+            messagebox.showerror("Erro", "Escolha onde salvar a planilha.")
+            return
+        if os.path.isfile(destino) and not messagebox.askyesno(
+            "Substituir planilha",
+            f"Este arquivo já existe e será substituído:\n\n{destino}\n\nContinuar?"
+        ):
+            return
+
+        tarifa = self._pedir_tarifa()
+        if tarifa is None:
+            return
+
+        self.botao_protocolos.configure(state="disabled")
+        self.label_status_protocolos.configure(text="Lendo os protocolos...")
+
+        thread = threading.Thread(
+            target=self._processar_protocolos_em_thread,
+            args=(pasta, pasta_saida, destino, tarifa), daemon=True)
+        thread.start()
+
+    def _ler_texto_protocolo(self, caminho, dpi):
+        """Texto nativo se houver; senão o documento inteiro pelo leitor de
+        escaneados (winocr, com RapidOCR de reserva se estiver instalado).
+        Todas as páginas — parar na 2ª perderia unidades."""
+        texto = extrair_texto_pdf(caminho)
+        if len(texto.strip()) >= LIMITE_TEXTO_MINIMO:
+            return texto
+        return extrair_texto_escaneado(caminho, dpi=dpi)
+
+    def _processar_protocolos_em_thread(self, pasta, pasta_saida, destino, tarifa):
+        arquivos = sorted(f for f in os.listdir(pasta) if f.lower().endswith(".pdf"))
+        total = len(arquivos)
+        self.after(0, lambda: self.barra_protocolos.configure(maximum=total, value=0))
+
+        config = self.montar_config_atual()
+        codigos = _codigos_do_cadastro(self.cadastro)
+
+        linhas = []
+        carimbados = 0
+        pendentes = 0
+        ignorados = 0
+
+        for indice, nome in enumerate(arquivos, 1):
+            caminho = os.path.join(pasta, nome)
+            self.after(0, lambda i=indice, n=nome:
+                       self.label_status_protocolos.configure(
+                           text=f"Lendo {i} de {total}: {n}"))
+
+            dados = None
+            unidades = None
+            observacao = ""
+            try:
+                dpi = config.get("dpi", 300)
+                texto = self._ler_texto_protocolo(caminho, dpi)
+                dados = extrair_dados_protocolo_correio(texto)
+
+                if dados is None:
+                    observacao = "Não é um protocolo dos Correios"
+                else:
+                    aceito, motivo = conferir_contagem_protocolo(dados)
+                    if not aceito:
+                        #  Uma re-tentativa em qualidade maior, como já se faz
+                        #  quando o CNPJ sai com checksum inválido.
+                        dpi_maior = proximo_dpi_maior(dpi)
+                        if dpi_maior and dpi_maior != dpi:
+                            texto = extrair_texto_ocr(caminho, max_paginas=None,
+                                                      dpi=dpi_maior)
+                            novos = extrair_dados_protocolo_correio(texto)
+                            if novos:
+                                dados = novos
+                                aceito, motivo = conferir_contagem_protocolo(dados)
+                    if aceito:
+                        unidades = dados["total_impresso"]
+                    else:
+                        observacao = motivo
+            except Exception as e:
+                observacao = f"Erro ao ler: {e}"
+
+            if unidades is not None:
+                try:
+                    self._carimbar_protocolo(caminho, pasta_saida, nome, dados,
+                                             unidades, tarifa, config, codigos)
+                    carimbados += 1
+                except Exception as e:
+                    observacao = f"Erro ao carimbar: {e}"
+            elif dados is None:
+                ignorados += 1
+            else:
+                pendentes += 1
+
+            linhas.append(linha_planilha_protocolo(
+                nome, dados, self.cadastro, tarifa, unidades, observacao))
+            self.after(0, lambda v=indice: self.barra_protocolos.configure(value=v))
+
+        try:
+            salvar_planilha_protocolo(destino, linhas)
+        except Exception as e:
+            self.after(0, lambda: self.label_status_protocolos.configure(
+                text="Não foi possível salvar a planilha."))
+            self.after(0, self._atualizar_botao_protocolos)
+            self.after(0, lambda: messagebox.showerror(
+                "Erro ao salvar",
+                f"Não foi possível gravar a planilha:\n{e}\n\n"
+                "Se ela estiver aberta no Excel, feche e tente de novo."))
+            return
+
+        total_valor = sum(l[5] for l in linhas if isinstance(l[5], float))
+        resumo = f"{carimbados} protocolo(s) · {formatar_reais(total_valor)}"
+        if pendentes:
+            resumo += f" · {pendentes} sem conferir"
+        if ignorados:
+            resumo += f" · {ignorados} ignorado(s)"
+
+        self.after(0, lambda: self.label_status_protocolos.configure(text=resumo))
+        self.after(0, self._atualizar_botao_protocolos)
+        self.after(0, lambda: self._concluir_extracao(destino, resumo))
+
+    def _carimbar_protocolo(self, caminho, pasta_saida, nome, dados, unidades,
+                            tarifa, config, codigos):
+        """
+        Dois carimbos num passe só: o lateral rotacionado com o código (igual
+        ao da aba 1, para a IA do Superlógica continuar lendo) e o valor no
+        topo direito. Código fora do cadastro carimba só o valor — o valor não
+        depende do cadastro, e perder a cobrança por isso seria pior.
+        """
+        valor = valor_protocolo(unidades, tarifa)
+        texto_valor = montar_texto_valor_protocolo(unidades, tarifa, valor)
+
+        cnpj = codigos.get(dados.get("codigo") or "")
+        registro = self.cadastro.get(cnpj) if cnpj else None
+
+        config_carimbo = dict(config)
+        config_carimbo["angulo"] = 90
+        if registro:
+            texto_lateral = montar_texto_protocolo_correio(
+                dados["codigo"], registro["nome"], cnpj)
+        else:
+            #  Sem cadastro não há nome nem CNPJ para a linha lateral; o
+            #  carimbo principal vira o próprio valor, no topo direito.
+            texto_lateral = texto_valor
+            config_carimbo["angulo"] = 0
+            config_carimbo["centralizado"] = False
+            config_carimbo["alinhamento"] = "direita"
+            config_carimbo["x"] = MARGEM_VALOR_PROTOCOLO_X
+            config_carimbo["y"] = MARGEM_VALOR_PROTOCOLO_Y
+
+        extras = []
+        if registro:
+            extras.append({
+                "texto": texto_valor,
+                "fonte": config["fonte"],
+                "tamanho": config["tamanho"],
+                "cor": config["cor"],
+                "x": MARGEM_VALOR_PROTOCOLO_X,
+                "y": MARGEM_VALOR_PROTOCOLO_Y,
+                "centralizado": False,
+                "angulo": 0,
+                "alinhamento": "direita",
+            })
+
+        caminho_saida = os.path.join(pasta_saida, nome)
+        processar_pdf(caminho, caminho_saida, texto_lateral, config_carimbo, extras)
+
     def _montar_aba_logs(self, parent):
         fonte = familia_fonte()
 
