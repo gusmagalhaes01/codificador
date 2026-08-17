@@ -2418,6 +2418,74 @@ class App(ctk.CTk):
         else:
             self.botao_protocolos.configure(text="Calcular protocolos", state="disabled")
 
+    def _pedir_tarifa(self):
+        """
+        Pede o valor por linha do lote. Campo vazio de propósito, sem valor
+        padrão: a tarifa muda com o tempo (nos protocolos de referência
+        aparecem 3,45 e 3,85) e um padrão herdado passaria batido.
+        Devolve Decimal, ou None se o usuário cancelar.
+        """
+        from decimal import Decimal, InvalidOperation
+
+        tema = self.tema_atual
+        fonte = familia_fonte()
+        janela = ctk.CTkToplevel(self)
+        janela.title("Valor por linha")
+        janela.configure(fg_color=tema["fundo"])
+        janela.resizable(False, False)
+        janela.transient(self)
+        janela.grab_set()
+
+        resultado = {"valor": None}
+
+        ctk.CTkLabel(janela, text="Quanto custa cada linha entregue?",
+                     font=(fonte, 15), text_color=tema["texto"]).pack(
+            padx=24, pady=(24, 4), anchor="w")
+        ctk.CTkLabel(janela, text="Ex.: 3,85", font=(fonte, 12),
+                     text_color=tema["texto_terciario"]).pack(padx=24, anchor="w")
+
+        entrada = ctk.CTkEntry(janela, corner_radius=0, width=200,
+                               fg_color=tema["superficie"], border_width=1,
+                               border_color=tema["borda"], text_color=tema["texto"],
+                               font=(fonte, 14))
+        entrada.pack(padx=24, pady=(12, 4), anchor="w")
+        entrada.focus_set()
+
+        aviso = ctk.CTkLabel(janela, text="", font=(fonte, 12),
+                             text_color=tema["acento"])
+        aviso.pack(padx=24, pady=(0, 8), anchor="w")
+
+        def confirmar():
+            texto = entrada.get().strip().replace("R$", "").replace(" ", "")
+            texto = texto.replace(".", "").replace(",", ".") if "," in texto else texto
+            try:
+                valor = Decimal(texto)
+            except (InvalidOperation, ValueError):
+                aviso.configure(text="Digite um número, como 3,85.")
+                return
+            if valor <= 0:
+                aviso.configure(text="O valor precisa ser maior que zero.")
+                return
+            resultado["valor"] = valor
+            janela.destroy()
+
+        linha_botoes = ctk.CTkFrame(janela, corner_radius=0, fg_color=tema["fundo"])
+        linha_botoes.pack(padx=24, pady=(0, 24), anchor="e")
+
+        ctk.CTkButton(linha_botoes, text="Cancelar", corner_radius=0, width=100,
+                      fg_color="transparent", hover_color=tema["superficie"],
+                      border_width=1, border_color=tema["borda_forte"],
+                      text_color=tema["texto"], font=(fonte, 13),
+                      command=janela.destroy).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(linha_botoes, text="Continuar", corner_radius=0, width=120,
+                      fg_color=tema["acento"], hover_color=tema["acento_hover"],
+                      text_color=tema["sobre_acento"], border_width=0,
+                      font=(fonte, 13), command=confirmar).pack(side="left")
+
+        entrada.bind("<Return>", lambda _e: confirmar())
+        self.wait_window(janela)
+        return resultado["valor"]
+
     def _montar_aba_logs(self, parent):
         fonte = familia_fonte()
 
