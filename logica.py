@@ -819,14 +819,20 @@ def desempatar_por_cadastro(candidatos, cadastro):
 MARGEM_LATERAL_ROTACIONADO = 20  # pontos da borda direita, carimbo do protocolo dos Correios
 
 
-def criar_overlay(largura, altura, texto, fonte, tamanho, cor, x, y, centralizado, angulo=0):
+def criar_overlay(largura, altura, texto, fonte, tamanho, cor, x, y, centralizado,
+                  angulo=0, alinhamento="esquerda"):
     """Desenha `texto` no PDF. Se tiver quebras de linha ("\n"), cada linha é
     desenhada empilhada, a primeira em cima e as seguintes abaixo dela.
 
     `angulo=90` é um modo especial (protocolo dos Correios, ver
     montar_texto_protocolo_correio): ignora x/y/centralizado e desenha uma
     linha única rotacionada 90° (sentido anti-horário — lê de baixo pra
-    cima), colada perto da borda direita e verticalmente centralizada."""
+    cima), colada perto da borda direita e verticalmente centralizada.
+
+    `alinhamento` ("esquerda", "centro", "direita") vale para o modo normal:
+    "direita" faz o texto TERMINAR em x, usado pelo carimbo do valor no topo
+    direito do protocolo. `centralizado=True` continua equivalendo a
+    "centro", para não quebrar quem já chamava a função."""
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=(largura, altura))
     c.setFont(fonte, tamanho)
@@ -845,9 +851,12 @@ def criar_overlay(largura, altura, texto, fonte, tamanho, cor, x, y, centralizad
         altura_linha = tamanho * 1.2
         for i, linha in enumerate(texto.split("\n")):
             x_linha = x
-            if centralizado:
+            if centralizado or alinhamento == "centro":
                 largura_texto = c.stringWidth(linha, fonte, tamanho)
                 x_linha = (largura - largura_texto) / 2
+            elif alinhamento == "direita":
+                largura_texto = c.stringWidth(linha, fonte, tamanho)
+                x_linha = x - largura_texto
             c.drawString(x_linha, y - i * altura_linha, linha)
 
     c.save()
@@ -855,21 +864,43 @@ def criar_overlay(largura, altura, texto, fonte, tamanho, cor, x, y, centralizad
     return buffer
 
 
-def processar_pdf(caminho_entrada, caminho_saida, texto, config):
+def processar_pdf(caminho_entrada, caminho_saida, texto, config, carimbos_extras=None):
+    """
+    Carimba o PDF e grava a saída. `carimbos_extras` permite mais de um
+    carimbo por página num único passe de escrita — usado pelo protocolo dos
+    Correios, que leva o código na lateral e o valor no topo direito. Sem
+    ele, o comportamento é o de sempre: um carimbo só, vindo de `config`.
+    """
     reader = PdfReader(caminho_entrada)
     writer = PdfWriter()
     for pagina in reader.pages:
         largura = float(pagina.mediabox.width)
         altura = float(pagina.mediabox.height)
-        overlay_buffer = criar_overlay(
-            largura, altura, texto,
-            config["fonte"], config["tamanho"], config["cor"],
-            config["x"], config["y"], config["centralizado"],
-            config.get("angulo", 0),
-        )
-        overlay_page = PdfReader(overlay_buffer).pages[0]
-        pagina.merge_page(overlay_page)
+
+        carimbos = [{
+            "texto": texto,
+            "fonte": config["fonte"],
+            "tamanho": config["tamanho"],
+            "cor": config["cor"],
+            "x": config["x"],
+            "y": config["y"],
+            "centralizado": config["centralizado"],
+            "angulo": config.get("angulo", 0),
+            "alinhamento": config.get("alinhamento", "esquerda"),
+        }]
+        carimbos.extend(carimbos_extras or [])
+
+        for carimbo in carimbos:
+            overlay_buffer = criar_overlay(
+                largura, altura, carimbo["texto"],
+                carimbo["fonte"], carimbo["tamanho"], carimbo["cor"],
+                carimbo["x"], carimbo["y"], carimbo["centralizado"],
+                carimbo.get("angulo", 0), carimbo.get("alinhamento", "esquerda"),
+            )
+            pagina.merge_page(PdfReader(overlay_buffer).pages[0])
+
         writer.add_page(pagina)
+
     os.makedirs(os.path.dirname(caminho_saida), exist_ok=True)
     with open(caminho_saida, "wb") as f:
         writer.write(f)
