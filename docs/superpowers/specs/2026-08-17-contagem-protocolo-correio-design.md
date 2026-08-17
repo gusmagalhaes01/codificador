@@ -85,6 +85,23 @@ Nenhuma regex pode depender de início de linha (`(?m)^`) nem da ordem das
 colunas. O `170` no fim é o OCR tentando ler o `7,70` manuscrito — ruído
 esperado, e mais um motivo para o valor vir do cálculo e nunca do papel.
 
+### Tesseract foi testado e descartado (2026-08-17)
+
+Com `pytesseract` + Tesseract 5.4 e o modelo `por` (tessdata_best), os quatro
+protocolos deram 4/4 em todos os sinais — inclusive a contagem por linha, que
+o winocr não consegue produzir porque não devolve quebras de linha. Empate no
+que este recurso usa (`Listando` e `Correio`, ambos 4/4 nos dois motores).
+
+Descartado pelo custo: 5 a 9× mais lento (3,88s contra 0,45s no documento
+maior), ~50 MB de executável mais 8 MB de modelo dentro do zip distribuído, e
+a quebra do princípio de motor nativo sem programa externo instalado. A
+vantagem dele — dados por linha — só passa a valer se algum dia for preciso
+saber *quais* unidades receberam, não apenas quantas.
+
+Só com o modelo inglês (o padrão do instalador) o Tesseract lia o título como
+"Protocolo de Recebimento de Dacentanio" e o documento nem era reconhecido
+como protocolo em 1 dos 4 casos.
+
 Conferência das três contagens nos quatro protocolos de referência:
 
 | Protocolo | Esperado | `Listando` | `RE_UNIDADE` | `RE_ENTREGA` |
