@@ -1274,3 +1274,96 @@ def salvar_planilha_nfse(caminho, linhas):
     sheet.auto_filter.ref = f"A1:{ultima_coluna}{sheet.max_row}"
 
     wb.save(caminho)
+
+
+# ============================================================
+#  PLANILHA DOS PROTOCOLOS DOS CORREIOS
+# ============================================================
+
+COLUNAS_PROTOCOLO = [
+    ("Arquivo", 38, None),
+    ("Condomínio", 30, None),
+    ("Código", 10, None),
+    ("Unidades", 10, "0"),
+    ("Tarifa", 12, "R$ #,##0.00"),
+    ("Valor", 14, "R$ #,##0.00"),
+    ("Observação", 44, None),
+]
+
+
+def linha_planilha_protocolo(nome_arquivo, dados, cadastro, tarifa=None,
+                             unidades=None, observacao=""):
+    """
+    Monta a linha da planilha. O nome do condomínio vem do cadastro quando o
+    código está lá; senão fica o que o próprio documento traz no cabeçalho.
+
+    `unidades=None` é o caso pendente (contagem recusada) ou o de um arquivo
+    que nem é protocolo: Unidades, Tarifa e Valor saem VAZIOS, nunca 0 — 0
+    significaria "entregou zero unidades".
+    """
+    if dados is None:
+        return [nome_arquivo, "", "", None, None, None, observacao]
+
+    codigo = dados.get("codigo") or ""
+    registro = None
+    if codigo:
+        cnpj = _codigos_do_cadastro(cadastro).get(codigo)
+        registro = cadastro.get(cnpj) if cnpj else None
+
+    condominio = registro["nome"] if registro else dados.get("condominio", "")
+    if not registro and not observacao:
+        observacao = "Código não cadastrado"
+
+    if unidades is None:
+        return [nome_arquivo, condominio, codigo, None, None, None, observacao]
+
+    valor = valor_protocolo(unidades, tarifa)
+    return [nome_arquivo, condominio, codigo, int(unidades),
+            float(tarifa), float(valor), observacao]
+
+
+def salvar_planilha_protocolo(caminho, linhas):
+    """
+    Grava a planilha dos protocolos com linha de TOTAL no rodapé. Os totais
+    são calculados aqui em Python (não como fórmula do Excel) para que o
+    arquivo já chegue com o número pronto, sem depender de o Excel abrir e
+    recalcular.
+    """
+    wb = Workbook()
+    sheet = wb.active
+    sheet.title = "Protocolos"
+
+    sheet.append([c[0] for c in COLUNAS_PROTOCOLO])
+    for celula in sheet[1]:
+        celula.font = Font(bold=True)
+
+    for linha in linhas:
+        sheet.append(linha)
+
+    ultima_dados = sheet.max_row
+
+    for indice, (_, largura, formato) in enumerate(COLUNAS_PROTOCOLO, start=1):
+        letra = sheet.cell(row=1, column=indice).column_letter
+        sheet.column_dimensions[letra].width = largura
+        if formato:
+            for numero_linha in range(2, ultima_dados + 1):
+                sheet.cell(row=numero_linha, column=indice).number_format = formato
+
+    sheet.freeze_panes = "A2"
+    ultima_coluna = sheet.cell(row=1, column=len(COLUNAS_PROTOCOLO)).column_letter
+    sheet.auto_filter.ref = f"A1:{ultima_coluna}{ultima_dados}"
+
+    #  Total depois do autofiltro, para não virar uma linha filtrável
+    linha_total = ultima_dados + 1
+    celula_rotulo = sheet.cell(row=linha_total, column=1, value="TOTAL")
+    celula_rotulo.font = Font(bold=True)
+    for coluna in (4, 6):   # Unidades e Valor
+        total = sum(
+            linha[coluna - 1] for linha in linhas
+            if isinstance(linha[coluna - 1], (int, float))
+        )
+        celula = sheet.cell(row=linha_total, column=coluna, value=round(total, 2))
+        celula.font = Font(bold=True)
+        celula.number_format = COLUNAS_PROTOCOLO[coluna - 1][2]
+
+    wb.save(caminho)
