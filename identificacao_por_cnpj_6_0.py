@@ -70,6 +70,10 @@ from logica import (
     buscar_por_nome_arquivo, desempatar_por_cadastro, candidatos_por_nome,
     criar_overlay, processar_pdf, carregar_cadastro, salvar_cadastro,
     extrair_dados_nfse, linha_planilha_nfse, salvar_planilha_nfse,
+    extrair_dados_protocolo_correio, conferir_contagem_protocolo,
+    valor_protocolo, montar_texto_valor_protocolo, formatar_reais,
+    linha_planilha_protocolo, salvar_planilha_protocolo,
+    extrair_texto_escaneado,
 )
 
 
@@ -89,6 +93,13 @@ TEMA_ESCURO = {
     "texto_terciario": "#57534E", "acento": "#2563EB", "sobre_acento": "#FFFFFF",
     "acento_hover": "#1D4FD0",
 }
+
+
+#  Posição do carimbo de valor no protocolo dos Correios: canto superior
+#  direito, no espaço em branco do documento. O rodapé foi descartado porque
+#  protocolos de duas páginas têm conteúdo lá embaixo.
+MARGEM_VALOR_PROTOCOLO_X = 567   # 595pt (A4) - 28pt de margem
+MARGEM_VALOR_PROTOCOLO_Y = 814   # 842pt (A4) - 28pt de margem
 
 
 def familia_fonte():
@@ -177,6 +188,11 @@ class App(ctk.CTk):
         # Variáveis - aba de extração de notas para planilha
         self.pasta_notas = tk.StringVar()
         self.arquivo_planilha_saida = tk.StringVar()
+
+        # Variáveis - aba de protocolos dos Correios
+        self.pasta_protocolos = tk.StringVar()
+        self.pasta_protocolos_saida = tk.StringVar()
+        self.arquivo_planilha_protocolos = tk.StringVar()
 
         self._montar_interface()
         self._atualizar_tabela_cadastro()
@@ -276,17 +292,20 @@ class App(ctk.CTk):
 
         self.aba_processar = ttk.Frame(notebook)
         self.aba_extracao = ttk.Frame(notebook)
+        self.aba_protocolos = ttk.Frame(notebook)
         self.aba_cadastro = ttk.Frame(notebook)
         self.aba_logs = ttk.Frame(notebook)
         notebook.add(self.aba_processar, text="1. Processamento")
         notebook.add(self.aba_extracao, text="2. Extrair dados")
-        notebook.add(self.aba_cadastro, text="3. Cadastro de Condomínios")
-        notebook.add(self.aba_logs, text="4. Logs")
+        notebook.add(self.aba_protocolos, text="3. Protocolos dos Correios")
+        notebook.add(self.aba_cadastro, text="4. Cadastro de Condomínios")
+        notebook.add(self.aba_logs, text="5. Logs")
 
         # A ordem importa: _montar_aba_processar cria self._widgets_tema, que
-        # _montar_aba_extracao usa para registrar os widgets dela no tema.
+        # as abas seguintes usam para registrar os widgets delas no tema.
         self._montar_aba_processar(self.aba_processar)
         self._montar_aba_extracao(self.aba_extracao)
+        self._montar_aba_protocolos(self.aba_protocolos)
         self._montar_aba_cadastro(self.aba_cadastro)
         self._montar_aba_logs(self.aba_logs)
 
@@ -297,7 +316,7 @@ class App(ctk.CTk):
         self._estilizar_ttk()
 
     # --------------------------------------------------------
-    #  ABA 2 — CADASTRO
+    #  ABA 4 — CADASTRO
     # --------------------------------------------------------
     def _montar_aba_cadastro(self, parent):
         pad = {"padx": 24, "pady": 6}
@@ -2209,6 +2228,195 @@ class App(ctk.CTk):
                 os.startfile(destino)
             except Exception as e:
                 messagebox.showerror("Erro", f"Não foi possível abrir a planilha:\n{e}")
+
+    # --------------------------------------------------------
+    #  ABA 3 — PROTOCOLOS DOS CORREIOS
+    # --------------------------------------------------------
+    def _montar_aba_protocolos(self, parent_externo):
+        """
+        Conta as unidades de cada protocolo, calcula o valor pela tarifa do
+        lote, carimba o PDF e gera a planilha. Mesma linguagem visual das
+        outras abas (Swiss, cantos retos, cobalto só no botão primário).
+        """
+        tema = self.tema_atual
+        fonte = familia_fonte()
+
+        def registrar(widget, mapa):
+            self._widgets_tema.append((widget, mapa))
+            for prop, chave in mapa.items():
+                try:
+                    widget.configure(**{prop: tema[chave]})
+                except Exception:
+                    pass
+            return widget
+
+        container = registrar(
+            ctk.CTkFrame(parent_externo, corner_radius=0, fg_color=tema["fundo"]),
+            {"fg_color": "fundo"},
+        )
+        container.pack(fill="both", expand=True)
+
+        bloco_titulo = registrar(
+            ctk.CTkFrame(container, corner_radius=0, fg_color=tema["fundo"]),
+            {"fg_color": "fundo"},
+        )
+        bloco_titulo.pack(fill="x", padx=24, pady=(24, 0))
+
+        titulo = registrar(
+            ctk.CTkLabel(bloco_titulo, text="Protocolos dos Correios", font=(fonte, 20),
+                         text_color=tema["texto"], anchor="w"),
+            {"text_color": "texto"},
+        )
+        titulo.pack(anchor="w")
+
+        subtitulo = registrar(
+            ctk.CTkLabel(bloco_titulo, text="CONTAGEM DE UNIDADES E VALOR", font=(fonte, 11),
+                         text_color=tema["texto_secundario"], anchor="w"),
+            {"text_color": "texto_secundario"},
+        )
+        subtitulo.pack(anchor="w")
+
+        hairline = registrar(
+            ctk.CTkFrame(container, height=1, corner_radius=0, fg_color=tema["borda"]),
+            {"fg_color": "borda"},
+        )
+        hairline.pack(fill="x", padx=24, pady=(16, 24))
+
+        corpo = registrar(
+            ctk.CTkFrame(container, corner_radius=0, fg_color=tema["fundo"]),
+            {"fg_color": "fundo"},
+        )
+        corpo.pack(fill="both", expand=True, padx=24)
+        corpo.columnconfigure(0, weight=1)
+
+        def montar_campo(linha_grid, rotulo, variavel, comando_trocar):
+            label = registrar(
+                ctk.CTkLabel(corpo, text=rotulo, font=(fonte, 11),
+                             text_color=tema["texto_secundario"], anchor="w"),
+                {"text_color": "texto_secundario"},
+            )
+            label.grid(row=linha_grid, column=0, sticky="w", pady=(0, 4))
+
+            linha = registrar(
+                ctk.CTkFrame(corpo, corner_radius=0, fg_color=tema["fundo"]),
+                {"fg_color": "fundo"},
+            )
+            linha.grid(row=linha_grid + 1, column=0, sticky="ew", pady=(0, 16))
+            linha.columnconfigure(0, weight=1)
+
+            entry = registrar(
+                ctk.CTkEntry(linha, textvariable=variavel, corner_radius=0,
+                             fg_color=tema["superficie"], border_width=1,
+                             border_color=tema["borda"], text_color=tema["texto"],
+                             font=(fonte, 13)),
+                {"fg_color": "superficie", "border_color": "borda", "text_color": "texto"},
+            )
+            entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+
+            botao = registrar(
+                ctk.CTkButton(
+                    linha, text="Trocar", corner_radius=0, width=90,
+                    fg_color="transparent", hover_color=tema["superficie"],
+                    border_width=1, border_color=tema["borda_forte"],
+                    text_color=tema["texto"], font=(fonte, 13), command=comando_trocar,
+                ),
+                {"hover_color": "superficie", "border_color": "borda_forte", "text_color": "texto"},
+            )
+            botao.grid(row=0, column=1)
+
+        montar_campo(0, "PASTA COM OS PROTOCOLOS", self.pasta_protocolos,
+                     self._escolher_pasta_protocolos)
+        montar_campo(2, "SALVAR OS PDFS CARIMBADOS EM", self.pasta_protocolos_saida,
+                     self._escolher_pasta_protocolos_saida)
+        montar_campo(4, "SALVAR PLANILHA EM", self.arquivo_planilha_protocolos,
+                     self._escolher_planilha_protocolos)
+
+        self.botao_protocolos = registrar(
+            ctk.CTkButton(
+                corpo, text="Calcular protocolos", corner_radius=0, height=44,
+                font=(fonte, 15), fg_color=tema["acento"],
+                hover_color=tema["acento_hover"], text_color=tema["sobre_acento"],
+                border_width=0, command=self._iniciar_protocolos,
+            ),
+            {"fg_color": "acento", "hover_color": "acento_hover", "text_color": "sobre_acento"},
+        )
+        self.botao_protocolos.grid(row=6, column=0, sticky="ew", pady=(8, 8))
+
+        explicacao = registrar(
+            ctk.CTkLabel(
+                corpo,
+                text=("Conta quantas unidades cada protocolo entregou, multiplica pelo "
+                      "valor por linha que você informar e escreve o total no canto "
+                      "superior direito do PDF, junto do código do condomínio. "
+                      "Protocolos em que a contagem não confere ficam sem carimbo e "
+                      "aparecem na planilha com o motivo."),
+                font=(fonte, 13), text_color=tema["texto_terciario"],
+                justify="left", anchor="w", wraplength=640,
+            ),
+            {"text_color": "texto_terciario"},
+        )
+        explicacao.grid(row=7, column=0, sticky="w", pady=(0, 16))
+
+        self.barra_protocolos = ttk.Progressbar(corpo, mode="determinate")
+        self.barra_protocolos.grid(row=8, column=0, sticky="ew", pady=(0, 8))
+
+        self.label_status_protocolos = registrar(
+            ctk.CTkLabel(corpo, text="", font=(fonte, 13),
+                         text_color=tema["texto_secundario"], anchor="w"),
+            {"text_color": "texto_secundario"},
+        )
+        self.label_status_protocolos.grid(row=9, column=0, sticky="w", pady=(0, 24))
+
+        self._atualizar_botao_protocolos()
+
+    def _escolher_pasta_protocolos(self):
+        pasta = filedialog.askdirectory(title="Selecione a pasta com os protocolos")
+        if pasta:
+            self.pasta_protocolos.set(pasta)
+            nome_pasta = os.path.basename(os.path.normpath(pasta)) or "protocolos"
+            self.pasta_protocolos_saida.set(os.path.join(pasta, "carimbados"))
+            self.arquivo_planilha_protocolos.set(
+                os.path.join(pasta, f"protocolos_{nome_pasta}.xlsx"))
+        self._atualizar_botao_protocolos()
+
+    def _escolher_pasta_protocolos_saida(self):
+        pasta = filedialog.askdirectory(title="Onde salvar os PDFs carimbados")
+        if pasta:
+            self.pasta_protocolos_saida.set(pasta)
+        self._atualizar_botao_protocolos()
+
+    def _escolher_planilha_protocolos(self):
+        atual = self.arquivo_planilha_protocolos.get().strip()
+        caminho = filedialog.asksaveasfilename(
+            title="Salvar planilha como",
+            defaultextension=".xlsx",
+            filetypes=[("Excel", "*.xlsx")],
+            initialfile=os.path.basename(atual) if atual else "protocolos.xlsx",
+            initialdir=os.path.dirname(atual) if atual else None,
+        )
+        if caminho:
+            self.arquivo_planilha_protocolos.set(caminho)
+        self._atualizar_botao_protocolos()
+
+    def _atualizar_botao_protocolos(self):
+        """Conta os *.pdf da pasta escolhida e ajusta texto/estado do botão."""
+        pasta = self.pasta_protocolos.get().strip()
+        quantidade = 0
+        if pasta and os.path.isdir(pasta):
+            try:
+                quantidade = sum(1 for f in os.listdir(pasta) if f.lower().endswith(".pdf"))
+            except Exception:
+                quantidade = 0
+
+        pronto = (quantidade > 0
+                  and self.pasta_protocolos_saida.get().strip()
+                  and self.arquivo_planilha_protocolos.get().strip())
+        if pronto:
+            plural = "protocolo" if quantidade == 1 else "protocolos"
+            self.botao_protocolos.configure(
+                text=f"Calcular {quantidade} {plural}", state="normal")
+        else:
+            self.botao_protocolos.configure(text="Calcular protocolos", state="disabled")
 
     def _montar_aba_logs(self, parent):
         fonte = familia_fonte()
