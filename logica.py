@@ -1057,12 +1057,17 @@ def salvar_cadastro(caminho, cadastro):
 #  aparece em TRIBUTAÇÃO MUNICIPAL e em VALOR TOTAL DA NFS-E), e sem o
 #  recorte a leitura pegaria a ocorrência da seção errada.
 SECOES_DANFSE = [
-    "EMITENTE DA NFS-e",
+    "EMITENTE DA NFS-",  # sem a letra final: "...NFS-e" na v1.0, "...NFS-E" na v2.0
+    "PRESTADOR / FORNECEDOR",  # subseção só na v2.0
     "TOMADOR DO SERVI",
+    "TOMADOR / ADQUIRENTE",  # nome da seção do tomador na DANFSe v2.0
     "INTERMEDI",
     "SERVIÇO PRESTADO",
     "TRIBUTAÇÃO MUNICIPAL",
     "TRIBUTAÇÃO FEDERAL",
+    "TRIBUTAÇÃO IBS",  # tributo novo da reforma tributária, só na v2.0 —
+                        # marcador de seção pra não vazar pro bloco vizinho;
+                        # nenhum campo de dentro dela é extraído (não pedido)
     "VALOR TOTAL DA NFS",
     "TOTAIS APROXIMADOS",
     "INFORMAÇÕES COMPLEMENTARES",
@@ -1070,7 +1075,13 @@ SECOES_DANFSE = [
 
 
 def bloco_secao(texto, titulo):
-    """Recorta o trecho do DANFSe que vai de `titulo` até o início da próxima seção."""
+    """Recorta o trecho do DANFSe que vai de `titulo` até o início da próxima
+    seção. Sensível a maiúsculas/minúsculas de propósito: os títulos de seção
+    saem sempre em CAIXA ALTA (nas DANFSe v1.0 e v2.0), mas o mesmo texto em
+    Título Normal aparece como rótulo de campo dentro de outra seção (ex:
+    "Código de Tributação Municipal", dentro de SERVIÇO PRESTADO) — buscar
+    sem diferenciar maiúsculas pegaria esse rótulo por engano, antes da
+    seção de verdade."""
     inicio = texto.find(titulo)
     if inicio == -1:
         return ""
@@ -1091,8 +1102,10 @@ def campo_danfse(bloco, rotulo):
     campo vazio (ex: "Benefício Municipal", que às vezes não tem valor)
     engoliria as linhas em branco e devolveria o RÓTULO seguinte como se
     fosse o seu valor.
+
+    Sem diferenciar maiúsculas/minúsculas — mesmo motivo do bloco_secao.
     """
-    m = re.search(re.escape(rotulo) + r"[ \t]*\n[ \t]*\n?[ \t]*(.+)", bloco)
+    m = re.search(re.escape(rotulo) + r"[ \t]*\n[ \t]*\n?[ \t]*(.+)", bloco, re.IGNORECASE)
     if not m:
         return None
     return m.group(1).strip() or None
@@ -1145,14 +1158,16 @@ def extrair_dados_nfse(texto):
     caso do "Detalhamento do Faturamento", que vem no mesmo lote mas tem
     outro layout.
     """
-    pos_emitente = texto.find("EMITENTE DA NFS-e")
+    pos_emitente = texto.find("EMITENTE DA NFS-")
     cabecalho = texto[:pos_emitente] if pos_emitente != -1 else texto
 
     numero = campo_danfse(cabecalho, "Número da NFS-e")
     if not numero:
         return None
 
-    bloco_tomador = bloco_secao(texto, "TOMADOR DO SERVI")
+    # "TOMADOR / ADQUIRENTE" é o nome da seção na DANFSe v2.0 — a
+    # Prefeitura renomeou (não é só maiúscula), então tenta os dois.
+    bloco_tomador = bloco_secao(texto, "TOMADOR DO SERVI") or bloco_secao(texto, "TOMADOR / ADQUIRENTE")
     bloco_municipal = bloco_secao(texto, "TRIBUTAÇÃO MUNICIPAL")
     bloco_federal = bloco_secao(texto, "TRIBUTAÇÃO FEDERAL")
     bloco_total = bloco_secao(texto, "VALOR TOTAL DA NFS")
@@ -1164,13 +1179,18 @@ def extrair_dados_nfse(texto):
         if cnpj_valido(candidato):
             cnpj_tomador = candidato
 
+    # "Valor da Operação / Serviço" é o rótulo na DANFSe v2.0, no lugar de
+    # "Valor do Serviço" — mesma renomeação de seção, tenta os dois.
+    valor_servico_bruto = (campo_danfse(bloco_total, "Valor do Serviço")
+                            or campo_danfse(bloco_total, "Valor da Operação / Serviço"))
+
     return {
         "numero": numero,
         "competencia": converter_data_br(campo_danfse(cabecalho, "Competência da NFS-e")),
         "emissao": converter_data_br(campo_danfse(cabecalho, "Data e Hora da emissão da NFS-e")),
         "cnpj_tomador": cnpj_tomador,
         "nome_tomador": campo_danfse(bloco_tomador, "Nome / Nome Empresarial") or "",
-        "valor_servico": converter_valor_br(campo_danfse(bloco_total, "Valor do Serviço")),
+        "valor_servico": converter_valor_br(valor_servico_bruto),
         "valor_liquido": converter_valor_br(campo_danfse(bloco_total, "Valor Líquido da NFS-e")),
         "bc_issqn": converter_valor_br(campo_danfse(bloco_municipal, "BC ISSQN")),
         "aliquota": converter_percentual(campo_danfse(bloco_municipal, "Alíquota Aplicada")),

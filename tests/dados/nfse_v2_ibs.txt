@@ -1,0 +1,171 @@
+DANFSe v2.0
+Documento Auxiliar da NFS-e
+Prefeitura da Cidade do Rio de Janeiro
+SMF / Receita Rio
+CHAVE DE ACESSO DA NFS-E
+33045572235315360000167000000009563126070153872940
+A autenticidade desta NFS-e pode ser verificadapela leitura deste código QR ou pela consulta dachave de acesso no portal nacional da NFS-e
+NÚMERO DA NFS-E
+95631
+COMPETÊNCIA DA NFS-E
+21/07/2026
+DATA E HORA DA EMISSÃO DA NFS-E
+21/07/2026 10:02:24
+NÚMERO DA DPS
+3090
+SÉRIE DA DPS
+905
+DATA E HORA DA EMISSÃO DA DPS
+21/07/2026 10:02:05
+EMITENTE DA NFS-E
+Prestador
+SITUAÇÃO DA NFS-E
+NFS-e Gerada
+FINALIDADE
+NFS-e regular
+PRESTADOR / FORNECEDOR
+ 
+CNPJ / CPF / NIF
+35.315.360/0001-67
+Indicador Municipal (Inscrição)
+-
+Telefone
+(21) 2516-6001
+Nome / Nome Empresarial
+FEDCORP ADMINISTRADORA DE BENEFICIOS LTDA
+Município / Sigla UF
+Rio de Janeiro / RJ
+Código IBGE / CEP
+3304557 / 20.070-004
+Endereço
+RUA DA ALFANDEGA, 00108, CENTRO
+E-mail
+-
+Simples Nacional na Data de Competência
+Não Optante
+Regime de Apuração Tributária pelo SN
+-
+TOMADOR / ADQUIRENTE
+ 
+CNPJ / CPF / NIF
+68.584.267/0001-07
+Indicador Municipal (Inscrição)
+-
+Telefone
+-
+Nome / Nome Empresarial
+CONDOMINIO DO EDIFICIO ULYSSEA
+Município / Sigla UF
+Rio de Janeiro / RJ
+Código IBGE / CEP
+3304557 / 22.031-030
+Endereço
+R SILVA CASTRO, 10, COPACABANA
+E-mail
+-
+O DESTINATÁRIO É O PRÓPRIO TOMADOR/ADQUIRENTE DA OPERAÇÃO
+INTERMEDIÁRIO DA OPERAÇÃO NÃO IDENTIFICADO NA NFS-e
+SERVIÇO PRESTADO
+ 
+Código de Tributação Nacional / Municipal
+10.02.02 / 001
+Código da NBS
+1.0910.20.00
+Local da Prestação / Sigla UF / País
+Rio de Janeiro / RJ / BR
+Agenciamento, corretagem ou intermediação de contratos quaisquer.
+Descrição do Serviço
+BENEFICIO SOCIAL E ASSISTENCIA AO TRABALHADOR (BOAT)| VIGENCIA DE '01/07/2026' A '31/07/2026'
+TRIBUTAÇÃO MUNICIPAL (ISSQN)
+ 
+Tipo de Tributação do ISSQN
+Operação tributável
+Município / Sigla UF / País Incidência ISSQN
+Rio de Janeiro / RJ / BR
+Regime Especial de Tributação do ISSQN
+Nenhum
+Tipo de Imunidade do ISSQN
+-
+Suspensão da Exigibilidade do ISSQN
+-
+Número Processo Suspensão
+-
+Benefício Municipal
+-
+Cálculo do BM
+-
+Total Deduções / Reduções
+R$ 0,00
+Desconto Incondicionado
+-
+BC ISSQN
+R$ 133,32
+Alíquota Aplicada
+5,00%
+Retenção do ISSQN
+Não Retido
+ISSQN Apurado
+R$ 6,67
+TRIBUTAÇÃO FEDERAL (EXCETO CBS)
+ 
+IRRF
+-
+Contribuição Previdenciária - Retida
+-
+Contribuições Sociais - Retidas
+-
+PIS - Débito Apuração Própria
+R$ 2,20
+COFINS - Débito Apuração Própria
+R$ 10,13
+Descrição Contrib. Sociais - Retidas
+PIS/COFINS/CSLL Não Retidos
+TRIBUTAÇÃO IBS / CBS
+ 
+CST / cClassTrib
+000 / 000001
+Indicador de Operação / Código IBGE Incidência / Município Incidência / Sigla UF
+100302 / 3304557 / Rio de Janeiro / RJ
+Exclusões e Reduções da Base de Cálculo
+R$ 19,00
+Base de Cálculo Após Exclusões e Reduções
+R$ 114,32
+Red. Alíquota IBS / Red. Alíquota CBS
+- / - / -
+Alíquota - IBS UF / IBS Mun
+0,100% / 0,000%
+Alíq. Efetiva Municipal - IBS
+0,000%
+Valor Apurado Municipal - IBS
+R$ 0,00
+Alíq. Efetiva Estadual - IBS
+0,100%
+Valor Apurado Estadual - IBS
+R$ 0,11
+Valor Total Apurado - IBS
+R$ 0,11
+Alíquota - CBS
+0,900%
+Alíquota Efetiva - CBS
+0,900%
+Valor Total Apurado - CBS
+R$ 1,03
+VALOR TOTAL DA NFS-E
+ 
+Valor da Operação / Serviço
+R$ 133,32
+Desconto Incondicionado
+-
+Desconto Condicionado
+-
+Total das Retenções (ISSQN / Federais)
+-
+Valor Líquido da NFS-e
+R$ 133,32
+Total do IBS/CBS
+R$ 1,14
+Valor Líquido da NFS-e + IBS/CBS
+R$ 133,32
+INFORMAÇÕES COMPLEMENTARES
+Totais Aproximados dos Tributos cfe. Lei nº 12.741/2012: Federais: 11,33% ; Estaduais: 0,00% ; Municipais: 5,00% .
+Nota Fiscal de Serviços Eletrônica gerada pela API Focus NFe. https://focusnfe.com.br

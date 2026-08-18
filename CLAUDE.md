@@ -146,6 +146,23 @@ similaridade de nome sozinha.
   de conferência. Divergiu, relê em qualidade maior e, persistindo, vira
   pendente sem carimbo. Abas de Cadastro e Logs renumeradas para 4 e 5. Ver
   spec `docs/superpowers/specs/2026-08-17-contagem-protocolo-correio-design.md`.
+- **v6.11.0 — suporte à DANFSe v2.0 na extração de NFS-e**: a Prefeitura do
+  Rio passou a emitir DANFSe v2.0 (reforma tributária, campos novos de
+  IBS/CBS), convivendo no mesmo lote com notas v1.0 — não foi uma troca
+  limpa (ex: às 10h e às 11h do mesmo dia, formatos diferentes). Isso
+  quebrava `extrair_dados_nfse` por completo: os rótulos de identificação e
+  os títulos de seção saem em CAIXA ALTA na v2.0 (vs Título Normal na v1.0),
+  a seção do tomador foi renomeada de "TOMADOR DO SERVIÇO" para "TOMADOR /
+  ADQUIRENTE", e o campo "Valor do Serviço" virou "Valor da Operação /
+  Serviço". `bloco_secao`/`campo_danfse` (`logica.py`) continuam sensíveis a
+  maiúsculas de propósito — uma primeira tentativa de busca "sem diferenciar
+  maiúsculas" quebrou as notas v1.0, porque colide com "Código de Tributação
+  Municipal" (um rótulo de campo que contém as mesmas palavras da seção
+  real, só que em Título Normal); em vez disso, os poucos rótulos que
+  realmente mudam de caixa entre versões (ex: "EMITENTE DA NFS-") usam uma
+  forma sem a letra final que varia. **IBS/CBS não são extraídos** — os
+  campos novos da reforma tributária, decisão deliberada por ora. Validado
+  contra os 668 PDFs reais de um lote misto v1.0/v2.0: 668/668 reconhecidas.
 
 ## Melhorias implementadas (a partir da versão 5_3)
 

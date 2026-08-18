@@ -68,6 +68,49 @@ class TestExtracaoNfse(unittest.TestCase):
         self.assertIsNone(app.extrair_dados_nfse(ler("boleto_avulso.txt")))
 
 
+class TestDanfseV2(unittest.TestCase):
+    """
+    A Prefeitura passou a emitir DANFSe v2.0 (fixture nfse_v2_ibs.txt, NF real
+    do lote "beneficios nf") convivendo no mesmo dia com notas v1.0 — não foi
+    uma troca limpa. Diferenças que quebravam a extração:
+    - Rótulos de identificação (Número/Competência/Data de emissão da NFS-e)
+      e os títulos de seção saem em CAIXA ALTA no v2.0 ("NÚMERO DA NFS-E"),
+      Título Normal no v1.0 ("Número da NFS-e") — campo_danfse/bloco_secao
+      eram sensíveis a maiúsculas e não achavam nada, por isso a extração
+      inteira desistia logo no "numero".
+    - A seção do tomador mudou de nome: "TOMADOR DO SERVIÇO" (v1.0) virou
+      "TOMADOR / ADQUIRENTE" (v2.0) — não é só maiúscula, é texto diferente.
+    - O campo do valor do serviço na seção de totais mudou de "Valor do
+      Serviço" para "Valor da Operação / Serviço".
+    IBS/CBS (tributos novos da reforma tributária, só existem no v2.0) não
+    são extraídos de propósito — não pedidos ainda.
+    """
+
+    def setUp(self):
+        self.dados = app.extrair_dados_nfse(ler("nfse_v2_ibs.txt"))
+
+    def test_nota_v2_e_reconhecida(self):
+        self.assertIsNotNone(self.dados)
+
+    def test_identificacao_da_nota(self):
+        self.assertEqual(self.dados["numero"], "95631")
+        self.assertEqual(self.dados["competencia"], datetime.date(2026, 7, 21))
+        self.assertEqual(self.dados["emissao"], datetime.datetime(2026, 7, 21, 10, 2, 24))
+
+    def test_tomador(self):
+        self.assertEqual(self.dados["cnpj_tomador"], "68584267000107")
+        self.assertEqual(self.dados["nome_tomador"], "CONDOMINIO DO EDIFICIO ULYSSEA")
+
+    def test_valor_do_servico_com_rotulo_novo(self):
+        self.assertEqual(self.dados["valor_servico"], 133.32)
+        self.assertEqual(self.dados["valor_liquido"], 133.32)
+
+    def test_issqn(self):
+        self.assertEqual(self.dados["bc_issqn"], 133.32)
+        self.assertEqual(self.dados["aliquota"], 5.0)
+        self.assertEqual(self.dados["issqn"], 6.67)
+
+
 class TestRetencaoFederal(unittest.TestCase):
     """
     Nota com retenção ("3 - PIS/COFINS/CSLL Retidos", fixture nfse_ff_retido).
