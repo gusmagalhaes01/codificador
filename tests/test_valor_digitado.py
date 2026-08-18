@@ -50,8 +50,11 @@ class TestConverterValorDigitado(unittest.TestCase):
         self.assertIn("número", mensagem)
 
     def test_entrada_absurda_devolve_aviso_em_vez_de_estourar(self):
-        """Entradas gigantes não podem levantar InvalidOperation crua — o
-        usuário precisa ver o aviso normal, não um popup de erro técnico."""
+        """Entradas gigantes não podem escapar como número gigante sem
+        aviso — quem barra "1"*40 e "1e30" é o teto LIMITE_VALOR_DIGITADO
+        (nenhuma das duas levanta InvalidOperation na construção do
+        Decimal), então o usuário vê o aviso normal, não um popup de erro
+        técnico."""
         for entrada in ("1" * 40, "1e30"):
             valor, mensagem = app.converter_valor_digitado(entrada)
             self.assertIsNone(valor, entrada)
@@ -80,6 +83,39 @@ class TestConverterValorDigitado(unittest.TestCase):
         valor, mensagem = app.converter_valor_digitado("R$")
         self.assertIsNone(valor)
         self.assertIn("número", mensagem)
+
+    def test_recusa_espaco_no_meio_dos_digitos(self):
+        """"3 85" e "57 75" não podem virar 385/5775 por causa do
+        `.replace(" ", "")` cru — isso multiplicaria o valor por cem sem
+        nenhum aviso, e o resultado vira dinheiro cobrado de condomínio."""
+        for entrada in ("3 85", "57 75"):
+            valor, mensagem = app.converter_valor_digitado(entrada)
+            self.assertIsNone(valor, entrada)
+            self.assertTrue(mensagem, entrada)
+
+    def test_tolera_espaco_nas_pontas_e_apos_cifrao(self):
+        """O espaço existe pra tolerar o prefixo ("R$ 57,75") e sobras nas
+        pontas, não pra juntar dígitos — esses dois formatos continuam
+        aceitos depois da correção do espaço no meio."""
+        self.assertEqual(app.converter_valor_digitado(" R$ 57,75 ")[0], Decimal("57.75"))
+        self.assertEqual(app.converter_valor_digitado("R$57,75")[0], Decimal("57.75"))
+
+    def test_aceita_zero_a_direita_sem_casa_fracionada(self):
+        """"3,850" e "3,8500" são exatamente 3,85 — o zero à direita não
+        acrescenta casa decimal nenhuma, então não podem ser recusados pela
+        regra de duas casas (que é sobre o valor, não sobre a forma como foi
+        digitado). A validação antiga da tarifa aceitava esse caso."""
+        self.assertEqual(app.converter_valor_digitado("3,850")[0], Decimal("3.85"))
+        self.assertEqual(app.converter_valor_digitado("3,8500")[0], Decimal("3.85"))
+
+    def test_recusa_centavo_fracionado_de_verdade(self):
+        """"3,855" e "300,305" têm centavo fracionado de verdade (não dá pra
+        representar em duas casas sem perder valor) — continuam recusados
+        mesmo com a regra reescrita em cima do valor."""
+        for entrada in ("3,855", "300,305"):
+            valor, mensagem = app.converter_valor_digitado(entrada)
+            self.assertIsNone(valor, entrada)
+            self.assertIn("duas casas", mensagem)
 
 
 if __name__ == "__main__":

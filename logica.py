@@ -756,13 +756,23 @@ def converter_valor_digitado(texto):
     `(Decimal, "")` quando válido, `(None, aviso)` quando não. O aviso vai
     direto para a tela, então é frase em português, sem jargão.
 
-    Aceita "300,30", "300.30", "1.234,56" e "R$ 57,75". Recusa mais de duas
-    casas decimais pelo mesmo motivo que a tarifa recusa: um valor com três
-    casas produz carimbo e planilha que não fecham quando alguém confere no
-    papel.
+    Aceita "300,30", "300.30", "1.234,56" e "R$ 57,75". Tolera espaço nas
+    pontas e logo depois do "R$" (sobra de copiar/colar), mas espaço no meio
+    dos dígitos é recusado, não ignorado: "3 85" não pode virar 385 sem
+    aviso nenhum, cem vezes o valor pretendido.
+
+    Recusa valor com centavo fracionado (ex: "3,855"), pelo mesmo motivo que
+    a tarifa recusa: um valor assim produz carimbo e planilha que não fecham
+    quando alguém confere no papel. A regra é sobre o valor, não sobre a
+    forma como foi digitado — zero à direita não acrescenta casa nenhuma,
+    então "3,850" (que é exatamente 3,85) é aceito.
     """
-    bruto = (texto or "").strip().replace("R$", "").replace(" ", "")
+    bruto = (texto or "").strip()
+    if bruto.startswith("R$"):
+        bruto = bruto[2:].strip()
     if not bruto:
+        return None, "Digite um número, como 300,30."
+    if " " in bruto:
         return None, "Digite um número, como 300,30."
 
     #  Formato brasileiro: o ponto é separador de milhar e a vírgula é o
@@ -781,7 +791,7 @@ def converter_valor_digitado(texto):
         return None, "O valor precisa ser maior que zero."
     if valor > LIMITE_VALOR_DIGITADO:
         return None, "Esse valor parece alto demais. Confira o que foi digitado."
-    if -valor.as_tuple().exponent > 2:
+    if valor != valor.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP):
         return None, "Use no máximo duas casas decimais, como 300,30."
 
     return valor, ""
