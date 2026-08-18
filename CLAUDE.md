@@ -163,6 +163,20 @@ similaridade de nome sozinha.
   forma sem a letra final que varia. **IBS/CBS não são extraídos** — os
   campos novos da reforma tributária, decisão deliberada por ora. Validado
   contra os 668 PDFs reais de um lote misto v1.0/v2.0: 668/668 reconhecidas.
+- **v6.12.0 — rotação do log e separação da saída em lotes**: duas coisas
+  independentes. (1) `rotacionar_log()` (`logica.py`) descarta as sessões
+  mais antigas do `processamento.log` quando ele passa de 5 MB
+  (`LIMITE_TAMANHO_LOG`) — antes crescia pra sempre e deixava a aba de Logs
+  lenta. Sessões são os blocos separados por linha em branco que
+  `_salvar_sessao_no_log` já gravava; a mais recente nunca é apagada, mesmo
+  que sozinha passe do limite. (2) Checkbox "Separar a saída em lotes de N
+  arquivos" logo abaixo do botão primário das abas 1 e 3 (as duas que geram
+  PDF), porque o Superlógica só aceita um punhado de arquivos por envio: a
+  saída sai em subpastas `Lote 01`, `Lote 02`... via `caminho_do_lote()`.
+  O índice usado é o de arquivos **efetivamente carimbados**, não o do laço
+  — assim pendentes não ocupam vaga e cada lote sai cheio. A preferência
+  fica no nível raiz do `config.json` (não dentro da predefinição): depende
+  do sistema de destino, não do tipo de documento. Desligada por padrão.
 
 ## Melhorias implementadas (a partir da versão 5_3)
 

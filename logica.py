@@ -186,6 +186,26 @@ def nome_saida_com_codigo(nome_original, codigo):
     return f"{codigo_limpo} - {nome_original}"
 
 
+TAMANHO_LOTE_PADRAO = 20  # limite de arquivos por envio no Superlógica
+
+
+def caminho_do_lote(pasta_saida, indice, tamanho_lote):
+    """
+    Subpasta de lote em que o arquivo de índice `indice` (0-based, contando
+    só os arquivos efetivamente codificados) deve ser gravado — "Lote 01",
+    "Lote 02"... Existe porque o Superlógica só aceita um punhado de
+    arquivos por envio, então a saída já sai dividida no tamanho certo.
+
+    `tamanho_lote` menor que 1 significa "não separar": devolve a própria
+    pasta de saída, em vez de estourar divisão por zero no meio de um
+    processamento.
+    """
+    if tamanho_lote < 1:
+        return pasta_saida
+    numero = indice // tamanho_lote + 1
+    return os.path.join(pasta_saida, f"Lote {numero:02d}")
+
+
 def _gravar_erros_log(detalhes):
     """Faz o append de `detalhes` em erros.log (ao lado do script), com
     timestamp. Usada tanto por _registrar_erro_config quanto pelo handler

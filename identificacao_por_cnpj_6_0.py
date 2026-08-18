@@ -60,7 +60,8 @@ from logica import (
     DEFAULTS_CONFIG, LIMITE_TEXTO_MINIMO, DPI_ESCALONAMENTO,
     CNPJS_INTERMEDIARIOS, LIMIAR_SCORE_NOME, LIMIAR_DIFERENCA_AMBIGUA,
     PALAVRAS_TIPO_DOC, OCR_DISPONIVEL, FITZ_DISPONIVEL, WINOCR_DISPONIVEL,
-    pasta_base, caminho_recurso, nome_saida_com_codigo,
+    TAMANHO_LOTE_PADRAO,
+    pasta_base, caminho_recurso, nome_saida_com_codigo, caminho_do_lote,
     _gravar_erros_log, _registrar_erro_config,
     carregar_config, salvar_config, rotacionar_log,
     normalizar_cnpj, formatar_cnpj, extrair_texto_pdf, cnpj_valido,
@@ -151,7 +152,7 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("Dark" if self.nome_tema == "escuro" else "Light")
 
         super().__init__()
-        self.title("Codificador v6.11.0")
+        self.title("Codificador v6.12.0")
         self.geometry("780x680")
         self.minsize(620, 420)
         self.resizable(True, True)
@@ -196,6 +197,15 @@ class App(ctk.CTk):
 
         # Renomear o PDF de saída com o código do condomínio na frente
         self.renomear_com_codigo = tk.BooleanVar(value=perfil_inicial["renomear_com_codigo"])
+
+        # Separar a saída em subpastas "Lote 01", "Lote 02"... — o Superlógica
+        # só aceita um punhado de arquivos por envio. Fica fora das
+        # predefinições de lote de propósito: é preferência de quem opera
+        # (depende do sistema de destino), não característica do documento.
+        self.separar_em_lotes = tk.BooleanVar(
+            value=bool(self.config_app.get("separar_em_lotes", False)))
+        self.tamanho_lote = tk.StringVar(
+            value=str(self.config_app.get("tamanho_lote", TAMANHO_LOTE_PADRAO)))
 
         # Variáveis - aba cadastro (formulário)
         self.form_cnpj = tk.StringVar()
@@ -689,6 +699,10 @@ class App(ctk.CTk):
         )
         self.botao_iniciar.grid(row=4, column=0, sticky="ew", pady=(8, 8))
 
+        # --- Separar a saída em lotes (logo abaixo do botão primário) ---
+        self._montar_controle_lotes(corpo, registrar).grid(
+            row=5, column=0, sticky="w", pady=(0, 8))
+
         # --- Linha explicativa ---
         explicacao = registrar(
             ctk.CTkLabel(
@@ -699,11 +713,11 @@ class App(ctk.CTk):
             ),
             {"text_color": "texto_terciario"},
         )
-        explicacao.grid(row=5, column=0, sticky="w", pady=(0, 16))
+        explicacao.grid(row=6, column=0, sticky="w", pady=(0, 16))
 
         # --- Barra de progresso (usada por _processar_em_thread) ---
         self.barra_progresso = ttk.Progressbar(corpo, mode="determinate")
-        self.barra_progresso.grid(row=6, column=0, sticky="ew", pady=(0, 24))
+        self.barra_progresso.grid(row=7, column=0, sticky="ew", pady=(0, 24))
 
         # --- Widgets ocultos usados pelo loop de processamento, mas sem
         # lugar na tela Swiss limpa. Nunca são pack/grid — ficam fora da
@@ -743,6 +757,74 @@ class App(ctk.CTk):
             self.botao_iniciar.configure(text=f"Processar {quantidade} PDFs", state="normal")
         else:
             self.botao_iniciar.configure(text="Processar PDFs", state="disabled")
+
+    def _montar_controle_lotes(self, parent, registrar):
+        """
+        Checkbox "Separar a saída em lotes" + campo com a quantidade por lote,
+        para colocar logo abaixo do botão primário. Usado nas duas abas que
+        geram PDFs (Processamento e Protocolos) — as duas compartilham as
+        mesmas tk.Var, então marcar numa vale para a outra.
+
+        Devolve o frame; quem chama decide onde posicionar (grid/pack).
+        """
+        tema = self.tema_atual
+        fonte = familia_fonte()
+
+        linha = registrar(
+            ctk.CTkFrame(parent, corner_radius=0, fg_color=tema["fundo"]),
+            {"fg_color": "fundo"},
+        )
+
+        chk = registrar(
+            ctk.CTkCheckBox(
+                linha, text="Separar a saída em lotes de", variable=self.separar_em_lotes,
+                corner_radius=0, fg_color=tema["acento"], hover_color=tema["acento"],
+                border_color=tema["borda_forte"], text_color=tema["texto"], font=(fonte, 13),
+                command=self._salvar_preferencia_lotes,
+            ),
+            {"fg_color": "acento", "hover_color": "acento", "border_color": "borda_forte",
+             "text_color": "texto"},
+        )
+        chk.pack(side="left")
+
+        campo = registrar(
+            ctk.CTkEntry(
+                linha, textvariable=self.tamanho_lote, width=56, corner_radius=0,
+                fg_color=tema["superficie"], border_width=1, border_color=tema["borda"],
+                text_color=tema["texto"], font=(fonte, 13), justify="center",
+            ),
+            {"fg_color": "superficie", "border_color": "borda", "text_color": "texto"},
+        )
+        campo.pack(side="left", padx=8)
+        # Grava ao sair do campo: digitar não dispara command em CTkEntry.
+        campo.bind("<FocusOut>", lambda _e: self._salvar_preferencia_lotes())
+
+        rotulo = registrar(
+            ctk.CTkLabel(linha, text="arquivos", font=(fonte, 13),
+                         text_color=tema["texto"], anchor="w"),
+            {"text_color": "texto"},
+        )
+        rotulo.pack(side="left")
+
+        return linha
+
+    def _tamanho_lote_valido(self):
+        """Quantidade por lote como inteiro ≥ 1. Campo em branco ou com texto
+        inválido cai no padrão — nunca deixa um valor ruim chegar até o
+        processamento (0 dividiria por zero, negativo não faz sentido)."""
+        try:
+            valor = int(self.tamanho_lote.get().strip())
+        except (ValueError, AttributeError):
+            return TAMANHO_LOTE_PADRAO
+        return valor if valor >= 1 else TAMANHO_LOTE_PADRAO
+
+    def _salvar_preferencia_lotes(self):
+        """Persiste a preferência de separar em lotes no config.json. Fica no
+        nível raiz, não dentro da predefinição: depende do sistema pra onde os
+        arquivos vão (Superlógica), não do tipo de documento do lote."""
+        self.config_app["separar_em_lotes"] = bool(self.separar_em_lotes.get())
+        self.config_app["tamanho_lote"] = self._tamanho_lote_valido()
+        salvar_config(self.config_app)
 
     def _trocar_predefinicao(self, chave):
         """
@@ -2359,6 +2441,10 @@ class App(ctk.CTk):
         )
         self.botao_protocolos.grid(row=6, column=0, sticky="ew", pady=(8, 8))
 
+        # --- Separar a saída em lotes (mesmas tk.Var da aba 1) ---
+        self._montar_controle_lotes(corpo, registrar).grid(
+            row=7, column=0, sticky="w", pady=(0, 8))
+
         explicacao = registrar(
             ctk.CTkLabel(
                 corpo,
@@ -2372,17 +2458,17 @@ class App(ctk.CTk):
             ),
             {"text_color": "texto_terciario"},
         )
-        explicacao.grid(row=7, column=0, sticky="w", pady=(0, 16))
+        explicacao.grid(row=8, column=0, sticky="w", pady=(0, 16))
 
         self.barra_protocolos = ttk.Progressbar(corpo, mode="determinate")
-        self.barra_protocolos.grid(row=8, column=0, sticky="ew", pady=(0, 8))
+        self.barra_protocolos.grid(row=9, column=0, sticky="ew", pady=(0, 8))
 
         self.label_status_protocolos = registrar(
             ctk.CTkLabel(corpo, text="", font=(fonte, 13),
                          text_color=tema["texto_secundario"], anchor="w"),
             {"text_color": "texto_secundario"},
         )
-        self.label_status_protocolos.grid(row=9, column=0, sticky="w", pady=(0, 24))
+        self.label_status_protocolos.grid(row=10, column=0, sticky="w", pady=(0, 24))
 
         self._atualizar_botao_protocolos()
 
@@ -2608,6 +2694,8 @@ class App(ctk.CTk):
 
         config = self.montar_config_atual()
         codigos = _codigos_do_cadastro(self.cadastro)
+        separar_em_lotes = self.separar_em_lotes.get()
+        tamanho_lote = self._tamanho_lote_valido()
 
         linhas = []
         carimbados = 0
@@ -2712,7 +2800,11 @@ class App(ctk.CTk):
 
             if unidades is not None:
                 try:
-                    self._carimbar_protocolo(caminho, pasta_saida, nome, dados,
+                    #  `carimbados` ainda não foi incrementado: é o índice
+                    #  0-based deste arquivo entre os efetivamente carimbados.
+                    pasta_destino = (caminho_do_lote(pasta_saida, carimbados, tamanho_lote)
+                                      if separar_em_lotes else pasta_saida)
+                    self._carimbar_protocolo(caminho, pasta_destino, nome, dados,
                                              unidades, tarifa, config, codigos)
                     carimbados += 1
                 except Exception as e:
@@ -2991,6 +3083,8 @@ class App(ctk.CTk):
         tipo_servico = self.txt_tipo_servico.get("1.0", "end-1c").strip()
         cor = self.cor_texto.get().strip() or "#000000"
         renomear = self.renomear_com_codigo.get()
+        separar_em_lotes = self.separar_em_lotes.get()
+        tamanho_lote = self._tamanho_lote_valido()
 
         if modo == "rodape":
             config = {"fonte": "Helvetica-Bold", "tamanho": tamanho, "cor": cor,
@@ -3190,8 +3284,13 @@ class App(ctk.CTk):
                         else:
                             texto_pdf = codigo
                             config_arquivo = config
-                        if renomear:
-                            caminho_saida_pdf = os.path.join(saida, nome_saida_com_codigo(nome, codigo))
+                        nome_saida = nome_saida_com_codigo(nome, codigo) if renomear else nome
+                        # `sucesso` ainda não foi incrementado: é o índice
+                        # 0-based deste arquivo entre os codificados, então os
+                        # lotes saem cheios (pendentes não ocupam vaga).
+                        pasta_destino = (caminho_do_lote(saida, sucesso, tamanho_lote)
+                                          if separar_em_lotes else saida)
+                        caminho_saida_pdf = os.path.join(pasta_destino, nome_saida)
                         processar_pdf(caminho_entrada_pdf, caminho_saida_pdf, texto_pdf, config_arquivo)
                         sucesso += 1
                         texto_pdf_log = texto_pdf.replace("\n", " / ")
