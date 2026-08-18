@@ -202,6 +202,13 @@ hoje. Cada item de `carimbos_extras` é um dict com `texto`, `x`, `y`,
 2. Senão, OCR de **todas** as páginas (`max_paginas=None`).
 3. `extrair_dados_protocolo_correio`. `None` → linha na planilha com a
    observação `Não é um protocolo dos Correios`; o PDF não é carimbado.
+3b. **A qualidade de leitura é fixa na melhor (300) e não vem da predefinição
+   ativa.** Decidido depois da revisão final: herdando o ajuste da aba 1, um
+   perfil em "Rápida" derrubava o lote inteiro (na medição, nenhum dos quatro
+   protocolos reais é lido a 72, e a 200 o `-003` passa apoiado num único
+   conferidor). Protocolo é sempre escaneado e o resultado vira cobrança, então
+   não faz sentido negociar qualidade aqui. A re-tentativa continua existindo e
+   sobe para o degrau seguinte da escada.
 4. `conferir_contagem_protocolo`. Recusou → relê no `proximo_dpi_maior` e
    confere de novo, **uma vez**, como já se faz com CNPJ inválido. Recusou de
    novo → pendente: não carimba, não inventa valor, e a observação diz o que

@@ -103,6 +103,20 @@ TEMA_ESCURO = {
 #  não teriam esse canto disponível se x/y ficassem fixos em 567/814.
 MARGEM_VALOR_PROTOCOLO = 28
 
+#  Qualidade de leitura dos protocolos dos Correios: fixa na melhor, de
+#  propósito, ignorando a que estiver escolhida na predefinição ativa.
+#  Motivo: o protocolo é SEMPRE uma fotocópia escaneada e apagada (nunca tem
+#  texto nativo) e o que sai daqui é dinheiro cobrado. Medido nos quatro
+#  protocolos reais de referência: na "Rápida" (72) nenhum dos quatro é lido
+#  — dois nem são reconhecidos como protocolo; a 150 dois ainda não fecham;
+#  a 200 os quatro fecham, mas o do CARMEM passa apoiado num único
+#  conferidor (contagem de linhas dá 1, só o "Correio" confirma os 3); a 300
+#  os três sinais concordam nos quatro. Custa cerca de meio segundo por
+#  documento, o que é imperceptível num lote.
+#  A aba 1 continua usando a qualidade da predefinição — lá o CNPJ tem
+#  dígito verificador e muitos boletos têm texto nativo.
+QUALIDADE_LEITURA_PROTOCOLO = 300
+
 
 def familia_fonte():
     """
@@ -2508,13 +2522,17 @@ class App(ctk.CTk):
 
     def montar_config_atual(self):
         """
-        Monta o dict de configuração do carimbo (fonte, tamanho, cor, posição
-        e qualidade de leitura) a partir dos campos da aba 1 — a mesma
+        Monta o dict de configuração do carimbo (fonte, tamanho, cor e
+        posição) a partir dos campos da aba 1 — a mesma
         predefinição em uso na sessão. Usado por telas que carimbam PDFs fora
         do fluxo de identificação por CNPJ, como a aba de protocolos dos
         Correios (posição/cor do texto principal seguem o que já está
         configurado; o carimbo lateral e o do valor da aba 3 sobrepõem x/y
         conforme o próprio layout do protocolo pede).
+
+        Só aparência: qualidade de leitura NÃO entra aqui. A aba 3 lê sempre
+        na melhor qualidade (QUALIDADE_LEITURA_PROTOCOLO) e um valor de
+        leitura dentro de um dict de carimbo misturava duas coisas.
         """
         try:
             tamanho = int(self.tamanho_fonte.get())
@@ -2530,7 +2548,6 @@ class App(ctk.CTk):
         else:
             config = {"fonte": "Helvetica-Bold", "tamanho": tamanho, "cor": cor,
                       "x": 120, "y": 815, "centralizado": False}
-        config["dpi"] = int(self.dpi_ocr.get())
         return config
 
     def _iniciar_protocolos(self):
@@ -2616,7 +2633,7 @@ class App(ctk.CTk):
             #  cobranças que ficaram de fora do lote, não documentos alheios.
             nao_e_protocolo = False
             try:
-                dpi = config.get("dpi", 300)
+                dpi = QUALIDADE_LEITURA_PROTOCOLO
                 texto, usou_leitor_escaneado = self._ler_texto_protocolo(caminho, dpi)
                 dados = extrair_dados_protocolo_correio(texto)
 

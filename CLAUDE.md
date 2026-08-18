@@ -411,6 +411,26 @@ com tarifa de R$ 3,85 — total R$ 123,20. As fixtures de teste automatizado
 (`tests/test_protocolo_contagem.py`) são sintéticas, sem nome de morador,
 seguindo a mesma disciplina das fixtures de NFS-e.
 
+**Qualidade de leitura fixa, não herdada da predefinição:** a aba 3 lê sempre
+na melhor qualidade (`QUALIDADE_LEITURA_PROTOCOLO = 300`, em
+`identificacao_por_cnpj_6_0.py`), ignorando a que estiver escolhida na
+predefinição ativa. Antes ela herdava esse ajuste da aba 1, e uma revisão
+mostrou que isso quebrava o lote inteiro quando a predefinição estava em
+"Rápida". Medição nos quatro protocolos de referência:
+
+| Documento | Rápida (72) | 150 | Normal (200) | Máxima (300) |
+|---|---|---|---|---|
+| -001 VILLARS | não reconhecido | ok | ok | ok |
+| -002 ASTORIA | pendente | ok | ok | ok |
+| -003 CARMEM | pendente | pendente | aceito por 1 conferidor | ok |
+| -004 DIDEROT | não reconhecido | pendente | ok | ok |
+
+A 300 os três sinais concordam nos quatro documentos, e o custo é de cerca de
+meio segundo por página. A aba 1 continua usando a qualidade da predefinição —
+lá o CNPJ tem dígito verificador e boa parte dos boletos tem texto nativo, o
+que não vale para nenhum protocolo. Por isso `montar_config_atual` devolve só
+aparência do carimbo: qualidade de leitura não entra nesse dict.
+
 **Margem de segurança real da conferência:** o desenho de
 `conferir_contagem_protocolo` falha para o lado seguro (rejeita quando os
 conferidores não concordam com o `Listando`), mas a redundância observada no
