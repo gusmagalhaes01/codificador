@@ -13,7 +13,7 @@ Interface em CustomTkinter, identidade visual "Swiss International Style".
 
 import asyncio
 import copy
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 import io
 import json
 import os
@@ -74,6 +74,7 @@ from logica import (
     extrair_dados_nfse, linha_planilha_nfse, salvar_planilha_nfse,
     extrair_dados_protocolo_correio, conferir_contagem_protocolo,
     valor_protocolo, montar_texto_valor_protocolo, formatar_reais,
+    converter_valor_digitado,
     linha_planilha_protocolo, salvar_planilha_protocolo,
     extrair_texto_escaneado, COLUNAS_PROTOCOLO,
 )
@@ -2557,33 +2558,9 @@ class App(ctk.CTk):
         aviso.pack(padx=24, pady=(0, 8), anchor="w")
 
         def confirmar():
-            texto = entrada.get().strip().replace("R$", "").replace(" ", "")
-            texto = texto.replace(".", "").replace(",", ".") if "," in texto else texto
-            try:
-                valor = Decimal(texto)
-            except (InvalidOperation, ValueError):
-                aviso.configure(text="Digite um número, como 3,85.")
-                return
-            if not valor.is_finite() or valor <= 0:
-                aviso.configure(text="O valor precisa ser maior que zero.")
-                return
-            try:
-                arredondado = valor.quantize(Decimal("0.01"))
-            except InvalidOperation:
-                #  Número absurdamente grande (ex.: trinta dígitos, ou
-                #  1e30) — o quantize não consegue arredondar dentro da
-                #  precisão do contexto. Mesmo aviso inline das outras
-                #  entradas inválidas, em vez de deixar a exceção subir
-                #  pro handler global e virar popup técnico.
-                aviso.configure(text="Digite um número, como 3,85.")
-                return
-            if valor != arredondado:
-                #  Mais de duas casas decimais produz um carimbo com conta
-                #  que não fecha no papel (ex.: 100 un × R$ 3,86 = R$ 385,50,
-                #  quando a tarifa digitada era 3,855) e, na planilha, uma
-                #  coluna Tarifa que não bate com Unidades × Tarifa quando
-                #  alguém recalcula a partir do valor exibido.
-                aviso.configure(text="No máximo duas casas decimais, como 3,85.")
+            valor, mensagem = converter_valor_digitado(entrada.get())
+            if valor is None:
+                aviso.configure(text=mensagem)
                 return
             resultado["valor"] = valor
             janela.destroy()

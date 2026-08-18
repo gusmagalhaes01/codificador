@@ -17,7 +17,7 @@ import os
 import re
 import sys
 import unicodedata
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 from difflib import SequenceMatcher
 
 from pypdf import PdfReader, PdfWriter
@@ -745,6 +745,46 @@ def formatar_reais(valor):
     """1234.5 -> "R$ 1.234,50" (formato brasileiro)."""
     texto = f"{Decimal(str(valor)):,.2f}"
     return "R$ " + texto.replace(",", "\x00").replace(".", ",").replace("\x00", ".")
+
+
+LIMITE_VALOR_DIGITADO = Decimal("1000000")  # teto de sanidade para um lote
+
+
+def converter_valor_digitado(texto):
+    """
+    Lê um valor em reais digitado por uma pessoa e devolve `(valor, mensagem)`:
+    `(Decimal, "")` quando válido, `(None, aviso)` quando não. O aviso vai
+    direto para a tela, então é frase em português, sem jargão.
+
+    Aceita "300,30", "300.30", "1.234,56" e "R$ 57,75". Recusa mais de duas
+    casas decimais pelo mesmo motivo que a tarifa recusa: um valor com três
+    casas produz carimbo e planilha que não fecham quando alguém confere no
+    papel.
+    """
+    bruto = (texto or "").strip().replace("R$", "").replace(" ", "")
+    if not bruto:
+        return None, "Digite um número, como 300,30."
+
+    #  Formato brasileiro: o ponto é separador de milhar e a vírgula é o
+    #  decimal. Sem vírgula, o ponto é tratado como decimal ("300.30").
+    if "," in bruto:
+        bruto = bruto.replace(".", "").replace(",", ".")
+
+    try:
+        valor = Decimal(bruto)
+    except (InvalidOperation, ValueError):
+        return None, "Digite um número, como 300,30."
+
+    if not valor.is_finite():
+        return None, "Digite um número, como 300,30."
+    if valor <= 0:
+        return None, "O valor precisa ser maior que zero."
+    if valor > LIMITE_VALOR_DIGITADO:
+        return None, "Esse valor parece alto demais. Confira o que foi digitado."
+    if -valor.as_tuple().exponent > 2:
+        return None, "Use no máximo duas casas decimais, como 300,30."
+
+    return valor, ""
 
 
 def montar_texto_valor_protocolo(unidades, tarifa, valor):
