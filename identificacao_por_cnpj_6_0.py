@@ -62,7 +62,7 @@ from logica import (
     PALAVRAS_TIPO_DOC, OCR_DISPONIVEL, FITZ_DISPONIVEL, WINOCR_DISPONIVEL,
     pasta_base, caminho_recurso, nome_saida_com_codigo,
     _gravar_erros_log, _registrar_erro_config,
-    carregar_config, salvar_config,
+    carregar_config, salvar_config, rotacionar_log,
     normalizar_cnpj, formatar_cnpj, extrair_texto_pdf, cnpj_valido,
     extrair_texto_ocr, extrair_texto_ocr_regiao, proximo_dpi_maior,
     extrair_cnpj_tomador, sugerir_nome_condominio, extrair_codigo_protocolo_correio,
@@ -2894,10 +2894,13 @@ class App(ctk.CTk):
             messagebox.showinfo("Pasta do log", pasta)
 
     def _salvar_sessao_no_log(self, linhas_sessao: list[str]):
-        """Grava as linhas da sessão de processamento no arquivo .log."""
+        """Grava as linhas da sessão de processamento no arquivo .log e, se ele
+        tiver passado do limite de tamanho, descarta as sessões mais antigas
+        (ver rotacionar_log)."""
         try:
             with open(self.caminho_log, "a", encoding="utf-8") as f:
                 f.write("\n".join(linhas_sessao) + "\n\n")
+            rotacionar_log(self.caminho_log)
         except Exception as e:
             # Falha silenciosa no log não deve travar o processamento
             print(f"[AVISO] Não foi possível salvar o log: {e}")

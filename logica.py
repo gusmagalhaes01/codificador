@@ -64,6 +64,7 @@ CNPJ_REGEX = re.compile(r"\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}")
 NOME_ARQUIVO_PADRAO = "cadastro_condominios.xlsx"
 NOME_LOG_PADRAO = "processamento.log"
 NOME_CONFIG_PADRAO = "config.json"
+LIMITE_TAMANHO_LOG = 5 * 1024 * 1024  # 5 MB — acima disso, rotaciona
 
 
 def pasta_base():
@@ -274,6 +275,29 @@ def salvar_config(config):
     except Exception:
         import traceback
         _registrar_erro_config(traceback.format_exc())
+
+
+def rotacionar_log(caminho, limite_bytes=LIMITE_TAMANHO_LOG):
+    """
+    Se `processamento.log` passar de `limite_bytes`, descarta as sessões mais
+    antigas (do início do arquivo) até caber no limite — sessões são blocos
+    separados por linha em branco, o mesmo formato que _salvar_sessao_no_log
+    já grava. Se uma única sessão sozinha já passar do limite, mantém ela
+    mesmo assim (nunca apaga a mais recente). Nunca lança exceção — falha ao
+    rotacionar não deve travar o processamento.
+    """
+    try:
+        if not os.path.isfile(caminho) or os.path.getsize(caminho) <= limite_bytes:
+            return
+        with open(caminho, "r", encoding="utf-8") as f:
+            conteudo = f.read()
+        sessoes = conteudo.split("\n\n")
+        while len(sessoes) > 1 and len("\n\n".join(sessoes).encode("utf-8")) > limite_bytes:
+            sessoes.pop(0)
+        with open(caminho, "w", encoding="utf-8") as f:
+            f.write("\n\n".join(sessoes))
+    except Exception:
+        pass
 
 
 # ============================================================
