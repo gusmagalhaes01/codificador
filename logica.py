@@ -1417,10 +1417,22 @@ def linha_planilha_protocolo(nome_arquivo, dados, cadastro, tarifa=None,
     significaria "entregou zero unidades".
 
     `valor_manual`: valor em reais digitado por uma pessoa no painel de
-    resultado (pendência resolvida à mão, sem contagem nem tarifa).
+    resultado (pendência resolvida à mão, sem contagem nem tarifa). Vale
+    mesmo quando `dados` é None — "não foi possível ler o documento" é uma
+    pendência de verdade (aparece pra pessoa resolver na tela), e é
+    justamente o que esse valor existe pra resolver. Só "documento não é um
+    protocolo" (também `dados=None`, mas sem `valor_manual`) não tem o que
+    informar.
     """
     if dados is None:
-        return [nome_arquivo, "", "", None, None, None, observacao]
+        if valor_manual is None:
+            return [nome_arquivo, "", "", None, None, None, observacao]
+        #  Sem `dados` não há de onde tirar condomínio nem código — mas o
+        #  valor digitado à mão não pode ser descartado em silêncio só
+        #  porque a leitura automática falhou.
+        aviso = "Valor informado manualmente"
+        observacao = f"{observacao}; {aviso}" if observacao else aviso
+        return [nome_arquivo, "", "", None, None, float(valor_manual), observacao]
 
     codigo = dados.get("codigo") or ""
     registro = None
@@ -1447,7 +1459,7 @@ def linha_planilha_protocolo(nome_arquivo, dados, cadastro, tarifa=None,
         #  rastro de que o número não foi calculado pelo programa; o carimbo no
         #  PDF mostra só o valor.
         aviso = "Valor informado manualmente"
-        observacao = f"{observacao} · {aviso}" if observacao else aviso
+        observacao = f"{observacao}; {aviso}" if observacao else aviso
         return [nome_arquivo, condominio, codigo, None, None,
                 float(valor_manual), observacao]
 

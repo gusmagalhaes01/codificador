@@ -190,6 +190,39 @@ class TestValorManual(unittest.TestCase):
         self.assertIn("Valor informado manualmente", linha[6])
         self.assertIn("Código não cadastrado", linha[6])
 
+    def test_valor_manual_sem_dados_nao_e_descartado(self):
+        """Achado da revisão: `dados is None` cobre tanto "não é um
+        protocolo" quanto "não foi possível ler o documento" — este último é
+        justamente a pendência que o valor manual existe para resolver. Um
+        `valor_manual` informado não pode ser descartado em silêncio só
+        porque a leitura automática falhou; condomínio e código saem vazios
+        (não há de onde tirá-los sem `dados`), mas o valor sobrevive."""
+        linha = app.linha_planilha_protocolo(
+            "p.pdf", None, CADASTRO_TESTE,
+            observacao="Não foi possível ler o documento",
+            valor_manual=Decimal("300.30"))
+        self.assertEqual(linha[0], "p.pdf")
+        self.assertEqual(linha[1], "")
+        self.assertEqual(linha[2], "")
+        self.assertIsNone(linha[3])
+        self.assertIsNone(linha[4])
+        self.assertEqual(linha[5], 300.30)
+        self.assertIsInstance(linha[5], float)
+        self.assertIn("Não foi possível ler o documento", linha[6])
+        self.assertIn("Valor informado manualmente", linha[6])
+
+    def test_dados_none_sem_valor_manual_continua_igual(self):
+        """Contraprova do teste acima: sem `valor_manual`, `dados is None`
+        precisa continuar devolvendo exatamente a linha de sempre — sem o
+        aviso de valor informado, sem nenhum campo numérico preenchido."""
+        linha = app.linha_planilha_protocolo(
+            "p.pdf", None, CADASTRO_TESTE,
+            observacao="Não é um protocolo dos Correios")
+        self.assertEqual(
+            linha,
+            ["p.pdf", "", "", None, None, None,
+             "Não é um protocolo dos Correios"])
+
     def test_total_soma_manuais_junto_com_calculados(self):
         from openpyxl import load_workbook
         pasta = tempfile.mkdtemp()
