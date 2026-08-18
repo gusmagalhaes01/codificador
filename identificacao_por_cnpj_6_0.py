@@ -13,6 +13,7 @@ Interface em CustomTkinter, identidade visual "Swiss International Style".
 
 import asyncio
 import copy
+from decimal import Decimal, InvalidOperation
 import io
 import json
 import os
@@ -2441,8 +2442,6 @@ class App(ctk.CTk):
         aparecem 3,45 e 3,85) e um padrão herdado passaria batido.
         Devolve Decimal, ou None se o usuário cancelar.
         """
-        from decimal import Decimal, InvalidOperation
-
         tema = self.tema_atual
         fonte = familia_fonte()
         janela = ctk.CTkToplevel(self)
@@ -2745,9 +2744,15 @@ class App(ctk.CTk):
                 "Se ela estiver aberta no Excel, feche e tente de novo."))
             return
 
+        #  A planilha guarda float (é o que o Excel soma), mas o total do
+        #  resumo volta para Decimal antes de somar: em lote grande, somar
+        #  float acumula erro de centavo, e aqui o número é dinheiro.
         indice_coluna_valor = [c[0] for c in COLUNAS_PROTOCOLO].index("Valor")
-        total_valor = sum(l[indice_coluna_valor] for l in linhas
-                          if isinstance(l[indice_coluna_valor], float))
+        total_valor = sum(
+            (Decimal(str(l[indice_coluna_valor])) for l in linhas
+             if isinstance(l[indice_coluna_valor], float)),
+            Decimal("0.00"),
+        )
         #  O valor é devido pela entrega, não pelo carimbo ter dado certo —
         #  então o total cobra também o(s) protocolo(s) que falharam ao
         #  carimbar (ver falhas_carimbo abaixo). O texto do resumo precisa
