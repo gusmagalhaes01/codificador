@@ -157,5 +157,61 @@ class TestSalvarPlanilhaProtocolo(unittest.TestCase):
         self.assertEqual(sheet.cell(row=sheet.max_row, column=6).value, 0)
 
 
+class TestValorManual(unittest.TestCase):
+    def test_valor_manual_preenche_valor_e_deixa_unidades_vazias(self):
+        linha = app.linha_planilha_protocolo(
+            "p.pdf", DADOS_CADASTRADO, CADASTRO_TESTE,
+            valor_manual=Decimal("300.30"))
+        self.assertEqual(linha[1], "KLOSTERS")
+        self.assertIsNone(linha[3])          # Unidades
+        self.assertIsNone(linha[4])          # Tarifa
+        self.assertEqual(linha[5], 300.30)   # Valor
+        self.assertEqual(linha[6], "Valor informado manualmente")
+
+    def test_valor_manual_nunca_grava_zero(self):
+        """0 significaria "entregou zero unidades" — mesma regra das
+        pendências e das retenções federais na planilha das NFS-e."""
+        linha = app.linha_planilha_protocolo(
+            "p.pdf", DADOS_CADASTRADO, CADASTRO_TESTE,
+            valor_manual=Decimal("10.00"))
+        self.assertNotEqual(linha[3], 0)
+        self.assertNotEqual(linha[4], 0)
+
+    def test_valor_manual_grava_como_numero_nao_texto(self):
+        linha = app.linha_planilha_protocolo(
+            "p.pdf", DADOS_CADASTRADO, CADASTRO_TESTE,
+            valor_manual=Decimal("300.30"))
+        self.assertIsInstance(linha[5], float)
+
+    def test_codigo_nao_cadastrado_mantem_os_dois_avisos(self):
+        linha = app.linha_planilha_protocolo(
+            "p.pdf", DADOS_NAO_CADASTRADO, CADASTRO_TESTE,
+            valor_manual=Decimal("11.55"))
+        self.assertIn("Valor informado manualmente", linha[6])
+        self.assertIn("Código não cadastrado", linha[6])
+
+    def test_total_soma_manuais_junto_com_calculados(self):
+        from openpyxl import load_workbook
+        pasta = tempfile.mkdtemp()
+        try:
+            destino = os.path.join(pasta, "p.xlsx")
+            linhas = [
+                app.linha_planilha_protocolo("a.pdf", DADOS_CADASTRADO, CADASTRO_TESTE,
+                                             Decimal("3.85"), 15),
+                app.linha_planilha_protocolo("b.pdf", DADOS_CADASTRADO, CADASTRO_TESTE,
+                                             valor_manual=Decimal("300.30")),
+            ]
+            app.salvar_planilha_protocolo(destino, linhas)
+            sheet = load_workbook(destino).active
+            ultima = sheet.max_row
+            self.assertEqual(sheet.cell(row=ultima, column=1).value, "TOTAL")
+            #  Só as unidades efetivamente contadas entram no total de unidades
+            self.assertEqual(sheet.cell(row=ultima, column=4).value, 15)
+            #  57,75 calculado + 300,30 informado
+            self.assertEqual(sheet.cell(row=ultima, column=6).value, 358.05)
+        finally:
+            shutil.rmtree(pasta, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main()

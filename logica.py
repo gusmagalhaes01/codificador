@@ -1407,7 +1407,7 @@ COLUNAS_PROTOCOLO = [
 
 
 def linha_planilha_protocolo(nome_arquivo, dados, cadastro, tarifa=None,
-                             unidades=None, observacao=""):
+                             unidades=None, observacao="", valor_manual=None):
     """
     Monta a linha da planilha. O nome do condomínio vem do cadastro quando o
     código está lá; senão fica o que o próprio documento traz no cabeçalho.
@@ -1415,6 +1415,9 @@ def linha_planilha_protocolo(nome_arquivo, dados, cadastro, tarifa=None,
     `unidades=None` é o caso pendente (contagem recusada) ou o de um arquivo
     que nem é protocolo: Unidades, Tarifa e Valor saem VAZIOS, nunca 0 — 0
     significaria "entregou zero unidades".
+
+    `valor_manual`: valor em reais digitado por uma pessoa no painel de
+    resultado (pendência resolvida à mão, sem contagem nem tarifa).
     """
     if dados is None:
         return [nome_arquivo, "", "", None, None, None, observacao]
@@ -1436,6 +1439,17 @@ def linha_planilha_protocolo(nome_arquivo, dados, cadastro, tarifa=None,
         motivo_codigo = ("Código não identificado no documento" if not codigo
                          else "Código não cadastrado")
         observacao = f"{observacao}; {motivo_codigo}" if observacao else motivo_codigo
+
+    if valor_manual is not None:
+        #  Valor digitado por uma pessoa no painel de resultado: Unidades e
+        #  Tarifa ficam VAZIAS, porque não houve contagem nem multiplicação —
+        #  0 ali significaria "entregou zero unidades". A observação é o único
+        #  rastro de que o número não foi calculado pelo programa; o carimbo no
+        #  PDF mostra só o valor.
+        aviso = "Valor informado manualmente"
+        observacao = f"{observacao} · {aviso}" if observacao else aviso
+        return [nome_arquivo, condominio, codigo, None, None,
+                float(valor_manual), observacao]
 
     if unidades is None:
         return [nome_arquivo, condominio, codigo, None, None, None, observacao]
