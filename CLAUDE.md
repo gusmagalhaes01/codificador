@@ -135,6 +135,17 @@ similaridade de nome sozinha.
   com um PDF real (protocolo do VILLARS) e confirmado que a IA do
   Superlógica conseguiu reconhecer o código carimbado. Ver spec
   `docs/superpowers/specs/2026-08-13-carimbo-lateral-protocolo-design.md`.
+- **v6.10.0 — contagem e cobrança dos Protocolos dos Correios (aba 3)**: aba
+  nova que conta as unidades entregues em cada protocolo, multiplica pela
+  tarifa informada no lote (perguntada a cada processamento — ela muda com o
+  tempo: nos protocolos de referência aparecem 3,45 e 3,85), carimba o valor
+  no canto superior direito e gera uma planilha com o total. Ao contrário da
+  aba 2, **aqui o OCR é usado** — o que torna isso aceitável é o
+  `Listando N unidades` impresso no documento, que funciona como dígito
+  verificador da contagem, com a contagem de linhas e a de "Correio" servindo
+  de conferência. Divergiu, relê em qualidade maior e, persistindo, vira
+  pendente sem carimbo. Abas de Cadastro e Logs renumeradas para 4 e 5. Ver
+  spec `docs/superpowers/specs/2026-08-17-contagem-protocolo-correio-design.md`.
 
 ## Melhorias implementadas (a partir da versão 5_3)
 
@@ -348,6 +359,87 @@ código já presente no nome do arquivo em 1.948 de 1.951 (99,85%).
   troca entre códigos vizinhos. Bom exemplo de por que se identifica por CNPJ.
 - `PCMSO 11095 Serra Azul.pdf` e `PCMSO 10710 Martinica.pdf` estão em pastas
   PCMSO mas são "Detalhamento do Faturamento", não NFS-e.
+
+## Contagem dos Protocolos dos Correios (aba 3)
+
+Contrapartida do carimbo de código (v6.8.0/v6.9.0): além de identificar o
+condomínio, essa aba conta quantas unidades receberam correspondência num
+"Protocolo de Recebimento de Documento" e transforma isso em cobrança —
+unidades × tarifa do lote, carimbadas no canto superior direito e somadas
+numa planilha.
+
+**Formato de saída do `winocr` (por que a extração não pode assumir linhas):**
+o motor devolve a página inteira **numa linha só**, sem quebra nenhuma, e com
+as colunas fora de ordem — os "Correio" da coluna Entrega saem todos
+agrupados no fim do texto, não intercalados com as unidades a que pertencem.
+Por causa disso nenhuma regex de contagem pode depender de início de linha
+(`(?m)^`); `RE_UNIDADE_PROTOCOLO` e `RE_ENTREGA_PROTOCOLO`, em `logica.py`,
+casam padrões soltos no texto corrido.
+
+**O traço duplicado:** o OCR às vezes lê o traço entre o número da unidade e
+o nome do morador em dobro (ex: `"702 - - Enny Marins de Lima"`, visto no
+protocolo real do ASTORIA). Foi isso que motivou `(?:\s*[-–—])+` em vez de um
+único `[-–—]?` em `RE_UNIDADE_PROTOCOLO` — sem o `+`, essas linhas não
+batiam e a contagem saía sistematicamente abaixo do impresso.
+
+**Regra de aceite** (`conferir_contagem_protocolo`): o `Listando N unidades`
+impresso no documento é o valor que manda e funciona como dígito
+verificador — sem ele, nada é aceito, mesmo que os dois conferidores
+(contagem de linhas e contagem de "Correio") concordem entre si, porque
+contar por OCR sozinho é chute com cara de precisão e o resultado vira
+dinheiro cobrado. Com o `Listando` presente, basta que **um** dos dois
+conferidores bata com ele para aceitar.
+
+**Motores de OCR testados:** além do `winocr` (motor usado em produção),
+foram testados o Tesseract 5.4 com modelo português e o RapidOCR (modelos
+PP-OCR via ONNX) contra o mesmo lote de aceitação. Os três empatam em 4/4 nos
+sinais usados (`Listando`, contagem de linhas, contagem de "Correio"), mas o
+`winocr` é de 5 a 10× mais rápido e não pesa nada na distribuição (é motor
+nativo do Windows, nenhum modelo pra empacotar) — por isso continua sendo o
+motor principal. O RapidOCR ficou como reserva **opcional**
+(`extrair_texto_rapidocr`, em `logica.py`), fora do `requirements.txt` e do
+`.spec`, acionada por `extrair_texto_escaneado` só quando o `winocr` não
+existe ou quebra. Se um dia for preciso saber **quais** unidades receberam, e
+não só quantas, o RapidOCR é o motor a revisitar — ao contrário do `winocr`,
+ele devolve blocos de texto com coordenadas, então dá para reconstruir a
+ordem espacial das colunas em vez de só contar ocorrências no texto corrido.
+
+**Lote de aceitação** (`C:\Users\Dell\Downloads\TESTE CORREIO`, 4 protocolos
+reais, fora do repo — os valores vieram de números manuscritos nas próprias
+folhas): 2 unidades / R$ 7,70, 15 / R$ 57,75, 3 / R$ 11,55 e 12 / R$ 46,20,
+com tarifa de R$ 3,85 — total R$ 123,20. As fixtures de teste automatizado
+(`tests/test_protocolo_contagem.py`) são sintéticas, sem nome de morador,
+seguindo a mesma disciplina das fixtures de NFS-e.
+
+**Qualidade de leitura fixa, não herdada da predefinição:** a aba 3 lê sempre
+na melhor qualidade (`QUALIDADE_LEITURA_PROTOCOLO = 300`, em
+`identificacao_por_cnpj_6_0.py`), ignorando a que estiver escolhida na
+predefinição ativa. Antes ela herdava esse ajuste da aba 1, e uma revisão
+mostrou que isso quebrava o lote inteiro quando a predefinição estava em
+"Rápida". Medição nos quatro protocolos de referência:
+
+| Documento | Rápida (72) | 150 | Normal (200) | Máxima (300) |
+|---|---|---|---|---|
+| -001 VILLARS | não reconhecido | ok | ok | ok |
+| -002 ASTORIA | pendente | ok | ok | ok |
+| -003 CARMEM | pendente | pendente | aceito por 1 conferidor | ok |
+| -004 DIDEROT | não reconhecido | pendente | ok | ok |
+
+A 300 os três sinais concordam nos quatro documentos, e o custo é de cerca de
+meio segundo por página. A aba 1 continua usando a qualidade da predefinição —
+lá o CNPJ tem dígito verificador e boa parte dos boletos tem texto nativo, o
+que não vale para nenhum protocolo. Por isso `montar_config_atual` devolve só
+aparência do carimbo: qualidade de leitura não entra nesse dict.
+
+**Margem de segurança real da conferência:** o desenho de
+`conferir_contagem_protocolo` falha para o lado seguro (rejeita quando os
+conferidores não concordam com o `Listando`), mas a redundância observada no
+lote real é menor do que "dois de dois". No protocolo `-003` (3 unidades), a
+200 DPI, `Listando 3` foi confirmado por só **um** dos dois conferidores —
+contagem de linhas deu 1 (subcontou), contagem de "Correio" deu 3 (bateu). A
+aceitação passou porque basta um dos dois, não porque os dois concordaram.
+Quem for endurecer essa regra (ex.: exigir os dois conferidores) precisa
+saber que isso teria recusado um protocolo real do lote de aceitação.
 
 ## Divergências de lógica só no 6_0 (pós-redesign)
 

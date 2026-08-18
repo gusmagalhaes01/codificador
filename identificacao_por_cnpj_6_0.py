@@ -13,6 +13,7 @@ Interface em CustomTkinter, identidade visual "Swiss International Style".
 
 import asyncio
 import copy
+from decimal import Decimal, InvalidOperation
 import io
 import json
 import os
@@ -70,6 +71,10 @@ from logica import (
     buscar_por_nome_arquivo, desempatar_por_cadastro, candidatos_por_nome,
     criar_overlay, processar_pdf, carregar_cadastro, salvar_cadastro,
     extrair_dados_nfse, linha_planilha_nfse, salvar_planilha_nfse,
+    extrair_dados_protocolo_correio, conferir_contagem_protocolo,
+    valor_protocolo, montar_texto_valor_protocolo, formatar_reais,
+    linha_planilha_protocolo, salvar_planilha_protocolo,
+    extrair_texto_escaneado, COLUNAS_PROTOCOLO,
 )
 
 
@@ -89,6 +94,29 @@ TEMA_ESCURO = {
     "texto_terciario": "#57534E", "acento": "#2563EB", "sobre_acento": "#FFFFFF",
     "acento_hover": "#1D4FD0",
 }
+
+
+#  Posição do carimbo de valor no protocolo dos Correios: canto superior
+#  direito, no espaço em branco do documento. O rodapé foi descartado porque
+#  protocolos de duas páginas têm conteúdo lá embaixo. A margem é fixa em
+#  pontos, mas a posição final (x/y) é calculada em cima do tamanho real da
+#  1ª página de cada PDF (ver _carimbar_protocolo) — páginas menores que A4
+#  não teriam esse canto disponível se x/y ficassem fixos em 567/814.
+MARGEM_VALOR_PROTOCOLO = 28
+
+#  Qualidade de leitura dos protocolos dos Correios: fixa na melhor, de
+#  propósito, ignorando a que estiver escolhida na predefinição ativa.
+#  Motivo: o protocolo é SEMPRE uma fotocópia escaneada e apagada (nunca tem
+#  texto nativo) e o que sai daqui é dinheiro cobrado. Medido nos quatro
+#  protocolos reais de referência: na "Rápida" (72) nenhum dos quatro é lido
+#  — dois nem são reconhecidos como protocolo; a 150 dois ainda não fecham;
+#  a 200 os quatro fecham, mas o do CARMEM passa apoiado num único
+#  conferidor (contagem de linhas dá 1, só o "Correio" confirma os 3); a 300
+#  os três sinais concordam nos quatro. Custa cerca de meio segundo por
+#  documento, o que é imperceptível num lote.
+#  A aba 1 continua usando a qualidade da predefinição — lá o CNPJ tem
+#  dígito verificador e muitos boletos têm texto nativo.
+QUALIDADE_LEITURA_PROTOCOLO = 300
 
 
 def familia_fonte():
@@ -123,7 +151,7 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("Dark" if self.nome_tema == "escuro" else "Light")
 
         super().__init__()
-        self.title("Codificador v6.9.0")
+        self.title("Codificador v6.10.0")
         self.geometry("780x680")
         self.minsize(620, 420)
         self.resizable(True, True)
@@ -177,6 +205,11 @@ class App(ctk.CTk):
         # Variáveis - aba de extração de notas para planilha
         self.pasta_notas = tk.StringVar()
         self.arquivo_planilha_saida = tk.StringVar()
+
+        # Variáveis - aba de protocolos dos Correios
+        self.pasta_protocolos = tk.StringVar()
+        self.pasta_protocolos_saida = tk.StringVar()
+        self.arquivo_planilha_protocolos = tk.StringVar()
 
         self._montar_interface()
         self._atualizar_tabela_cadastro()
@@ -276,17 +309,20 @@ class App(ctk.CTk):
 
         self.aba_processar = ttk.Frame(notebook)
         self.aba_extracao = ttk.Frame(notebook)
+        self.aba_protocolos = ttk.Frame(notebook)
         self.aba_cadastro = ttk.Frame(notebook)
         self.aba_logs = ttk.Frame(notebook)
         notebook.add(self.aba_processar, text="1. Processamento")
         notebook.add(self.aba_extracao, text="2. Extrair dados")
-        notebook.add(self.aba_cadastro, text="3. Cadastro de Condomínios")
-        notebook.add(self.aba_logs, text="4. Logs")
+        notebook.add(self.aba_protocolos, text="3. Protocolos dos Correios")
+        notebook.add(self.aba_cadastro, text="4. Cadastro de Condomínios")
+        notebook.add(self.aba_logs, text="5. Logs")
 
         # A ordem importa: _montar_aba_processar cria self._widgets_tema, que
-        # _montar_aba_extracao usa para registrar os widgets dela no tema.
+        # as abas seguintes usam para registrar os widgets delas no tema.
         self._montar_aba_processar(self.aba_processar)
         self._montar_aba_extracao(self.aba_extracao)
+        self._montar_aba_protocolos(self.aba_protocolos)
         self._montar_aba_cadastro(self.aba_cadastro)
         self._montar_aba_logs(self.aba_logs)
 
@@ -297,7 +333,7 @@ class App(ctk.CTk):
         self._estilizar_ttk()
 
     # --------------------------------------------------------
-    #  ABA 2 — CADASTRO
+    #  ABA 4 — CADASTRO
     # --------------------------------------------------------
     def _montar_aba_cadastro(self, parent):
         pad = {"padx": 24, "pady": 6}
@@ -2209,6 +2245,589 @@ class App(ctk.CTk):
                 os.startfile(destino)
             except Exception as e:
                 messagebox.showerror("Erro", f"Não foi possível abrir a planilha:\n{e}")
+
+    # --------------------------------------------------------
+    #  ABA 3 — PROTOCOLOS DOS CORREIOS
+    # --------------------------------------------------------
+    def _montar_aba_protocolos(self, parent_externo):
+        """
+        Conta as unidades de cada protocolo, calcula o valor pela tarifa do
+        lote, carimba o PDF e gera a planilha. Mesma linguagem visual das
+        outras abas (Swiss, cantos retos, cobalto só no botão primário).
+        """
+        tema = self.tema_atual
+        fonte = familia_fonte()
+
+        def registrar(widget, mapa):
+            self._widgets_tema.append((widget, mapa))
+            for prop, chave in mapa.items():
+                try:
+                    widget.configure(**{prop: tema[chave]})
+                except Exception:
+                    pass
+            return widget
+
+        container = registrar(
+            ctk.CTkFrame(parent_externo, corner_radius=0, fg_color=tema["fundo"]),
+            {"fg_color": "fundo"},
+        )
+        container.pack(fill="both", expand=True)
+
+        bloco_titulo = registrar(
+            ctk.CTkFrame(container, corner_radius=0, fg_color=tema["fundo"]),
+            {"fg_color": "fundo"},
+        )
+        bloco_titulo.pack(fill="x", padx=24, pady=(24, 0))
+
+        titulo = registrar(
+            ctk.CTkLabel(bloco_titulo, text="Protocolos dos Correios", font=(fonte, 20),
+                         text_color=tema["texto"], anchor="w"),
+            {"text_color": "texto"},
+        )
+        titulo.pack(anchor="w")
+
+        subtitulo = registrar(
+            ctk.CTkLabel(bloco_titulo, text="CONTAGEM DE UNIDADES E VALOR", font=(fonte, 11),
+                         text_color=tema["texto_secundario"], anchor="w"),
+            {"text_color": "texto_secundario"},
+        )
+        subtitulo.pack(anchor="w")
+
+        hairline = registrar(
+            ctk.CTkFrame(container, height=1, corner_radius=0, fg_color=tema["borda"]),
+            {"fg_color": "borda"},
+        )
+        hairline.pack(fill="x", padx=24, pady=(16, 24))
+
+        corpo = registrar(
+            ctk.CTkFrame(container, corner_radius=0, fg_color=tema["fundo"]),
+            {"fg_color": "fundo"},
+        )
+        corpo.pack(fill="both", expand=True, padx=24)
+        corpo.columnconfigure(0, weight=1)
+
+        def montar_campo(linha_grid, rotulo, variavel, comando_trocar):
+            label = registrar(
+                ctk.CTkLabel(corpo, text=rotulo, font=(fonte, 11),
+                             text_color=tema["texto_secundario"], anchor="w"),
+                {"text_color": "texto_secundario"},
+            )
+            label.grid(row=linha_grid, column=0, sticky="w", pady=(0, 4))
+
+            linha = registrar(
+                ctk.CTkFrame(corpo, corner_radius=0, fg_color=tema["fundo"]),
+                {"fg_color": "fundo"},
+            )
+            linha.grid(row=linha_grid + 1, column=0, sticky="ew", pady=(0, 16))
+            linha.columnconfigure(0, weight=1)
+
+            entry = registrar(
+                ctk.CTkEntry(linha, textvariable=variavel, corner_radius=0,
+                             fg_color=tema["superficie"], border_width=1,
+                             border_color=tema["borda"], text_color=tema["texto"],
+                             font=(fonte, 13)),
+                {"fg_color": "superficie", "border_color": "borda", "text_color": "texto"},
+            )
+            entry.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+
+            botao = registrar(
+                ctk.CTkButton(
+                    linha, text="Trocar", corner_radius=0, width=90,
+                    fg_color="transparent", hover_color=tema["superficie"],
+                    border_width=1, border_color=tema["borda_forte"],
+                    text_color=tema["texto"], font=(fonte, 13), command=comando_trocar,
+                ),
+                {"hover_color": "superficie", "border_color": "borda_forte", "text_color": "texto"},
+            )
+            botao.grid(row=0, column=1)
+
+        montar_campo(0, "PASTA COM OS PROTOCOLOS", self.pasta_protocolos,
+                     self._escolher_pasta_protocolos)
+        montar_campo(2, "SALVAR OS PDFS CARIMBADOS EM", self.pasta_protocolos_saida,
+                     self._escolher_pasta_protocolos_saida)
+        montar_campo(4, "SALVAR PLANILHA EM", self.arquivo_planilha_protocolos,
+                     self._escolher_planilha_protocolos)
+
+        self.botao_protocolos = registrar(
+            ctk.CTkButton(
+                corpo, text="Calcular protocolos", corner_radius=0, height=44,
+                font=(fonte, 15), fg_color=tema["acento"],
+                hover_color=tema["acento_hover"], text_color=tema["sobre_acento"],
+                border_width=0, command=self._iniciar_protocolos,
+            ),
+            {"fg_color": "acento", "hover_color": "acento_hover", "text_color": "sobre_acento"},
+        )
+        self.botao_protocolos.grid(row=6, column=0, sticky="ew", pady=(8, 8))
+
+        explicacao = registrar(
+            ctk.CTkLabel(
+                corpo,
+                text=("Conta quantas unidades cada protocolo entregou, multiplica pelo "
+                      "valor por linha que você informar e escreve o total no canto "
+                      "superior direito do PDF, junto do código do condomínio. "
+                      "Protocolos em que a contagem não confere ficam sem carimbo e "
+                      "aparecem na planilha com o motivo."),
+                font=(fonte, 13), text_color=tema["texto_terciario"],
+                justify="left", anchor="w", wraplength=640,
+            ),
+            {"text_color": "texto_terciario"},
+        )
+        explicacao.grid(row=7, column=0, sticky="w", pady=(0, 16))
+
+        self.barra_protocolos = ttk.Progressbar(corpo, mode="determinate")
+        self.barra_protocolos.grid(row=8, column=0, sticky="ew", pady=(0, 8))
+
+        self.label_status_protocolos = registrar(
+            ctk.CTkLabel(corpo, text="", font=(fonte, 13),
+                         text_color=tema["texto_secundario"], anchor="w"),
+            {"text_color": "texto_secundario"},
+        )
+        self.label_status_protocolos.grid(row=9, column=0, sticky="w", pady=(0, 24))
+
+        self._atualizar_botao_protocolos()
+
+    def _escolher_pasta_protocolos(self):
+        pasta = filedialog.askdirectory(title="Selecione a pasta com os protocolos")
+        if pasta:
+            self.pasta_protocolos.set(pasta)
+            nome_pasta = os.path.basename(os.path.normpath(pasta)) or "protocolos"
+            self.pasta_protocolos_saida.set(os.path.join(pasta, "carimbados"))
+            self.arquivo_planilha_protocolos.set(
+                os.path.join(pasta, f"protocolos_{nome_pasta}.xlsx"))
+        self._atualizar_botao_protocolos()
+
+    def _escolher_pasta_protocolos_saida(self):
+        pasta = filedialog.askdirectory(title="Onde salvar os PDFs carimbados")
+        if pasta:
+            self.pasta_protocolos_saida.set(pasta)
+        self._atualizar_botao_protocolos()
+
+    def _escolher_planilha_protocolos(self):
+        atual = self.arquivo_planilha_protocolos.get().strip()
+        caminho = filedialog.asksaveasfilename(
+            title="Salvar planilha como",
+            defaultextension=".xlsx",
+            filetypes=[("Excel", "*.xlsx")],
+            initialfile=os.path.basename(atual) if atual else "protocolos.xlsx",
+            initialdir=os.path.dirname(atual) if atual else None,
+        )
+        if caminho:
+            self.arquivo_planilha_protocolos.set(caminho)
+        self._atualizar_botao_protocolos()
+
+    def _atualizar_botao_protocolos(self):
+        """Conta os *.pdf da pasta escolhida e ajusta texto/estado do botão."""
+        pasta = self.pasta_protocolos.get().strip()
+        quantidade = 0
+        if pasta and os.path.isdir(pasta):
+            try:
+                quantidade = sum(1 for f in os.listdir(pasta) if f.lower().endswith(".pdf"))
+            except Exception:
+                quantidade = 0
+
+        pronto = (quantidade > 0
+                  and self.pasta_protocolos_saida.get().strip()
+                  and self.arquivo_planilha_protocolos.get().strip())
+        if pronto:
+            plural = "protocolo" if quantidade == 1 else "protocolos"
+            self.botao_protocolos.configure(
+                text=f"Calcular {quantidade} {plural}", state="normal")
+        else:
+            self.botao_protocolos.configure(text="Calcular protocolos", state="disabled")
+
+    def _pedir_tarifa(self):
+        """
+        Pede o valor por linha do lote. Campo vazio de propósito, sem valor
+        padrão: a tarifa muda com o tempo (nos protocolos de referência
+        aparecem 3,45 e 3,85) e um padrão herdado passaria batido.
+        Devolve Decimal, ou None se o usuário cancelar.
+        """
+        tema = self.tema_atual
+        fonte = familia_fonte()
+        janela = ctk.CTkToplevel(self)
+        janela.title("Valor por linha")
+        janela.configure(fg_color=tema["fundo"])
+        janela.resizable(False, False)
+        janela.transient(self)
+        janela.grab_set()
+
+        resultado = {"valor": None}
+
+        ctk.CTkLabel(janela, text="Quanto custa cada linha entregue?",
+                     font=(fonte, 15), text_color=tema["texto"]).pack(
+            padx=24, pady=(24, 4), anchor="w")
+        ctk.CTkLabel(janela, text="Ex.: 3,85", font=(fonte, 12),
+                     text_color=tema["texto_terciario"]).pack(padx=24, anchor="w")
+
+        entrada = ctk.CTkEntry(janela, corner_radius=0, width=200,
+                               fg_color=tema["superficie"], border_width=1,
+                               border_color=tema["borda"], text_color=tema["texto"],
+                               font=(fonte, 14))
+        entrada.pack(padx=24, pady=(12, 4), anchor="w")
+        entrada.focus_set()
+
+        aviso = ctk.CTkLabel(janela, text="", font=(fonte, 12),
+                             text_color=tema["acento"])
+        aviso.pack(padx=24, pady=(0, 8), anchor="w")
+
+        def confirmar():
+            texto = entrada.get().strip().replace("R$", "").replace(" ", "")
+            texto = texto.replace(".", "").replace(",", ".") if "," in texto else texto
+            try:
+                valor = Decimal(texto)
+            except (InvalidOperation, ValueError):
+                aviso.configure(text="Digite um número, como 3,85.")
+                return
+            if not valor.is_finite() or valor <= 0:
+                aviso.configure(text="O valor precisa ser maior que zero.")
+                return
+            try:
+                arredondado = valor.quantize(Decimal("0.01"))
+            except InvalidOperation:
+                #  Número absurdamente grande (ex.: trinta dígitos, ou
+                #  1e30) — o quantize não consegue arredondar dentro da
+                #  precisão do contexto. Mesmo aviso inline das outras
+                #  entradas inválidas, em vez de deixar a exceção subir
+                #  pro handler global e virar popup técnico.
+                aviso.configure(text="Digite um número, como 3,85.")
+                return
+            if valor != arredondado:
+                #  Mais de duas casas decimais produz um carimbo com conta
+                #  que não fecha no papel (ex.: 100 un × R$ 3,86 = R$ 385,50,
+                #  quando a tarifa digitada era 3,855) e, na planilha, uma
+                #  coluna Tarifa que não bate com Unidades × Tarifa quando
+                #  alguém recalcula a partir do valor exibido.
+                aviso.configure(text="No máximo duas casas decimais, como 3,85.")
+                return
+            resultado["valor"] = valor
+            janela.destroy()
+
+        linha_botoes = ctk.CTkFrame(janela, corner_radius=0, fg_color=tema["fundo"])
+        linha_botoes.pack(padx=24, pady=(0, 24), anchor="e")
+
+        ctk.CTkButton(linha_botoes, text="Cancelar", corner_radius=0, width=100,
+                      fg_color="transparent", hover_color=tema["superficie"],
+                      border_width=1, border_color=tema["borda_forte"],
+                      text_color=tema["texto"], font=(fonte, 13),
+                      command=janela.destroy).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(linha_botoes, text="Continuar", corner_radius=0, width=120,
+                      fg_color=tema["acento"], hover_color=tema["acento_hover"],
+                      text_color=tema["sobre_acento"], border_width=0,
+                      font=(fonte, 13), command=confirmar).pack(side="left")
+
+        entrada.bind("<Return>", lambda _e: confirmar())
+        self.wait_window(janela)
+        return resultado["valor"]
+
+    def montar_config_atual(self):
+        """
+        Monta o dict de configuração do carimbo (fonte, tamanho, cor e
+        posição) a partir dos campos da aba 1 — a mesma
+        predefinição em uso na sessão. Usado por telas que carimbam PDFs fora
+        do fluxo de identificação por CNPJ, como a aba de protocolos dos
+        Correios (posição/cor do texto principal seguem o que já está
+        configurado; o carimbo lateral e o do valor da aba 3 sobrepõem x/y
+        conforme o próprio layout do protocolo pede).
+
+        Só aparência: qualidade de leitura NÃO entra aqui. A aba 3 lê sempre
+        na melhor qualidade (QUALIDADE_LEITURA_PROTOCOLO) e um valor de
+        leitura dentro de um dict de carimbo misturava duas coisas.
+        """
+        try:
+            tamanho = int(self.tamanho_fonte.get())
+        except ValueError:
+            perfil_ativo = self.predefinicao_ativa.get()
+            tamanho = int(DEFAULTS_CONFIG["predefinicoes"][perfil_ativo]["tamanho_fonte"])
+
+        cor = self.cor_texto.get().strip() or "#000000"
+        modo = self.modo_texto.get()
+        if modo == "rodape":
+            config = {"fonte": "Helvetica-Bold", "tamanho": tamanho, "cor": cor,
+                      "x": 0, "y": 90, "centralizado": True}
+        else:
+            config = {"fonte": "Helvetica-Bold", "tamanho": tamanho, "cor": cor,
+                      "x": 120, "y": 815, "centralizado": False}
+        return config
+
+    def _iniciar_protocolos(self):
+        pasta = self.pasta_protocolos.get().strip()
+        pasta_saida = self.pasta_protocolos_saida.get().strip()
+        destino = self.arquivo_planilha_protocolos.get().strip()
+
+        if not pasta or not os.path.isdir(pasta):
+            messagebox.showerror("Erro", "Selecione a pasta com os protocolos.")
+            return
+        if not pasta_saida:
+            messagebox.showerror("Erro", "Escolha onde salvar os PDFs carimbados.")
+            return
+        if os.path.normcase(os.path.abspath(os.path.normpath(pasta_saida))) == \
+                os.path.normcase(os.path.abspath(os.path.normpath(pasta))):
+            messagebox.showerror(
+                "Erro", "A pasta de saída precisa ser diferente da pasta de origem, "
+                        "para não sobrescrever os protocolos originais.")
+            return
+        if not destino:
+            messagebox.showerror("Erro", "Escolha onde salvar a planilha.")
+            return
+        if os.path.isfile(destino) and not messagebox.askyesno(
+            "Substituir planilha",
+            f"Este arquivo já existe e será substituído:\n\n{destino}\n\nContinuar?"
+        ):
+            return
+
+        tarifa = self._pedir_tarifa()
+        if tarifa is None:
+            return
+
+        self.botao_protocolos.configure(state="disabled")
+        self.label_status_protocolos.configure(text="Lendo os protocolos...")
+
+        thread = threading.Thread(
+            target=self._processar_protocolos_em_thread,
+            args=(pasta, pasta_saida, destino, tarifa), daemon=True)
+        thread.start()
+
+    def _ler_texto_protocolo(self, caminho, dpi):
+        """Texto nativo se houver; senão o documento inteiro pelo leitor de
+        escaneados (winocr, com RapidOCR de reserva se estiver instalado).
+        Todas as páginas — parar na 2ª perderia unidades.
+
+        Devolve (texto, usou_leitor_escaneado): o segundo valor diz se foi
+        preciso recorrer ao leitor de escaneados, para o chamador só tentar
+        de novo em qualidade maior quando a leitura já não era confiável
+        (texto nativo não deveria virar uma segunda tentativa por OCR)."""
+        texto = extrair_texto_pdf(caminho)
+        if len(texto.strip()) >= LIMITE_TEXTO_MINIMO:
+            return texto, False
+        return extrair_texto_escaneado(caminho, dpi=dpi), True
+
+    def _processar_protocolos_em_thread(self, pasta, pasta_saida, destino, tarifa):
+        arquivos = sorted(f for f in os.listdir(pasta) if f.lower().endswith(".pdf"))
+        total = len(arquivos)
+        self.after(0, lambda: self.barra_protocolos.configure(maximum=total, value=0))
+
+        config = self.montar_config_atual()
+        codigos = _codigos_do_cadastro(self.cadastro)
+
+        linhas = []
+        carimbados = 0
+        pendentes = 0
+        ignorados = 0
+        falhas_carimbo = 0
+
+        for indice, nome in enumerate(arquivos, 1):
+            caminho = os.path.join(pasta, nome)
+            self.after(0, lambda i=indice, n=nome:
+                       self.label_status_protocolos.configure(
+                           text=f"Lendo {i} de {total}: {n}"))
+
+            dados = None
+            unidades = None
+            observacao = ""
+            #  Só fica True quando dá pra concluir, com segurança, que o
+            #  arquivo de fato NÃO é um protocolo dos Correios (texto nativo,
+            #  sem o marcador) — é o único caso que deve contar como
+            #  "ignorado" no resumo. "Não foi possível ler" e erro de leitura
+            #  ficam False aqui e caem no bucket de pendência lá embaixo: são
+            #  cobranças que ficaram de fora do lote, não documentos alheios.
+            nao_e_protocolo = False
+            try:
+                dpi = QUALIDADE_LEITURA_PROTOCOLO
+                texto, usou_leitor_escaneado = self._ler_texto_protocolo(caminho, dpi)
+                dados = extrair_dados_protocolo_correio(texto)
+
+                #  Teto de UMA re-tentativa por arquivo, some com a que já
+                #  existia para a contagem divergente — nunca duas re-leituras
+                #  no mesmo arquivo. `ja_tentou_de_novo` é o que garante isso:
+                #  se o marcador do protocolo já não foi achado na 1ª leitura
+                #  e a 2ª (qualidade maior) também não achar, a checagem de
+                #  contagem abaixo não tenta uma 3ª leitura.
+                ja_tentou_de_novo = False
+                if dados is None and usou_leitor_escaneado:
+                    #  Sem o marcador do protocolo não dá para saber se é
+                    #  porque o documento não é um protocolo dos Correios ou
+                    #  porque a leitura na qualidade "Rápida" simplesmente não
+                    #  pegou o texto — só texto nativo (não veio do leitor de
+                    #  escaneados) sustenta a conclusão "não é um protocolo"
+                    #  sem re-tentar.
+                    dpi_maior = proximo_dpi_maior(dpi)
+                    if dpi_maior and dpi_maior != dpi:
+                        ja_tentou_de_novo = True
+                        try:
+                            texto_maior = extrair_texto_escaneado(caminho, dpi=dpi_maior)
+                            dados = extrair_dados_protocolo_correio(texto_maior)
+                        except Exception:
+                            #  A re-tentativa falhou — dados continua None,
+                            #  e a observação abaixo reflete "não foi possível
+                            #  ler", não "não é um protocolo".
+                            pass
+
+                if dados is None:
+                    if usou_leitor_escaneado:
+                        observacao = "Não foi possível ler o documento"
+                    else:
+                        observacao = "Não é um protocolo dos Correios"
+                        nao_e_protocolo = True
+                else:
+                    aceito, motivo = conferir_contagem_protocolo(dados)
+                    if not aceito and usou_leitor_escaneado and not ja_tentou_de_novo:
+                        #  Uma re-tentativa em qualidade maior, como já se faz
+                        #  quando o CNPJ sai com checksum inválido — só faz
+                        #  sentido quando a leitura original já veio do leitor
+                        #  de escaneados; texto nativo não confere de novo por
+                        #  esse caminho, e uma falha aqui não pode apagar o
+                        #  motivo original (é a informação que o funcionário
+                        #  usa pra conferir o papel).
+                        dpi_maior = proximo_dpi_maior(dpi)
+                        if dpi_maior and dpi_maior != dpi:
+                            try:
+                                texto_maior = extrair_texto_escaneado(caminho, dpi=dpi_maior)
+                                novos = extrair_dados_protocolo_correio(texto_maior)
+                                if novos:
+                                    aceito_novo, motivo_novo = conferir_contagem_protocolo(novos)
+                                    #  Só adota a 2ª leitura quando ela ACEITA a
+                                    #  contagem — se a 2ª leitura vier pior (ex:
+                                    #  embaralhou o cabeçalho e perdeu o
+                                    #  "Listando"), manter a 1ª leitura preserva
+                                    #  o código e o motivo que o funcionário usa
+                                    #  pra conferir o papel.
+                                    if aceito_novo:
+                                        dados, aceito, motivo = novos, aceito_novo, motivo_novo
+                            except Exception:
+                                #  A re-tentativa falhou (ex.: leitor de
+                                #  escaneados indisponível) — mantém o motivo
+                                #  já apurado pela 1ª conferência.
+                                pass
+                    if aceito:
+                        unidades = dados["total_impresso"]
+                    else:
+                        observacao = motivo
+            except Exception as e:
+                if isinstance(e, RuntimeError) and "leitor de documentos escaneados" in str(e):
+                    #  Mensagem técnica de logica.py, não tocada — aqui só se
+                    #  traduz pra linguagem de leigo antes de ir pra planilha.
+                    observacao = "Não foi possível ler protocolos escaneados nesta máquina."
+                else:
+                    observacao = f"Erro ao ler: {e}"
+
+            if unidades is not None:
+                try:
+                    self._carimbar_protocolo(caminho, pasta_saida, nome, dados,
+                                             unidades, tarifa, config, codigos)
+                    carimbados += 1
+                except Exception as e:
+                    observacao = f"Erro ao carimbar: {e}"
+                    falhas_carimbo += 1
+            elif nao_e_protocolo:
+                ignorados += 1
+            else:
+                #  Cobre tanto "contagem a conferir" (dados veio, mas a
+                #  conferência recusou) quanto "não foi possível ler"/erro de
+                #  leitura (dados ficou None sem ser por não-ser-protocolo) —
+                #  as duas são cobranças que ficaram de fora do lote, mesma
+                #  pendência sob a ótica de quem vai olhar o resumo.
+                pendentes += 1
+
+            linhas.append(linha_planilha_protocolo(
+                nome, dados, self.cadastro, tarifa, unidades, observacao))
+            self.after(0, lambda v=indice: self.barra_protocolos.configure(value=v))
+
+        try:
+            salvar_planilha_protocolo(destino, linhas)
+        except Exception as e:
+            self.after(0, lambda: self.label_status_protocolos.configure(
+                text="Não foi possível salvar a planilha."))
+            self.after(0, self._atualizar_botao_protocolos)
+            self.after(0, lambda: messagebox.showerror(
+                "Erro ao salvar",
+                f"Não foi possível gravar a planilha:\n{e}\n\n"
+                "Se ela estiver aberta no Excel, feche e tente de novo."))
+            return
+
+        #  A planilha guarda float (é o que o Excel soma), mas o total do
+        #  resumo volta para Decimal antes de somar: em lote grande, somar
+        #  float acumula erro de centavo, e aqui o número é dinheiro.
+        indice_coluna_valor = [c[0] for c in COLUNAS_PROTOCOLO].index("Valor")
+        total_valor = sum(
+            (Decimal(str(l[indice_coluna_valor])) for l in linhas
+             if isinstance(l[indice_coluna_valor], float)),
+            Decimal("0.00"),
+        )
+        #  O valor é devido pela entrega, não pelo carimbo ter dado certo —
+        #  então o total cobra também o(s) protocolo(s) que falharam ao
+        #  carimbar (ver falhas_carimbo abaixo). O texto do resumo precisa
+        #  deixar isso explícito, sem ambiguidade, ou parece que o total só
+        #  cobre os "carimbados".
+        resumo = f"{carimbados} protocolo(s) carimbado(s) · {formatar_reais(total_valor)} no total"
+        if falhas_carimbo:
+            plural = "não carimbado" if falhas_carimbo == 1 else "não carimbados"
+            resumo += (f" (inclui {falhas_carimbo} {plural} — "
+                       "a cobrança vale mesmo sem o carimbo)")
+        if pendentes:
+            resumo += f" · {pendentes} pendente(s) (não lido(s) ou contagem a conferir)"
+        if ignorados:
+            resumo += f" · {ignorados} ignorado(s) (não é protocolo dos Correios)"
+
+        self.after(0, lambda: self.label_status_protocolos.configure(text=resumo))
+        self.after(0, self._atualizar_botao_protocolos)
+        self.after(0, lambda: self._concluir_extracao(destino, resumo))
+
+    def _carimbar_protocolo(self, caminho, pasta_saida, nome, dados, unidades,
+                            tarifa, config, codigos):
+        """
+        Dois carimbos num passe só: o lateral rotacionado com o código (igual
+        ao da aba 1, para a IA do Superlógica continuar lendo) e o valor no
+        topo direito. Código fora do cadastro carimba só o valor — o valor não
+        depende do cadastro, e perder a cobrança por isso seria pior.
+        """
+        valor = valor_protocolo(unidades, tarifa)
+        texto_valor = montar_texto_valor_protocolo(unidades, tarifa, valor)
+
+        cnpj = codigos.get(dados.get("codigo") or "")
+        registro = self.cadastro.get(cnpj) if cnpj else None
+
+        #  Posição do carimbo de valor a partir do tamanho real da 1ª página
+        #  do PDF — uma margem fixa pra A4 cairia fora da folha em páginas
+        #  menores.
+        leitor_medida = PdfReader(caminho)
+        primeira_pagina = leitor_medida.pages[0]
+        largura_pagina = float(primeira_pagina.mediabox.width)
+        altura_pagina = float(primeira_pagina.mediabox.height)
+        leitor_medida.close()
+        x_valor = largura_pagina - MARGEM_VALOR_PROTOCOLO
+        y_valor = altura_pagina - MARGEM_VALOR_PROTOCOLO
+
+        config_carimbo = dict(config)
+        config_carimbo["angulo"] = 90
+        if registro:
+            texto_lateral = montar_texto_protocolo_correio(
+                dados["codigo"], registro["nome"], cnpj)
+        else:
+            #  Sem cadastro não há nome nem CNPJ para a linha lateral; o
+            #  carimbo principal vira o próprio valor, no topo direito.
+            texto_lateral = texto_valor
+            config_carimbo["angulo"] = 0
+            config_carimbo["centralizado"] = False
+            config_carimbo["alinhamento"] = "direita"
+            config_carimbo["x"] = x_valor
+            config_carimbo["y"] = y_valor
+
+        extras = []
+        if registro:
+            extras.append({
+                "texto": texto_valor,
+                "fonte": config["fonte"],
+                "tamanho": config["tamanho"],
+                "cor": config["cor"],
+                "x": x_valor,
+                "y": y_valor,
+                "centralizado": False,
+                "angulo": 0,
+                "alinhamento": "direita",
+            })
+
+        caminho_saida = os.path.join(pasta_saida, nome)
+        processar_pdf(caminho, caminho_saida, texto_lateral, config_carimbo, extras)
 
     def _montar_aba_logs(self, parent):
         fonte = familia_fonte()

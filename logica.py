@@ -17,6 +17,7 @@ import os
 import re
 import sys
 import unicodedata
+from decimal import Decimal, ROUND_HALF_UP
 from difflib import SequenceMatcher
 
 from pypdf import PdfReader, PdfWriter
@@ -41,6 +42,18 @@ except ImportError:
     WINOCR_DISPONIVEL = False
 
 OCR_DISPONIVEL = FITZ_DISPONIVEL and WINOCR_DISPONIVEL
+
+#  Reserva opcional: modelos PP-OCR (do PaddleOCR) rodando em ONNX. NÃO entra
+#  no requirements.txt nem no .spec — quem tiver instalado na própria máquina
+#  ganha a reserva, e o CODIFICADOR.zip continua do tamanho de hoje.
+try:
+    from rapidocr import RapidOCR
+    RAPIDOCR_DISPONIVEL = True
+except Exception:
+    RapidOCR = None
+    RAPIDOCR_DISPONIVEL = False
+
+_rapidocr_motor = None
 
 
 # ============================================================
@@ -311,10 +324,20 @@ def cnpj_valido(cnpj_normalizado):
 LIMITE_TEXTO_MINIMO = 30  # abaixo disso, consideramos que o PDF não tem texto legível
 
 
+def paginas_para_ocr(total_paginas, max_paginas):
+    """Quantas páginas o OCR deve ler. `max_paginas=None` significa todas —
+    usado pelos protocolos dos Correios, onde parar na 2ª página perderia
+    unidades em silêncio."""
+    if max_paginas is None:
+        return total_paginas
+    return min(total_paginas, max(0, max_paginas))
+
+
 def extrair_texto_ocr(caminho, max_paginas=2, dpi=300):
     """
-    Renderiza as primeiras páginas do PDF como imagem e roda OCR usando
-    o motor nativo do Windows (winocr) — sem programas externos instalados.
+    Renderiza páginas do PDF como imagem e roda OCR usando o motor nativo do
+    Windows (winocr) — sem programas externos instalados. Lê no máximo
+    `max_paginas` páginas; `max_paginas=None` lê o documento inteiro.
     Tenta português (pt-BR) primeiro; se não disponível, usa inglês (en-US).
     """
     if not OCR_DISPONIVEL:
@@ -323,8 +346,9 @@ def extrair_texto_ocr(caminho, max_paginas=2, dpi=300):
     textos = []
     doc = fitz.open(caminho)
     try:
+        limite = paginas_para_ocr(doc.page_count, max_paginas)
         for i, pagina in enumerate(doc):
-            if i >= max_paginas:
+            if i >= limite:
                 break
             pix = pagina.get_pixmap(dpi=dpi)
             img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
@@ -346,6 +370,75 @@ def extrair_texto_ocr(caminho, max_paginas=2, dpi=300):
     finally:
         doc.close()
     return "\n".join(textos)
+
+
+def motor_de_ocr(tem_winocr=None, tem_rapidocr=None):
+    """
+    Qual motor usar: "winocr", "rapidocr" ou None se nenhum existir. O winocr
+    sempre ganha quando está disponível — a reserva cobre a máquina onde o
+    motor nativo não existe, não a leitura que deu resultado ruim.
+
+    Os parâmetros existem para o teste; em produção ficam None e a função
+    consulta as flags do módulo.
+    """
+    if tem_winocr is None:
+        tem_winocr = OCR_DISPONIVEL
+    if tem_rapidocr is None:
+        tem_rapidocr = RAPIDOCR_DISPONIVEL
+    if tem_winocr:
+        return "winocr"
+    if tem_rapidocr:
+        return "rapidocr"
+    return None
+
+
+def extrair_texto_rapidocr(caminho, dpi=300):
+    """
+    OCR pelos modelos PP-OCR em ONNX. Devolve um bloco de texto por região
+    detectada, separados por quebra de linha — é a estrutura real da tabela
+    do protocolo, e as regexes de contagem funcionam igual.
+    """
+    global _rapidocr_motor
+    if not RAPIDOCR_DISPONIVEL:
+        raise RuntimeError("RapidOCR não disponível.")
+
+    import numpy as np
+    if _rapidocr_motor is None:
+        _rapidocr_motor = RapidOCR()   # carregar os modelos é caro; reaproveita
+
+    pedacos = []
+    doc = fitz.open(caminho)
+    try:
+        for pagina in doc:
+            pix = pagina.get_pixmap(dpi=dpi)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            resultado = _rapidocr_motor(np.array(img))
+            textos = getattr(resultado, "txts", None)
+            if textos is None:                      # API antiga: (lista, tempo)
+                textos = [linha[1] for linha in (resultado[0] or [])]
+            pedacos.extend(textos or [])
+    finally:
+        doc.close()
+    return "\n".join(pedacos)
+
+
+def extrair_texto_escaneado(caminho, dpi=300):
+    """
+    Texto de um PDF escaneado, com o winocr na frente e o RapidOCR de reserva.
+    A reserva só entra quando o winocr não existe ou quebra — uma leitura que
+    funcionou nunca é substituída.
+    """
+    if OCR_DISPONIVEL:
+        try:
+            return extrair_texto_ocr(caminho, max_paginas=None, dpi=dpi)
+        except Exception:
+            if not RAPIDOCR_DISPONIVEL:
+                raise
+    if RAPIDOCR_DISPONIVEL:
+        return extrair_texto_rapidocr(caminho, dpi=dpi)
+    raise RuntimeError(
+        "Nenhum leitor de documentos escaneados disponível. "
+        "Instale: pip install pymupdf winocr")
 
 
 def extrair_texto_ocr_regiao(caminho, retangulo, dpi=300):
@@ -525,6 +618,96 @@ def montar_texto_protocolo_correio(codigo, nome, cnpj_normalizado):
     """Formata a linha única carimbada nos protocolos dos Correios:
     "10005 VILLARS - 07.945.453/0001-30"."""
     return f"{codigo} {nome} - {formatar_cnpj(cnpj_normalizado)}"
+
+
+RE_LISTANDO_PROTOCOLO = re.compile(r"Listando\s+(\d+)\s+unidade", re.IGNORECASE)
+#  O winocr devolve a página numa linha só, então nada de (?m)^ aqui. O
+#  (?:\s*[-–—])+ cobre o traço duplicado que o OCR produz às vezes
+#  ("702 - - Enny Marins de Lima", visto no protocolo real do ASTORIA).
+RE_UNIDADE_PROTOCOLO = re.compile(r"\b\d{1,4}(?:\s*[-–—])+\s*[A-Za-zÀ-ÿ]")
+RE_ENTREGA_PROTOCOLO = re.compile(r"\bCorreio\b", re.IGNORECASE)
+RE_CABECALHO_PROTOCOLO = re.compile(
+    r"([^()\n]{0,60}?)\s*\(\d+\)\s*" + re.escape(MARCADOR_PROTOCOLO_CORREIO),
+    re.IGNORECASE,
+)
+
+
+def extrair_dados_protocolo_correio(texto):
+    """
+    Lê um Protocolo de Recebimento de Documento e devolve o que é preciso
+    para cobrar por ele. `None` se o documento não for um protocolo.
+
+    Três contagens independentes porque cada uma falha de um jeito: o
+    "Listando N unidades" impresso é a fonte do valor, e as outras duas
+    servem para confirmá-lo (ver conferir_contagem_protocolo).
+    """
+    texto = texto or ""
+    if MARCADOR_PROTOCOLO_CORREIO.lower() not in texto.lower():
+        return None
+
+    cabecalho = RE_CABECALHO_PROTOCOLO.search(texto)
+    listando = RE_LISTANDO_PROTOCOLO.search(texto)
+
+    #  A contagem de linhas olha só o que vem ANTES do "Listando": depois
+    #  dele só há rodapé (CEP, telefone) e números que o OCR inventa lendo
+    #  o valor manuscrito — nada disso é unidade.
+    corpo = texto[:listando.start()] if listando else texto
+
+    return {
+        "codigo": extrair_codigo_protocolo_correio(texto),
+        "condominio": cabecalho.group(1).strip() if cabecalho else "",
+        "total_impresso": int(listando.group(1)) if listando else None,
+        "linhas_contadas": len(RE_UNIDADE_PROTOCOLO.findall(corpo)),
+        "entregas_contadas": len(RE_ENTREGA_PROTOCOLO.findall(texto)),
+    }
+
+
+def conferir_contagem_protocolo(dados):
+    """
+    Decide se dá para confiar na contagem. Devolve (aceito, motivo).
+
+    O total impresso manda; basta que UM dos dois conferidores concorde com
+    ele. Sem o total impresso não se aceita nada, mesmo que os conferidores
+    concordem entre si — contar linhas por OCR sozinho é chute com cara de
+    precisão, e o resultado aqui vira dinheiro cobrado.
+    """
+    total = dados.get("total_impresso")
+    if total is None:
+        return False, 'Não foi possível ler o total impresso ("Listando N unidades")'
+
+    linhas = dados.get("linhas_contadas", 0)
+    entregas = dados.get("entregas_contadas", 0)
+    if total == linhas or total == entregas:
+        return True, ""
+    return False, f"Listando {total}, mas foram contadas {linhas} e {entregas} unidades"
+
+
+# ============================================================
+#  VALOR DO PROTOCOLO (unidades × tarifa) E TEXTOS DO CARIMBO
+# ============================================================
+
+def valor_protocolo(unidades, tarifa):
+    """
+    unidades × tarifa em Decimal, duas casas. Dinheiro não passa por float:
+    a tarifa vira Decimal a partir da string para não herdar o erro de
+    representação binária (3.85 float não é exatamente 3,85).
+    """
+    tarifa_decimal = tarifa if isinstance(tarifa, Decimal) else Decimal(str(tarifa))
+    bruto = Decimal(int(unidades)) * tarifa_decimal
+    return bruto.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def formatar_reais(valor):
+    """1234.5 -> "R$ 1.234,50" (formato brasileiro)."""
+    texto = f"{Decimal(str(valor)):,.2f}"
+    return "R$ " + texto.replace(",", "\x00").replace(".", ",").replace("\x00", ".")
+
+
+def montar_texto_valor_protocolo(unidades, tarifa, valor):
+    """Linha carimbada no topo direito: "15 un × R$ 3,85 = R$ 57,75".
+    Mostra a conta, não só o resultado, para conferir no papel sem
+    precisar refazer a multiplicação."""
+    return f"{unidades} un × {formatar_reais(tarifa)} = {formatar_reais(valor)}"
 
 
 # ============================================================
@@ -728,14 +911,21 @@ def desempatar_por_cadastro(candidatos, cadastro):
 MARGEM_LATERAL_ROTACIONADO = 20  # pontos da borda direita, carimbo do protocolo dos Correios
 
 
-def criar_overlay(largura, altura, texto, fonte, tamanho, cor, x, y, centralizado, angulo=0):
+def criar_overlay(largura, altura, texto, fonte, tamanho, cor, x, y, centralizado,
+                  angulo=0, alinhamento="esquerda"):
     """Desenha `texto` no PDF. Se tiver quebras de linha ("\n"), cada linha é
     desenhada empilhada, a primeira em cima e as seguintes abaixo dela.
 
     `angulo=90` é um modo especial (protocolo dos Correios, ver
-    montar_texto_protocolo_correio): ignora x/y/centralizado e desenha uma
-    linha única rotacionada 90° (sentido anti-horário — lê de baixo pra
-    cima), colada perto da borda direita e verticalmente centralizada."""
+    montar_texto_protocolo_correio): ignora x/y/centralizado/alinhamento e
+    desenha uma linha única rotacionada 90° (sentido anti-horário — lê de
+    baixo pra cima), colada perto da borda direita e verticalmente
+    centralizada.
+
+    `alinhamento` ("esquerda", "centro", "direita") vale para o modo normal:
+    "direita" faz o texto TERMINAR em x, usado pelo carimbo do valor no topo
+    direito do protocolo. `centralizado=True` continua equivalendo a
+    "centro", para não quebrar quem já chamava a função."""
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=(largura, altura))
     c.setFont(fonte, tamanho)
@@ -754,9 +944,12 @@ def criar_overlay(largura, altura, texto, fonte, tamanho, cor, x, y, centralizad
         altura_linha = tamanho * 1.2
         for i, linha in enumerate(texto.split("\n")):
             x_linha = x
-            if centralizado:
+            if centralizado or alinhamento == "centro":
                 largura_texto = c.stringWidth(linha, fonte, tamanho)
                 x_linha = (largura - largura_texto) / 2
+            elif alinhamento == "direita":
+                largura_texto = c.stringWidth(linha, fonte, tamanho)
+                x_linha = x - largura_texto
             c.drawString(x_linha, y - i * altura_linha, linha)
 
     c.save()
@@ -764,21 +957,43 @@ def criar_overlay(largura, altura, texto, fonte, tamanho, cor, x, y, centralizad
     return buffer
 
 
-def processar_pdf(caminho_entrada, caminho_saida, texto, config):
+def processar_pdf(caminho_entrada, caminho_saida, texto, config, carimbos_extras=None):
+    """
+    Carimba o PDF e grava a saída. `carimbos_extras` permite mais de um
+    carimbo por página num único passe de escrita — usado pelo protocolo dos
+    Correios, que leva o código na lateral e o valor no topo direito. Sem
+    ele, o comportamento é o de sempre: um carimbo só, vindo de `config`.
+    """
     reader = PdfReader(caminho_entrada)
     writer = PdfWriter()
     for pagina in reader.pages:
         largura = float(pagina.mediabox.width)
         altura = float(pagina.mediabox.height)
-        overlay_buffer = criar_overlay(
-            largura, altura, texto,
-            config["fonte"], config["tamanho"], config["cor"],
-            config["x"], config["y"], config["centralizado"],
-            config.get("angulo", 0),
-        )
-        overlay_page = PdfReader(overlay_buffer).pages[0]
-        pagina.merge_page(overlay_page)
+
+        carimbos = [{
+            "texto": texto,
+            "fonte": config["fonte"],
+            "tamanho": config["tamanho"],
+            "cor": config["cor"],
+            "x": config["x"],
+            "y": config["y"],
+            "centralizado": config["centralizado"],
+            "angulo": config.get("angulo", 0),
+            "alinhamento": config.get("alinhamento", "esquerda"),
+        }]
+        carimbos.extend(carimbos_extras or [])
+
+        for carimbo in carimbos:
+            overlay_buffer = criar_overlay(
+                largura, altura, carimbo["texto"],
+                carimbo["fonte"], carimbo["tamanho"], carimbo["cor"],
+                carimbo["x"], carimbo["y"], carimbo["centralizado"],
+                carimbo.get("angulo", 0), carimbo.get("alinhamento", "esquerda"),
+            )
+            pagina.merge_page(PdfReader(overlay_buffer).pages[0])
+
         writer.add_page(pagina)
+
     os.makedirs(os.path.dirname(caminho_saida), exist_ok=True)
     with open(caminho_saida, "wb") as f:
         writer.write(f)
@@ -1058,5 +1273,106 @@ def salvar_planilha_nfse(caminho, linhas):
     sheet.freeze_panes = "A2"
     ultima_coluna = sheet.cell(row=1, column=len(COLUNAS_NFSE)).column_letter
     sheet.auto_filter.ref = f"A1:{ultima_coluna}{sheet.max_row}"
+
+    wb.save(caminho)
+
+
+# ============================================================
+#  PLANILHA DOS PROTOCOLOS DOS CORREIOS
+# ============================================================
+
+COLUNAS_PROTOCOLO = [
+    ("Arquivo", 38, None),
+    ("Condomínio", 30, None),
+    ("Código", 10, None),
+    ("Unidades", 10, "0"),
+    ("Tarifa", 12, "R$ #,##0.00"),
+    ("Valor", 14, "R$ #,##0.00"),
+    ("Observação", 44, None),
+]
+
+
+def linha_planilha_protocolo(nome_arquivo, dados, cadastro, tarifa=None,
+                             unidades=None, observacao=""):
+    """
+    Monta a linha da planilha. O nome do condomínio vem do cadastro quando o
+    código está lá; senão fica o que o próprio documento traz no cabeçalho.
+
+    `unidades=None` é o caso pendente (contagem recusada) ou o de um arquivo
+    que nem é protocolo: Unidades, Tarifa e Valor saem VAZIOS, nunca 0 — 0
+    significaria "entregou zero unidades".
+    """
+    if dados is None:
+        return [nome_arquivo, "", "", None, None, None, observacao]
+
+    codigo = dados.get("codigo") or ""
+    registro = None
+    if codigo:
+        cnpj = _codigos_do_cadastro(cadastro).get(codigo)
+        registro = cadastro.get(cnpj) if cnpj else None
+
+    condominio = registro["nome"] if registro else dados.get("condominio", "")
+    if not registro:
+        #  Duas causas distintas: sem código não tem o que procurar no
+        #  cadastro (o documento não trouxe/o leitor não achou); com código
+        #  e sem bater no cadastro, o código foi lido mas não está
+        #  cadastrado. Concatena com uma observação já existente (ex.: motivo
+        #  de contagem recusada) em vez de sobrescrevê-la — um protocolo pode
+        #  estar pendente E sem código cadastrado ao mesmo tempo.
+        motivo_codigo = ("Código não identificado no documento" if not codigo
+                         else "Código não cadastrado")
+        observacao = f"{observacao}; {motivo_codigo}" if observacao else motivo_codigo
+
+    if unidades is None:
+        return [nome_arquivo, condominio, codigo, None, None, None, observacao]
+
+    valor = valor_protocolo(unidades, tarifa)
+    return [nome_arquivo, condominio, codigo, int(unidades),
+            float(tarifa), float(valor), observacao]
+
+
+def salvar_planilha_protocolo(caminho, linhas):
+    """
+    Grava a planilha dos protocolos com linha de TOTAL no rodapé. Os totais
+    são calculados aqui em Python (não como fórmula do Excel) para que o
+    arquivo já chegue com o número pronto, sem depender de o Excel abrir e
+    recalcular.
+    """
+    wb = Workbook()
+    sheet = wb.active
+    sheet.title = "Protocolos"
+
+    sheet.append([c[0] for c in COLUNAS_PROTOCOLO])
+    for celula in sheet[1]:
+        celula.font = Font(bold=True)
+
+    for linha in linhas:
+        sheet.append(linha)
+
+    ultima_dados = sheet.max_row
+
+    for indice, (_, largura, formato) in enumerate(COLUNAS_PROTOCOLO, start=1):
+        letra = sheet.cell(row=1, column=indice).column_letter
+        sheet.column_dimensions[letra].width = largura
+        if formato:
+            for numero_linha in range(2, ultima_dados + 1):
+                sheet.cell(row=numero_linha, column=indice).number_format = formato
+
+    sheet.freeze_panes = "A2"
+    ultima_coluna = sheet.cell(row=1, column=len(COLUNAS_PROTOCOLO)).column_letter
+    sheet.auto_filter.ref = f"A1:{ultima_coluna}{ultima_dados}"
+
+    #  Total depois do autofiltro, para não virar uma linha filtrável
+    linha_total = ultima_dados + 1
+    celula_rotulo = sheet.cell(row=linha_total, column=1, value="TOTAL")
+    celula_rotulo.font = Font(bold=True)
+    for coluna in (4, 6):   # Unidades e Valor
+        total = sum(
+            linha[coluna - 1] for linha in linhas
+            if isinstance(linha[coluna - 1], (int, float))
+        )
+        celula = sheet.cell(row=linha_total, column=coluna, value=round(total, 2))
+        celula.font = Font(bold=True)
+        celula.number_format = COLUNAS_PROTOCOLO[coluna - 1][2]
 
     wb.save(caminho)
