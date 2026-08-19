@@ -750,11 +750,17 @@ def formatar_reais(valor):
 LIMITE_VALOR_DIGITADO = Decimal("1000000")  # teto de sanidade para um lote
 
 
-def converter_valor_digitado(texto):
+def converter_valor_digitado(texto, exemplo="300,30"):
     """
     Lê um valor em reais digitado por uma pessoa e devolve `(valor, mensagem)`:
     `(Decimal, "")` quando válido, `(None, aviso)` quando não. O aviso vai
     direto para a tela, então é frase em português, sem jargão.
+
+    `exemplo`: número usado nos avisos genéricos ("Digite um número, como
+    ...") — a tarifa de protocolo e o valor manual de um protocolo têm
+    ordens de grandeza bem diferentes (3,85 vs. 300,30), então cada tela
+    passa o exemplo que faz sentido pra ela, em vez de um único exemplo
+    fixo que soa estranho no outro contexto.
 
     Aceita "300,30", "300.30", "1.234,56" e "R$ 57,75". Tolera espaço nas
     pontas e logo depois do "R$" (sobra de copiar/colar), mas espaço no meio
@@ -771,28 +777,38 @@ def converter_valor_digitado(texto):
     if bruto.startswith("R$"):
         bruto = bruto[2:].strip()
     if not bruto:
-        return None, "Digite um número, como 300,30."
+        return None, f"Digite um número, como {exemplo}."
     if " " in bruto:
-        return None, "Digite um número, como 300,30."
+        return None, f"Digite um número, como {exemplo}."
 
     #  Formato brasileiro: o ponto é separador de milhar e a vírgula é o
-    #  decimal. Sem vírgula, o ponto é tratado como decimal ("300.30").
-    if "," in bruto:
+    #  decimal. Sem vírgula, o ponto é tratado como decimal ("300.30"). Sem
+    #  vírgula NENHUMA, um ponto no meio é ambíguo — "1.234" tanto pode ser
+    #  mil duzentos e trinta e quatro (milhar) quanto um duzentos e trinta e
+    #  quatro (decimal) — guardado aqui pra dar um aviso melhor lá embaixo,
+    #  em vez do genérico "duas casas decimais" que sugeriria arredondar.
+    tinha_virgula = "," in bruto
+    ponto_ambiguo = not tinha_virgula and "." in bruto
+    if tinha_virgula:
         bruto = bruto.replace(".", "").replace(",", ".")
 
     try:
         valor = Decimal(bruto)
     except (InvalidOperation, ValueError):
-        return None, "Digite um número, como 300,30."
+        return None, f"Digite um número, como {exemplo}."
 
     if not valor.is_finite():
-        return None, "Digite um número, como 300,30."
+        return None, f"Digite um número, como {exemplo}."
     if valor <= 0:
         return None, "O valor precisa ser maior que zero."
     if valor > LIMITE_VALOR_DIGITADO:
         return None, "Esse valor parece alto demais. Confira o que foi digitado."
     if valor != valor.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP):
-        return None, "Use no máximo duas casas decimais, como 300,30."
+        if ponto_ambiguo:
+            return None, ('Não ficou claro se o ponto é separador de milhar ou '
+                           'de centavos. Use vírgula para os centavos — ex.: '
+                           '"1234,00" ou "1.234,00".')
+        return None, f"Use no máximo duas casas decimais, como {exemplo}."
 
     return valor, ""
 

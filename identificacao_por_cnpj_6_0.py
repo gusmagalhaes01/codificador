@@ -222,6 +222,12 @@ class App(ctk.CTk):
         self.pasta_protocolos_saida = tk.StringVar()
         self.arquivo_planilha_protocolos = tk.StringVar()
 
+        # Contexto do último lote de protocolos processado — alimenta o
+        # painel de resultado (resolução manual, botão "Abrir planilha").
+        # None até o 1º processamento da sessão; sempre lido com getattr/
+        # `.get()` por segurança, nunca indexado direto.
+        self._ctx_protocolos = None
+
         self._montar_interface()
         self._atualizar_tabela_cadastro()
         self._carregar_log_em_tela()
@@ -2332,12 +2338,16 @@ class App(ctk.CTk):
         try:
             salvar_planilha_nfse(destino, linhas)
         except Exception as e:
+            #  `erro=e` como argumento padrão: o `except ... as e` desvincula
+            #  `e` ao sair do bloco, e o `self.after` só executa a lambda bem
+            #  depois — sem o argumento padrão, ela veria "cannot access free
+            #  variable 'e'" em vez da mensagem amigável.
             self.after(0, lambda: self.label_status_extracao.configure(
                 text="Não foi possível salvar a planilha."))
             self.after(0, self._atualizar_botao_extrair)
-            self.after(0, lambda: messagebox.showerror(
+            self.after(0, lambda erro=e: messagebox.showerror(
                 "Erro ao salvar",
-                f"Não foi possível gravar a planilha:\n{e}\n\n"
+                f"Não foi possível gravar a planilha:\n{erro}\n\n"
                 "Se ela estiver aberta no Excel, feche e tente de novo."))
             return
 
@@ -2590,7 +2600,10 @@ class App(ctk.CTk):
         aviso.pack(padx=24, pady=(0, 8), anchor="w")
 
         def confirmar():
-            valor, mensagem = converter_valor_digitado(entrada.get())
+            #  Exemplo "3,85": a tarifa é por linha entregue, valor pequeno —
+            #  o mesmo exemplo do valor manual (300,30) pareceria sugerir uma
+            #  ordem de grandeza errada aqui.
+            valor, mensagem = converter_valor_digitado(entrada.get(), exemplo="3,85")
             if valor is None:
                 aviso.configure(text=mensagem)
                 return
@@ -2838,8 +2851,18 @@ class App(ctk.CTk):
                 #  pendência sob a ótica de quem vai olhar o resumo.
                 pendentes += 1
 
-            linhas.append(linha_planilha_protocolo(
-                nome, dados, self.cadastro, tarifa, unidades, observacao))
+            linha_protocolo = linha_planilha_protocolo(
+                nome, dados, self.cadastro, tarifa, unidades, observacao)
+            linhas.append(linha_protocolo)
+            #  Observação final, já com o que `linha_planilha_protocolo`
+            #  acrescenta por conta própria (ex.: "Código não cadastrado") —
+            #  é o texto que vai pra planilha, então é esse que o painel
+            #  precisa mostrar, não a `observacao` local de antes da chamada
+            #  (que fica sem esse acréscimo). Guardada à parte de `observacao`
+            #  porque a resolução manual (`_acao_informar_valor`) reusa a
+            #  RAW `observacao` como semente — repassar a já mesclada faria
+            #  "Código não cadastrado" aparecer em dobro na 2ª mesclagem.
+            observacao_planilha = linha_protocolo[-1]
 
             registro_cadastro = self.cadastro.get(
                 codigos.get((dados or {}).get("codigo") or "", "")) or None
@@ -2863,33 +2886,51 @@ class App(ctk.CTk):
                 #  converte pra float (é o Excel que soma float, não o
                 #  painel).
                 registro_painel["valor"] = valor_protocolo(unidades, tarifa)
-                #  `observacao` só está preenchida aqui quando o carimbo
-                #  falhou (unidades != None e sucesso não passa por essa
-                #  variável) — mesma observação que foi pra planilha, então
-                #  as duas telas concordam sobre o que aconteceu com o
-                #  arquivo.
-                if observacao:
-                    registro_painel["motivo"] = observacao
+                #  Mostra o MESMO motivo que foi pra planilha — inclui tanto
+                #  "Erro ao carimbar: ..." (quando `_carimbar_protocolo`
+                #  levantou exceção) quanto "Código não cadastrado" (quando o
+                #  carimbo lateral saiu sem código por falta de cadastro):
+                #  antes só o primeiro caso aparecia aqui, e uma linha
+                #  CALCULADOS podia parecer limpa quando na verdade saiu sem
+                #  o carimbo de identificação.
+                if observacao_planilha:
+                    registro_painel["motivo"] = observacao_planilha
+                #  `motivo_original` (sem o acréscimo de código) é o que
+                #  `_acao_informar_valor` usa como semente ao resolver essa
+                #  linha à mão mais tarde — repassar a já mesclada duplicaria
+                #  o "Código não cadastrado".
+                registro_painel["motivo_original"] = observacao
                 processados_painel.append(registro_painel)
             elif nao_e_protocolo:
-                ignorados_painel.append({"arquivo": nome, "motivo": observacao})
+                ignorados_painel.append({"arquivo": nome, "motivo": observacao_planilha})
             else:
-                registro_painel["motivo"] = observacao
+                registro_painel["motivo"] = observacao_planilha
+                registro_painel["motivo_original"] = observacao
                 pendentes_painel.append(registro_painel)
 
             self.after(0, lambda v=indice: self.barra_protocolos.configure(value=v))
 
+        planilha_salva = True
         try:
             salvar_planilha_protocolo(destino, linhas)
         except Exception as e:
-            self.after(0, lambda: self.label_status_protocolos.configure(
-                text="Não foi possível salvar a planilha."))
-            self.after(0, self._atualizar_botao_protocolos)
-            self.after(0, lambda: messagebox.showerror(
-                "Erro ao salvar",
-                f"Não foi possível gravar a planilha:\n{e}\n\n"
-                "Se ela estiver aberta no Excel, feche e tente de novo."))
-            return
+            #  Ao contrário da aba 2 (onde essa falha aborta o lote), aqui o
+            #  painel precisa abrir mesmo assim: as pendências já foram
+            #  apuradas e reprocessar o lote inteiro é caro (cada protocolo é
+            #  lido na melhor qualidade). O usuário resolve um pendente à
+            #  mão — o que já regrava a planilha inteira — ou reabre o
+            #  painel depois de fechar o Excel.
+            #  `erro=e` como argumento padrão: o `except ... as e` desvincula
+            #  `e` ao sair do bloco, e o `self.after` só executa a lambda bem
+            #  depois — sem o argumento padrão, ela mostraria "cannot access
+            #  free variable 'e'" em vez da mensagem amigável.
+            planilha_salva = False
+            self.after(0, lambda erro=e: messagebox.showwarning(
+                "Planilha não salva",
+                f"Não foi possível gravar a planilha:\n{erro}\n\n"
+                "Se ela estiver aberta no Excel, feche o arquivo. A lista de "
+                "protocolos não foi perdida — ela é regravada assim que você "
+                "resolver um pendente no painel a seguir."))
 
         #  A planilha guarda float (é o que o Excel soma), mas o total do
         #  resumo volta para Decimal antes de somar: em lote grande, somar
@@ -2914,6 +2955,8 @@ class App(ctk.CTk):
             resumo += f" · {pendentes} pendente(s) (não lido(s) ou contagem a conferir)"
         if ignorados:
             resumo += f" · {ignorados} ignorado(s) (não é protocolo dos Correios)"
+        if not planilha_salva:
+            resumo += " · planilha não salva — resolva um pendente para regravar"
 
         self.after(0, lambda: self.label_status_protocolos.configure(text=resumo))
         self.after(0, self._atualizar_botao_protocolos)
@@ -2924,6 +2967,14 @@ class App(ctk.CTk):
             "destino": destino,
             "codigos": codigos,
             "linhas": linhas,
+            #  Preferência de separar em lotes + o contador de arquivos já
+            #  carimbados neste processamento: a resolução manual de um
+            #  pendente (`_acao_informar_valor`) precisa continuar essa
+            #  mesma contagem para cair na subpasta "Lote NN" certa, em vez
+            #  de ir parar solta na raiz — ver `caminho_do_lote`.
+            "separar_em_lotes": separar_em_lotes,
+            "tamanho_lote": tamanho_lote,
+            "carimbados": carimbados,
         }
         resultado = {
             "total": total,
@@ -3173,9 +3224,20 @@ class App(ctk.CTk):
     def _acao_abrir_planilha_protocolos(self):
         """Abre a planilha de cobrança gerada por este lote (o entregável
         final do fluxo — sem isso o painel não teria nenhum jeito de chegar
-        até ela)."""
+        até ela). A gravação inicial pode ter falhado (ver `planilha_salva`
+        em `_processar_protocolos_em_thread`) — nesse caso o arquivo ainda
+        não existe, e `os.startfile` daria um erro técnico sem contexto; a
+        mensagem aqui explica o que fazer em vez disso."""
         destino = (self._ctx_protocolos or {}).get("destino")
         if not destino:
+            return
+        if not os.path.isfile(destino):
+            messagebox.showinfo(
+                "Planilha ainda não salva",
+                "A planilha não pôde ser gravada ainda (provavelmente estava "
+                "aberta no Excel). Feche o arquivo e resolva um pendente no "
+                "painel — isso regrava a planilha inteira.",
+                parent=self._janela_resultado)
             return
         try:
             os.startfile(destino)
@@ -3266,12 +3328,21 @@ class App(ctk.CTk):
         registro_dados = {"codigo": dados.get("codigo"),
                           "condominio": dados.get("condominio", "")}
 
+        #  Mesma pasta de lote que o processamento automático usaria para o
+        #  próximo arquivo carimbado — sem isso, o arquivo resolvido à mão
+        #  cai solto na raiz da saída, fora da subpasta "Lote NN" que quem
+        #  envia pro Superlógica está de fato mandando (ver caminho_do_lote).
+        pasta_destino = (caminho_do_lote(
+                             ctx["pasta_saida"], ctx.get("carimbados", 0),
+                             ctx.get("tamanho_lote", 0))
+                         if ctx.get("separar_em_lotes") else ctx["pasta_saida"])
+
         #  1. Carimba o PDF: código na lateral (se cadastrado) e valor no topo
         #     direito. Falhou aqui, nada mais acontece — não faz sentido marcar
         #     como resolvido um arquivo que não saiu carimbado.
         try:
             self._carimbar_protocolo(
-                dados["caminho"], ctx["pasta_saida"], dados["arquivo"],
+                dados["caminho"], pasta_destino, dados["arquivo"],
                 registro_dados, None, None, ctx["config"], ctx["codigos"],
                 valor_manual=valor)
         except Exception as e:
@@ -3280,21 +3351,41 @@ class App(ctk.CTk):
                 parent=self._janela_resultado)
             return
 
-        #  2. Atualiza a linha da planilha em memória
-        ctx["linhas"][dados["indice_linha"]] = linha_planilha_protocolo(
-            dados["arquivo"], registro_dados, self.cadastro, valor_manual=valor)
+        #  O contador só avança depois do carimbo ter dado certo — mesma
+        #  regra do laço automático ("carimbados" conta só quem foi
+        #  efetivamente carimbado), pra manter as próximas resoluções à mão
+        #  (e um eventual próximo processamento) caindo no lote certo.
+        ctx["carimbados"] = ctx.get("carimbados", 0) + 1
 
-        #  3. Move do painel de pendentes para os calculados
+        #  2. Atualiza a linha da planilha em memória. Passa o motivo
+        #     original (ex.: "Não foi possível ler o total impresso...") como
+        #     observação — `linha_planilha_protocolo` sabe concatenar com
+        #     "Valor informado manualmente", preservando o rastro de por que
+        #     a pendência existiu, em vez de apagá-lo.
+        linha_atualizada = linha_planilha_protocolo(
+            dados["arquivo"], registro_dados, self.cadastro,
+            observacao=dados.get("motivo_original", ""), valor_manual=valor)
+        ctx["linhas"][dados["indice_linha"]] = linha_atualizada
+
+        #  3. Move do painel de pendentes para os calculados. O motivo que
+        #     aparece aqui é o MESMO texto que acabou de ir para a planilha
+        #     (última coluna de `linha_atualizada`) — inclui, por exemplo,
+        #     "Código não cadastrado" quando for o caso, em vez de deixar a
+        #     linha do painel parecer resolvida sem ressalva nenhuma.
+        motivo_painel = linha_atualizada[-1]
         resultado = self._resultado_protocolos
         resultado["pendentes"] = [p for p in resultado["pendentes"] if p is not dados]
-        resultado["processados"].append({
+        registro_processado = {
             "arquivo": dados["arquivo"],
             "condominio": dados.get("condominio", ""),
             "unidades": None,
             #  Decimal, igual ao resto do painel — só a planilha converte
             #  para float na hora de gravar.
             "valor": valor,
-        })
+        }
+        if motivo_painel:
+            registro_processado["motivo"] = motivo_painel
+        resultado["processados"].append(registro_processado)
         resultado["total_valor"] = resultado.get("total_valor", Decimal("0.00")) + valor
 
         #  4. Regrava a planilha inteira. Se falhar (tipicamente porque está
