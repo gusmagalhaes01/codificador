@@ -2935,15 +2935,21 @@ class App(ctk.CTk):
         self.after(0, lambda: self.mostrar_resultado_protocolos(resultado))
 
     def _carimbar_protocolo(self, caminho, pasta_saida, nome, dados, unidades,
-                            tarifa, config, codigos):
+                            tarifa, config, codigos, valor_manual=None):
         """
         Dois carimbos num passe só: o lateral rotacionado com o código (igual
         ao da aba 1, para a IA do Superlógica continuar lendo) e o valor no
         topo direito. Código fora do cadastro carimba só o valor — o valor não
         depende do cadastro, e perder a cobrança por isso seria pior.
         """
-        valor = valor_protocolo(unidades, tarifa)
-        texto_valor = montar_texto_valor_protocolo(unidades, tarifa, valor)
+        if valor_manual is not None:
+            #  Valor digitado por uma pessoa: não há conta a mostrar, então o
+            #  carimbo traz só o número — que é o que se escreveria à caneta.
+            valor = valor_manual
+            texto_valor = formatar_reais(valor)
+        else:
+            valor = valor_protocolo(unidades, tarifa)
+            texto_valor = montar_texto_valor_protocolo(unidades, tarifa, valor)
 
         cnpj = codigos.get(dados.get("codigo") or "")
         registro = self.cadastro.get(cnpj) if cnpj else None
@@ -3178,14 +3184,134 @@ class App(ctk.CTk):
                 "Erro", f"Não foi possível abrir a planilha:\n{e}",
                 parent=self._janela_resultado)
 
+    def _pedir_valor_protocolo(self, dados):
+        """
+        Janelinha que pede o valor em reais de um protocolo pendente. Devolve
+        Decimal, ou None se o usuário cancelar. Mesma validação da tarifa,
+        pela mesma função.
+        """
+        tema = self.tema_atual
+        fonte = familia_fonte()
+        janela = ctk.CTkToplevel(self._janela_resultado)
+        janela.title("Informar valor")
+        janela.configure(fg_color=tema["fundo"])
+        janela.resizable(False, False)
+        janela.transient(self._janela_resultado)
+        janela.grab_set()
+
+        escolha = {"valor": None}
+
+        ctk.CTkLabel(janela, text="Qual o valor deste protocolo?",
+                     font=(fonte, 15), text_color=tema["texto"]).pack(
+            padx=24, pady=(24, 4), anchor="w")
+        ctk.CTkLabel(janela, text=dados.get("arquivo", ""), font=(fonte, 12),
+                     text_color=tema["texto_secundario"]).pack(padx=24, anchor="w")
+        ctk.CTkLabel(janela, text=dados.get("condominio", ""), font=(fonte, 12),
+                     text_color=tema["texto_terciario"]).pack(padx=24, anchor="w")
+
+        entrada = ctk.CTkEntry(janela, corner_radius=0, width=200,
+                               fg_color=tema["superficie"], border_width=1,
+                               border_color=tema["borda"], text_color=tema["texto"],
+                               font=(fonte, 14))
+        entrada.pack(padx=24, pady=(12, 4), anchor="w")
+        entrada.focus_set()
+
+        aviso = ctk.CTkLabel(janela, text="", font=(fonte, 12),
+                             text_color=tema["acento"])
+        aviso.pack(padx=24, pady=(0, 8), anchor="w")
+
+        def confirmar():
+            valor, mensagem = converter_valor_digitado(entrada.get())
+            if valor is None:
+                aviso.configure(text=mensagem)
+                return
+            escolha["valor"] = valor
+            janela.destroy()
+
+        botoes = ctk.CTkFrame(janela, corner_radius=0, fg_color=tema["fundo"])
+        botoes.pack(padx=24, pady=(0, 24), anchor="e")
+        ctk.CTkButton(botoes, text="Cancelar", corner_radius=0, width=100,
+                      fg_color="transparent", hover_color=tema["superficie"],
+                      border_width=1, border_color=tema["borda_forte"],
+                      text_color=tema["texto"], font=(fonte, 13),
+                      command=janela.destroy).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(botoes, text="Confirmar", corner_radius=0, width=120,
+                      fg_color=tema["acento"], hover_color=tema["acento_hover"],
+                      text_color=tema["sobre_acento"], border_width=0,
+                      font=(fonte, 13), command=confirmar).pack(side="left")
+
+        entrada.bind("<Return>", lambda _e: confirmar())
+        self.wait_window(janela)
+        return escolha["valor"]
+
     def _acao_informar_valor(self, dados):
-        #  Implementado na tarefa seguinte; o painel já liga o botão a ele para
-        #  que esta tarefa feche com a tela navegável.
+        """
+        Pede o valor em reais e resolve a pendência: carimba o PDF, move a
+        linha para os calculados e regrava a planilha.
+        """
         if not dados:
             return
-        messagebox.showinfo(
-            "Em construção", "Informar valor chega na próxima etapa.",
-            parent=self._janela_resultado)
+        ctx = getattr(self, "_ctx_protocolos", None)
+        if not ctx:
+            messagebox.showerror(
+                "Erro",
+                "O contexto do processamento se perdeu. Rode o lote de novo.",
+                parent=self._janela_resultado)
+            return
+
+        valor = self._pedir_valor_protocolo(dados)
+        if valor is None:
+            return
+
+        registro_dados = {"codigo": dados.get("codigo"),
+                          "condominio": dados.get("condominio", "")}
+
+        #  1. Carimba o PDF: código na lateral (se cadastrado) e valor no topo
+        #     direito. Falhou aqui, nada mais acontece — não faz sentido marcar
+        #     como resolvido um arquivo que não saiu carimbado.
+        try:
+            self._carimbar_protocolo(
+                dados["caminho"], ctx["pasta_saida"], dados["arquivo"],
+                registro_dados, None, None, ctx["config"], ctx["codigos"],
+                valor_manual=valor)
+        except Exception as e:
+            messagebox.showerror(
+                "Erro ao carimbar", f"Não foi possível carimbar o PDF:\n{e}",
+                parent=self._janela_resultado)
+            return
+
+        #  2. Atualiza a linha da planilha em memória
+        ctx["linhas"][dados["indice_linha"]] = linha_planilha_protocolo(
+            dados["arquivo"], registro_dados, self.cadastro, valor_manual=valor)
+
+        #  3. Move do painel de pendentes para os calculados
+        resultado = self._resultado_protocolos
+        resultado["pendentes"] = [p for p in resultado["pendentes"] if p is not dados]
+        resultado["processados"].append({
+            "arquivo": dados["arquivo"],
+            "condominio": dados.get("condominio", ""),
+            "unidades": None,
+            #  Decimal, igual ao resto do painel — só a planilha converte
+            #  para float na hora de gravar.
+            "valor": valor,
+        })
+        resultado["total_valor"] = resultado.get("total_valor", Decimal("0.00")) + valor
+
+        #  4. Regrava a planilha inteira. Se falhar (tipicamente porque está
+        #     aberta no Excel), o valor NÃO se perde: já está em ctx["linhas"]
+        #     e no resultado, e vai junto na próxima regravação.
+        try:
+            salvar_planilha_protocolo(ctx["destino"], ctx["linhas"])
+        except Exception as e:
+            messagebox.showwarning(
+                "Planilha não atualizada",
+                f"O valor foi carimbado no PDF, mas a planilha não pôde ser "
+                f"regravada:\n{e}\n\nSe ela estiver aberta no Excel, feche e "
+                f"informe o próximo valor — a planilha é regravada inteira a "
+                f"cada correção.",
+                parent=self._janela_resultado)
+
+        self.mostrar_resultado_protocolos(resultado)
 
     def _montar_aba_logs(self, parent):
         fonte = familia_fonte()
