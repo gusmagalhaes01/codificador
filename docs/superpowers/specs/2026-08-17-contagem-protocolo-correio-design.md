@@ -163,10 +163,18 @@ cara de precisão.
 `Decimal` internamente, `ROUND_HALF_UP`, duas casas. Dinheiro não passa por
 float; a conversão para float acontece só na escrita da planilha.
 
-### `montar_texto_valor_protocolo(unidades, tarifa, valor)`
+### O texto do carimbo de valor
 
-`"15 un × R$ 3,85 = R$ 57,75"`. Mostra a conta, não só o resultado, para que a
-conferência no papel não precise refazer a multiplicação.
+`"R$ 57,75"` — só o valor, montado com `formatar_reais`.
+
+**Revisto em 2026-08-18.** A primeira versão carimbava a conta inteira
+(`"15 un × R$ 3,85 = R$ 57,75"`), para que a conferência no papel não
+precisasse refazer a multiplicação. Isso foi desfeito: o Superlógica lê o
+carimbo, e uma linha com dois valores em reais o expõe a capturar a **tarifa**
+no lugar do total. Com um número só não há o que confundir — verificado no PDF
+carimbado, que passou a conter uma única ocorrência de "R$", sem a tarifa em
+lugar nenhum do texto extraível. A conta continua na planilha, nas colunas
+Unidades e Tarifa.
 
 ### `COLUNAS_PROTOCOLO`, `linha_planilha_protocolo`, `salvar_planilha_protocolo`
 
@@ -224,7 +232,7 @@ Dois por página, em **todas** as páginas, num único passe de escrita.
 nome, cnpj)` com `angulo=90`, idêntico à v6.9.0. Nada muda no que a IA do
 Superlógica já reconhece. Depende do cadastro, porque precisa de nome e CNPJ.
 
-**Topo direito (valor)** — `montar_texto_valor_protocolo(...)`,
+**Topo direito (valor)** — `formatar_reais(valor)`,
 `alinhamento="direita"`, recuado 28pt da borda direita e do topo. É o espaço
 em branco do documento; o rodapé foi descartado porque os protocolos de duas
 páginas têm conteúdo lá embaixo.

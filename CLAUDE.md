@@ -463,6 +463,15 @@ com tarifa de R$ 3,85 — total R$ 123,20. As fixtures de teste automatizado
 (`tests/test_protocolo_contagem.py`) são sintéticas, sem nome de morador,
 seguindo a mesma disciplina das fixtures de NFS-e.
 
+**O carimbo de valor traz só o número, nunca a conta (v6.13.1):** era
+`"12 un × R$ 3,85 = R$ 46,20"` e passou a ser `"R$ 46,20"`. O motivo não é
+estético — o Superlógica lê esse carimbo, e com dois valores em reais na mesma
+linha ele pode capturar a **tarifa** em vez do total. Depois da mudança o PDF
+carimbado tem uma única ocorrência de "R$" e a tarifa não aparece em nenhum
+lugar do texto extraível. Efeito colateral: o carimbo do valor calculado ficou
+idêntico ao do informado à mão, então a distinção entre os dois existe só na
+planilha (colunas Unidades e Tarifa preenchidas ou vazias, mais a observação).
+
 **Qualidade de leitura fixa, não herdada da predefinição:** a aba 3 lê sempre
 na melhor qualidade (`QUALIDADE_LEITURA_PROTOCOLO = 300`, em
 `identificacao_por_cnpj_6_0.py`), ignorando a que estiver escolhida na

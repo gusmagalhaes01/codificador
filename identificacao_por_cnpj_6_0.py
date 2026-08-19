@@ -73,7 +73,7 @@ from logica import (
     criar_overlay, processar_pdf, carregar_cadastro, salvar_cadastro,
     extrair_dados_nfse, linha_planilha_nfse, salvar_planilha_nfse,
     extrair_dados_protocolo_correio, conferir_contagem_protocolo,
-    valor_protocolo, montar_texto_valor_protocolo, formatar_reais,
+    valor_protocolo, formatar_reais,
     converter_valor_digitado,
     linha_planilha_protocolo, salvar_planilha_protocolo,
     extrair_texto_escaneado, COLUNAS_PROTOCOLO, resolver_protocolo_manual,
@@ -3009,14 +3009,14 @@ class App(ctk.CTk):
         topo direito. Código fora do cadastro carimba só o valor — o valor não
         depende do cadastro, e perder a cobrança por isso seria pior.
         """
-        if valor_manual is not None:
-            #  Valor digitado por uma pessoa: não há conta a mostrar, então o
-            #  carimbo traz só o número — que é o que se escreveria à caneta.
-            valor = valor_manual
-            texto_valor = formatar_reais(valor)
-        else:
-            valor = valor_protocolo(unidades, tarifa)
-            texto_valor = montar_texto_valor_protocolo(unidades, tarifa, valor)
+        valor = valor_manual if valor_manual is not None else valor_protocolo(unidades, tarifa)
+
+        #  O carimbo traz SÓ o valor, nunca a conta que o gerou. O Superlógica
+        #  lê esse carimbo, e uma linha como "15 un × R$ 3,85 = R$ 57,75" tem
+        #  dois valores em reais: ele pode capturar a tarifa no lugar do total.
+        #  Com um número só não há o que confundir. A conta continua na
+        #  planilha, nas colunas Unidades e Tarifa.
+        texto_valor = formatar_reais(valor)
 
         cnpj = codigos.get(dados.get("codigo") or "")
         registro = self.cadastro.get(cnpj) if cnpj else None

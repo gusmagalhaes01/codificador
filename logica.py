@@ -831,13 +831,6 @@ def converter_valor_digitado(texto, exemplo="300,30"):
     return valor, ""
 
 
-def montar_texto_valor_protocolo(unidades, tarifa, valor):
-    """Linha carimbada no topo direito: "15 un × R$ 3,85 = R$ 57,75".
-    Mostra a conta, não só o resultado, para conferir no papel sem
-    precisar refazer a multiplicação."""
-    return f"{unidades} un × {formatar_reais(tarifa)} = {formatar_reais(valor)}"
-
-
 # ============================================================
 #  MATCH POR NOME DE ARQUIVO (tentativa antes de abrir o PDF)
 # ============================================================
