@@ -772,6 +772,20 @@ def converter_valor_digitado(texto, exemplo="300,30"):
     quando alguém confere no papel. A regra é sobre o valor, não sobre a
     forma como foi digitado — zero à direita não acrescenta casa nenhuma,
     então "3,850" (que é exatamente 3,85) é aceito.
+
+    Recusa também o ponto ambíguo pelo FORMATO, antes de qualquer teste de
+    arredondamento — não dá pra confiar no quantize pra pegar esse caso:
+    "1.200" sem vírgula, interpretado como decimal, é `Decimal("1.200")`,
+    que arredonda pra 1,20 SEM sobrar casa nenhuma (o zero à direita some no
+    quantize), então passaria calado — quem digitou mil e duzentos reais
+    seria cobrado um real e vinte, o pior tipo de erro porque não dá aviso
+    nenhum. Por isso a regra é sobre a forma, não sobre o resultado do
+    arredondamento: ponto sem vírgula seguido de exatamente três dígitos é
+    separador de milhar mal digitado, não decimal — não importa se o
+    resultado arredondaria "certo" ou não. "300.30" (dois dígitos depois do
+    ponto) continua valendo como decimal, e qualquer valor com vírgula
+    (ex: "1.234,56") nunca é ambíguo, porque a vírgula já deixa claro qual é
+    o separador decimal.
     """
     bruto = (texto or "").strip()
     if bruto.startswith("R$"):
@@ -781,14 +795,22 @@ def converter_valor_digitado(texto, exemplo="300,30"):
     if " " in bruto:
         return None, f"Digite um número, como {exemplo}."
 
+    mensagem_ambiguo = (
+        'Não ficou claro se o ponto é separador de milhar ou de centavos. '
+        f'Use vírgula para os centavos — ex.: "{exemplo}".'
+    )
+
     #  Formato brasileiro: o ponto é separador de milhar e a vírgula é o
     #  decimal. Sem vírgula, o ponto é tratado como decimal ("300.30"). Sem
-    #  vírgula NENHUMA, um ponto no meio é ambíguo — "1.234" tanto pode ser
-    #  mil duzentos e trinta e quatro (milhar) quanto um duzentos e trinta e
-    #  quatro (decimal) — guardado aqui pra dar um aviso melhor lá embaixo,
-    #  em vez do genérico "duas casas decimais" que sugeriria arredondar.
+    #  vírgula NENHUMA, um ponto seguido de três dígitos é ambíguo — "1.200"
+    #  tanto pode ser mil e duzentos reais (milhar) quanto um real e vinte
+    #  (decimal) — e é recusado pelo formato, aqui, antes de qualquer
+    #  conversão pra Decimal.
     tinha_virgula = "," in bruto
-    ponto_ambiguo = not tinha_virgula and "." in bruto
+    if not tinha_virgula and "." in bruto:
+        ultimo_grupo = bruto.rsplit(".", 1)[-1]
+        if len(ultimo_grupo) == 3 and ultimo_grupo.isdigit():
+            return None, mensagem_ambiguo
     if tinha_virgula:
         bruto = bruto.replace(".", "").replace(",", ".")
 
@@ -804,10 +826,6 @@ def converter_valor_digitado(texto, exemplo="300,30"):
     if valor > LIMITE_VALOR_DIGITADO:
         return None, "Esse valor parece alto demais. Confira o que foi digitado."
     if valor != valor.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP):
-        if ponto_ambiguo:
-            return None, ('Não ficou claro se o ponto é separador de milhar ou '
-                           'de centavos. Use vírgula para os centavos — ex.: '
-                           '"1234,00" ou "1.234,00".')
         return None, f"Use no máximo duas casas decimais, como {exemplo}."
 
     return valor, ""

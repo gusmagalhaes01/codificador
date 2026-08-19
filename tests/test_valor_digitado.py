@@ -117,6 +117,40 @@ class TestConverterValorDigitado(unittest.TestCase):
             self.assertIsNone(valor, entrada)
             self.assertIn("duas casas", mensagem)
 
+    def test_recusa_ponto_ambiguo_de_milhar(self):
+        """Ponto sem vírgula seguido de três dígitos é separador de milhar
+        mal digitado, não decimal — mesmo quando o valor "arredondaria
+        certo". "1.200" é o caso mais perigoso: interpretado como decimal
+        vira Decimal("1.200"), que quantiza pra 1,20 sem sobrar casa
+        nenhuma (o zero à direita some), então passaria calado se a
+        checagem dependesse só do quantize — quem digitou mil e duzentos
+        reais seria cobrado um real e vinte, sem aviso nenhum."""
+        for entrada in ("1.200", "1.500", "1.234"):
+            valor, mensagem = app.converter_valor_digitado(entrada)
+            self.assertIsNone(valor, entrada)
+            self.assertIn("milhar", mensagem, entrada)
+
+    def test_aceita_ponto_nao_ambiguo(self):
+        """"300.30" (dois dígitos após o ponto) continua valendo como
+        decimal, e "1.234,56" continua valendo porque a vírgula já deixa
+        claro qual é o separador decimal — só o ponto sozinho seguido de
+        três dígitos é recusado."""
+        self.assertEqual(app.converter_valor_digitado("300.30")[0], Decimal("300.30"))
+        self.assertEqual(app.converter_valor_digitado("1.234,56")[0], Decimal("1234.56"))
+        self.assertEqual(app.converter_valor_digitado("3,85")[0], Decimal("3.85"))
+
+    def test_mensagem_de_ambiguidade_usa_o_exemplo_recebido(self):
+        """A função recebe um `exemplo` diferente por tela (tarifa: "3,85";
+        valor manual do protocolo: "300,30" por padrão) justamente para não
+        sugerir uma ordem de grandeza errada. A mensagem de ambiguidade
+        precisa usar esse mesmo parâmetro, não um valor fixo na casa do
+        milhar hardcoded no meio da função."""
+        _, mensagem_tarifa = app.converter_valor_digitado("1.200", exemplo="3,85")
+        self.assertIn("3,85", mensagem_tarifa)
+
+        _, mensagem_valor_manual = app.converter_valor_digitado("1.200", exemplo="300,30")
+        self.assertIn("300,30", mensagem_valor_manual)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2925,12 +2925,24 @@ class App(ctk.CTk):
             #  depois — sem o argumento padrão, ela mostraria "cannot access
             #  free variable 'e'" em vez da mensagem amigável.
             planilha_salva = False
-            self.after(0, lambda erro=e: messagebox.showwarning(
+            #  A frase final muda conforme existe ou não pendente pra
+            #  resolver — sem pendente nenhum (lote inteiro calculado com
+            #  sucesso), "resolva um pendente" seria uma instrução
+            #  impossível de seguir; o botão "Abrir planilha" do painel
+            #  tenta gravar de novo nesse caso (ver
+            #  `_acao_abrir_planilha_protocolos`).
+            if pendentes:
+                como_regravar = ("A lista de protocolos não foi perdida — ela é "
+                                  "regravada assim que você resolver um pendente "
+                                  "no painel a seguir.")
+            else:
+                como_regravar = ("A lista de protocolos não foi perdida — no "
+                                  "painel a seguir, use o botão \"Abrir planilha\" "
+                                  "para tentar gravar de novo.")
+            self.after(0, lambda erro=e, msg=como_regravar: messagebox.showwarning(
                 "Planilha não salva",
                 f"Não foi possível gravar a planilha:\n{erro}\n\n"
-                "Se ela estiver aberta no Excel, feche o arquivo. A lista de "
-                "protocolos não foi perdida — ela é regravada assim que você "
-                "resolver um pendente no painel a seguir."))
+                f"Se ela estiver aberta no Excel, feche o arquivo. {msg}"))
 
         #  A planilha guarda float (é o que o Excel soma), mas o total do
         #  resumo volta para Decimal antes de somar: em lote grande, somar
@@ -2956,7 +2968,11 @@ class App(ctk.CTk):
         if ignorados:
             resumo += f" · {ignorados} ignorado(s) (não é protocolo dos Correios)"
         if not planilha_salva:
-            resumo += " · planilha não salva — resolva um pendente para regravar"
+            if pendentes:
+                resumo += " · planilha não salva — resolva um pendente para regravar"
+            else:
+                resumo += (" · planilha não salva — use o botão \"Abrir planilha\" "
+                            "no painel para tentar gravar de novo")
 
         self.after(0, lambda: self.label_status_protocolos.configure(text=resumo))
         self.after(0, self._atualizar_botao_protocolos)
@@ -3226,19 +3242,28 @@ class App(ctk.CTk):
         final do fluxo — sem isso o painel não teria nenhum jeito de chegar
         até ela). A gravação inicial pode ter falhado (ver `planilha_salva`
         em `_processar_protocolos_em_thread`) — nesse caso o arquivo ainda
-        não existe, e `os.startfile` daria um erro técnico sem contexto; a
-        mensagem aqui explica o que fazer em vez disso."""
-        destino = (self._ctx_protocolos or {}).get("destino")
+        não existe. Antes, esse caso só instruía "resolva um pendente", o
+        que virava um beco sem saída quando o lote inteiro tinha sido
+        calculado com sucesso (nenhum pendente pra resolver) e só a
+        gravação tinha falhado: agora o próprio botão tenta gravar de novo
+        — todos os dados já estão em `_ctx_protocolos["linhas"]`, não
+        precisa reprocessar o lote (caro: cada protocolo é relido na
+        melhor qualidade)."""
+        ctx = self._ctx_protocolos or {}
+        destino = ctx.get("destino")
         if not destino:
             return
         if not os.path.isfile(destino):
-            messagebox.showinfo(
-                "Planilha ainda não salva",
-                "A planilha não pôde ser gravada ainda (provavelmente estava "
-                "aberta no Excel). Feche o arquivo e resolva um pendente no "
-                "painel — isso regrava a planilha inteira.",
-                parent=self._janela_resultado)
-            return
+            try:
+                salvar_planilha_protocolo(destino, ctx.get("linhas", []))
+            except Exception as e:
+                messagebox.showinfo(
+                    "Planilha ainda não salva",
+                    f"Não foi possível gravar a planilha agora:\n{e}\n\n"
+                    "Se ela estiver aberta no Excel, feche o arquivo e "
+                    "clique de novo neste botão.",
+                    parent=self._janela_resultado)
+                return
         try:
             os.startfile(destino)
         except Exception as e:
