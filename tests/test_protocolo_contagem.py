@@ -222,9 +222,13 @@ class TestValorProtocolo(unittest.TestCase):
         self.assertEqual(app.formatar_reais(Decimal("57.75")), "R$ 57,75")
         self.assertEqual(app.formatar_reais(Decimal("1234.50")), "R$ 1.234,50")
 
-    def test_texto_do_carimbo_mostra_a_conta(self):
-        texto = app.montar_texto_valor_protocolo(15, Decimal("3.85"), Decimal("57.75"))
-        self.assertEqual(texto, "15 un × R$ 3,85 = R$ 57,75")
+    def test_carimbo_traz_so_o_valor_sem_a_conta(self):
+        """O Superlógica lê o carimbo: com a tarifa e o total na mesma linha,
+        ele pode capturar a tarifa em vez do total. Um número só resolve."""
+        texto = app.formatar_reais(app.valor_protocolo(15, Decimal("3.85")))
+        self.assertEqual(texto, "R$ 57,75")
+        self.assertNotIn("un", texto)
+        self.assertEqual(texto.count("R$"), 1)
 
 
 class TestPaginasParaOcr(unittest.TestCase):

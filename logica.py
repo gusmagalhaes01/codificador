@@ -17,7 +17,7 @@ import os
 import re
 import sys
 import unicodedata
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, ROUND_HALF_UP, InvalidOperation
 from difflib import SequenceMatcher
 
 from pypdf import PdfReader, PdfWriter
@@ -747,11 +747,88 @@ def formatar_reais(valor):
     return "R$ " + texto.replace(",", "\x00").replace(".", ",").replace("\x00", ".")
 
 
-def montar_texto_valor_protocolo(unidades, tarifa, valor):
-    """Linha carimbada no topo direito: "15 un × R$ 3,85 = R$ 57,75".
-    Mostra a conta, não só o resultado, para conferir no papel sem
-    precisar refazer a multiplicação."""
-    return f"{unidades} un × {formatar_reais(tarifa)} = {formatar_reais(valor)}"
+LIMITE_VALOR_DIGITADO = Decimal("1000000")  # teto de sanidade para um lote
+
+
+def converter_valor_digitado(texto, exemplo="300,30"):
+    """
+    Lê um valor em reais digitado por uma pessoa e devolve `(valor, mensagem)`:
+    `(Decimal, "")` quando válido, `(None, aviso)` quando não. O aviso vai
+    direto para a tela, então é frase em português, sem jargão.
+
+    `exemplo`: número usado nos avisos genéricos ("Digite um número, como
+    ...") — a tarifa de protocolo e o valor manual de um protocolo têm
+    ordens de grandeza bem diferentes (3,85 vs. 300,30), então cada tela
+    passa o exemplo que faz sentido pra ela, em vez de um único exemplo
+    fixo que soa estranho no outro contexto.
+
+    Aceita "300,30", "300.30", "1.234,56" e "R$ 57,75". Tolera espaço nas
+    pontas e logo depois do "R$" (sobra de copiar/colar), mas espaço no meio
+    dos dígitos é recusado, não ignorado: "3 85" não pode virar 385 sem
+    aviso nenhum, cem vezes o valor pretendido.
+
+    Recusa valor com centavo fracionado (ex: "3,855"), pelo mesmo motivo que
+    a tarifa recusa: um valor assim produz carimbo e planilha que não fecham
+    quando alguém confere no papel. A regra é sobre o valor, não sobre a
+    forma como foi digitado — zero à direita não acrescenta casa nenhuma,
+    então "3,850" (que é exatamente 3,85) é aceito.
+
+    Recusa também o ponto ambíguo pelo FORMATO, antes de qualquer teste de
+    arredondamento — não dá pra confiar no quantize pra pegar esse caso:
+    "1.200" sem vírgula, interpretado como decimal, é `Decimal("1.200")`,
+    que arredonda pra 1,20 SEM sobrar casa nenhuma (o zero à direita some no
+    quantize), então passaria calado — quem digitou mil e duzentos reais
+    seria cobrado um real e vinte, o pior tipo de erro porque não dá aviso
+    nenhum. Por isso a regra é sobre a forma, não sobre o resultado do
+    arredondamento: ponto sem vírgula seguido de exatamente três dígitos é
+    separador de milhar mal digitado, não decimal — não importa se o
+    resultado arredondaria "certo" ou não. "300.30" (dois dígitos depois do
+    ponto) continua valendo como decimal, e qualquer valor com vírgula
+    (ex: "1.234,56") nunca é ambíguo, porque a vírgula já deixa claro qual é
+    o separador decimal.
+    """
+    bruto = (texto or "").strip()
+    if bruto.startswith("R$"):
+        bruto = bruto[2:].strip()
+    if not bruto:
+        return None, f"Digite um número, como {exemplo}."
+    if " " in bruto:
+        return None, f"Digite um número, como {exemplo}."
+
+    mensagem_ambiguo = (
+        'Não ficou claro se o ponto é separador de milhar ou de centavos. '
+        f'Use vírgula para os centavos — ex.: "{exemplo}".'
+    )
+
+    #  Formato brasileiro: o ponto é separador de milhar e a vírgula é o
+    #  decimal. Sem vírgula, o ponto é tratado como decimal ("300.30"). Sem
+    #  vírgula NENHUMA, um ponto seguido de três dígitos é ambíguo — "1.200"
+    #  tanto pode ser mil e duzentos reais (milhar) quanto um real e vinte
+    #  (decimal) — e é recusado pelo formato, aqui, antes de qualquer
+    #  conversão pra Decimal.
+    tinha_virgula = "," in bruto
+    if not tinha_virgula and "." in bruto:
+        ultimo_grupo = bruto.rsplit(".", 1)[-1]
+        if len(ultimo_grupo) == 3 and ultimo_grupo.isdigit():
+            return None, mensagem_ambiguo
+    if tinha_virgula:
+        bruto = bruto.replace(".", "").replace(",", ".")
+
+    try:
+        valor = Decimal(bruto)
+    except (InvalidOperation, ValueError):
+        return None, f"Digite um número, como {exemplo}."
+
+    if not valor.is_finite():
+        return None, f"Digite um número, como {exemplo}."
+    if valor <= 0:
+        return None, "O valor precisa ser maior que zero."
+    if valor > LIMITE_VALOR_DIGITADO:
+        return None, "Esse valor parece alto demais. Confira o que foi digitado."
+    if valor != valor.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP):
+        return None, f"Use no máximo duas casas decimais, como {exemplo}."
+
+    return valor, ""
 
 
 # ============================================================
@@ -1357,7 +1434,7 @@ COLUNAS_PROTOCOLO = [
 
 
 def linha_planilha_protocolo(nome_arquivo, dados, cadastro, tarifa=None,
-                             unidades=None, observacao=""):
+                             unidades=None, observacao="", valor_manual=None):
     """
     Monta a linha da planilha. O nome do condomínio vem do cadastro quando o
     código está lá; senão fica o que o próprio documento traz no cabeçalho.
@@ -1365,9 +1442,24 @@ def linha_planilha_protocolo(nome_arquivo, dados, cadastro, tarifa=None,
     `unidades=None` é o caso pendente (contagem recusada) ou o de um arquivo
     que nem é protocolo: Unidades, Tarifa e Valor saem VAZIOS, nunca 0 — 0
     significaria "entregou zero unidades".
+
+    `valor_manual`: valor em reais digitado por uma pessoa no painel de
+    resultado (pendência resolvida à mão, sem contagem nem tarifa). Vale
+    mesmo quando `dados` é None — "não foi possível ler o documento" é uma
+    pendência de verdade (aparece pra pessoa resolver na tela), e é
+    justamente o que esse valor existe pra resolver. Só "documento não é um
+    protocolo" (também `dados=None`, mas sem `valor_manual`) não tem o que
+    informar.
     """
     if dados is None:
-        return [nome_arquivo, "", "", None, None, None, observacao]
+        if valor_manual is None:
+            return [nome_arquivo, "", "", None, None, None, observacao]
+        #  Sem `dados` não há de onde tirar condomínio nem código — mas o
+        #  valor digitado à mão não pode ser descartado em silêncio só
+        #  porque a leitura automática falhou.
+        aviso = "Valor informado manualmente"
+        observacao = f"{observacao}; {aviso}" if observacao else aviso
+        return [nome_arquivo, "", "", None, None, float(valor_manual), observacao]
 
     codigo = dados.get("codigo") or ""
     registro = None
@@ -1387,12 +1479,64 @@ def linha_planilha_protocolo(nome_arquivo, dados, cadastro, tarifa=None,
                          else "Código não cadastrado")
         observacao = f"{observacao}; {motivo_codigo}" if observacao else motivo_codigo
 
+    if valor_manual is not None:
+        #  Valor digitado por uma pessoa no painel de resultado: Unidades e
+        #  Tarifa ficam VAZIAS, porque não houve contagem nem multiplicação —
+        #  0 ali significaria "entregou zero unidades". A observação é o único
+        #  rastro de que o número não foi calculado pelo programa; o carimbo no
+        #  PDF mostra só o valor.
+        aviso = "Valor informado manualmente"
+        observacao = f"{observacao}; {aviso}" if observacao else aviso
+        return [nome_arquivo, condominio, codigo, None, None,
+                float(valor_manual), observacao]
+
     if unidades is None:
         return [nome_arquivo, condominio, codigo, None, None, None, observacao]
 
     valor = valor_protocolo(unidades, tarifa)
     return [nome_arquivo, condominio, codigo, int(unidades),
             float(tarifa), float(valor), observacao]
+
+
+def resolver_protocolo_manual(ctx, dados, valor, cadastro, carimbar):
+    """
+    Resolve à mão uma pendência da aba 3 (contagem dos Correios) —
+    lógica de `_acao_informar_valor` extraída pra cá pra ficar testável sem
+    depender de widget. Decide a pasta de saída (raiz ou a subpasta "Lote NN"
+    certa, continuando de onde o processamento automático parou — mesma
+    contagem `ctx["carimbados"]` que o laço automático usa, ver
+    `caminho_do_lote`), chama `carimbar` pra gravar o PDF de fato e, só se
+    isso der certo, avança `ctx["carimbados"]` e atualiza a linha da
+    planilha em memória (`ctx["linhas"]`).
+
+    `carimbar` é `(pasta_destino, registro_dados) -> None`, injetada pra
+    manter esta função sem I/O de PDF de verdade — se levantar exceção, ela
+    sobe sem `carimbados` avançar nem a linha da planilha mudar (mesma regra
+    do laço automático: `carimbados` conta só quem foi de fato carimbado).
+
+    Devolve `(linha_atualizada, motivo_painel, pasta_destino)` pro chamador
+    montar o registro do painel de resultado.
+    """
+    registro_dados = {"codigo": dados.get("codigo"),
+                      "condominio": dados.get("condominio", "")}
+
+    pasta_destino = (
+        caminho_do_lote(ctx["pasta_saida"], ctx.get("carimbados", 0),
+                        ctx.get("tamanho_lote", 0))
+        if ctx.get("separar_em_lotes") else ctx["pasta_saida"]
+    )
+
+    carimbar(pasta_destino, registro_dados)  # deixa exceção subir sem tocar ctx
+
+    ctx["carimbados"] = ctx.get("carimbados", 0) + 1
+
+    linha_atualizada = linha_planilha_protocolo(
+        dados["arquivo"], registro_dados, cadastro,
+        observacao=dados.get("motivo_original", ""), valor_manual=valor)
+    ctx["linhas"][dados["indice_linha"]] = linha_atualizada
+
+    motivo_painel = linha_atualizada[-1]
+    return linha_atualizada, motivo_painel, pasta_destino
 
 
 def salvar_planilha_protocolo(caminho, linhas):

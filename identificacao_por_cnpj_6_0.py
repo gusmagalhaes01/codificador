@@ -13,7 +13,7 @@ Interface em CustomTkinter, identidade visual "Swiss International Style".
 
 import asyncio
 import copy
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 import io
 import json
 import os
@@ -73,9 +73,10 @@ from logica import (
     criar_overlay, processar_pdf, carregar_cadastro, salvar_cadastro,
     extrair_dados_nfse, linha_planilha_nfse, salvar_planilha_nfse,
     extrair_dados_protocolo_correio, conferir_contagem_protocolo,
-    valor_protocolo, montar_texto_valor_protocolo, formatar_reais,
+    valor_protocolo, formatar_reais,
+    converter_valor_digitado,
     linha_planilha_protocolo, salvar_planilha_protocolo,
-    extrair_texto_escaneado, COLUNAS_PROTOCOLO,
+    extrair_texto_escaneado, COLUNAS_PROTOCOLO, resolver_protocolo_manual,
 )
 
 
@@ -152,7 +153,7 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("Dark" if self.nome_tema == "escuro" else "Light")
 
         super().__init__()
-        self.title("Codificador v6.12.0")
+        self.title("Codificador v6.13.0")
         self.geometry("780x680")
         self.minsize(620, 420)
         self.resizable(True, True)
@@ -220,6 +221,12 @@ class App(ctk.CTk):
         self.pasta_protocolos = tk.StringVar()
         self.pasta_protocolos_saida = tk.StringVar()
         self.arquivo_planilha_protocolos = tk.StringVar()
+
+        # Contexto do último lote de protocolos processado — alimenta o
+        # painel de resultado (resolução manual, botão "Abrir planilha").
+        # None até o 1º processamento da sessão; sempre lido com getattr/
+        # `.get()` por segurança, nunca indexado direto.
+        self._ctx_protocolos = None
 
         self._montar_interface()
         self._atualizar_tabela_cadastro()
@@ -1612,6 +1619,96 @@ class App(ctk.CTk):
             return f"{minutos}m {segundos:02d}s"
         return f"{segundos}s"
 
+    def _montar_painel_resultado(self, titulo, geometria, minimo):
+        """
+        Cria (ou reaproveita, limpando o conteúdo) a janela de um painel de
+        resultado. Compartilhado pelas abas 1 e 3 — as duas têm o mesmo
+        formato de janela, só muda o que vai dentro.
+        """
+        existente = getattr(self, "_janela_resultado", None)
+        if existente is not None and existente.winfo_exists():
+            for widget in existente.winfo_children():
+                widget.destroy()
+            janela = existente
+            janela.focus_force()
+        else:
+            janela = ctk.CTkToplevel(self)
+            self._janela_resultado = janela
+
+        janela.title(titulo)
+        janela.geometry(geometria)
+        janela.minsize(*minimo)
+        janela.resizable(True, True)
+        janela.configure(fg_color=self.tema_atual["fundo"])
+        janela.transient(self)
+        return janela
+
+    def _montar_faixa_cartoes(self, parent, cartoes, fonte=None):
+        """
+        Linha de caixinhas de resumo no topo do painel: rótulo pequeno em cima,
+        número grande embaixo, separados por hairlines verticais. `cartoes` é
+        uma lista de (valor, rotulo, destaque); o destaque sai em cobalto,
+        reservado ao que exige ação do usuário. `fonte` é opcional — quem
+        chama pode passar a `familia_fonte()` já calculada (evita consultar
+        de novo as fontes do sistema); se omitido, o helper calcula sozinho,
+        pra continuar funcionando também fora de `mostrar_resultado`.
+        """
+        tema = self.tema_atual
+        if fonte is None:
+            fonte = familia_fonte()
+
+        faixa = ctk.CTkFrame(parent, corner_radius=0, fg_color=tema["fundo"])
+        faixa.pack(fill="x", padx=24, pady=(24, 0))
+
+        for indice, (valor, rotulo, destaque) in enumerate(cartoes):
+            coluna = indice * 2
+            faixa.columnconfigure(coluna, weight=1)
+
+            cor_rotulo = tema["acento"] if destaque else tema["texto_secundario"]
+            cor_valor = tema["acento"] if destaque else tema["texto"]
+
+            bloco = ctk.CTkFrame(faixa, corner_radius=0, fg_color=tema["fundo"])
+            bloco.grid(row=0, column=coluna, sticky="nsew", padx=16)
+            ctk.CTkLabel(bloco, text=rotulo, font=(fonte, 11),
+                         text_color=cor_rotulo, anchor="w").pack(fill="x", anchor="w")
+            ctk.CTkLabel(bloco, text=valor, font=(fonte, 40),
+                         text_color=cor_valor, anchor="w").pack(fill="x", anchor="w")
+
+            if indice < len(cartoes) - 1:
+                linha = ctk.CTkFrame(faixa, width=1, corner_radius=0,
+                                     fg_color=tema["borda"])
+                linha.grid(row=0, column=coluna + 1, sticky="ns")
+
+        return faixa
+
+    def _montar_tabela_resultado(self, parent, colunas, larguras, altura=6,
+                                  ancoras=None, pady=(0, 8)):
+        """
+        Treeview estilizada com a aparência do projeto, com barra de rolagem.
+        `colunas` é uma lista de (chave, titulo); `larguras` casa por posição.
+        `ancoras`, se informado, também casa por posição com `colunas` e
+        define o alinhamento de cada coluna (padrão "w" em todas quando
+        omitido). `pady` controla o espaçamento vertical do frame que envolve
+        a tabela (padrão (0, 8), igual ao da tabela de pendentes). Devolve a
+        tabela; quem chama insere as linhas.
+        """
+        frame = ctk.CTkFrame(parent, corner_radius=0, fg_color=self.tema_atual["fundo"])
+        frame.pack(fill="both", expand=False, pady=pady)
+
+        chaves = [c[0] for c in colunas]
+        if ancoras is None:
+            ancoras = ["w"] * len(colunas)
+        tabela = ttk.Treeview(frame, columns=chaves, show="headings", height=altura)
+        for (chave, titulo), largura, ancora in zip(colunas, larguras, ancoras):
+            tabela.heading(chave, text=titulo)
+            tabela.column(chave, width=largura, anchor=ancora)
+        tabela.pack(side="left", fill="both", expand=True)
+
+        scroll = ttk.Scrollbar(frame, orient="vertical", command=tabela.yview)
+        tabela.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="left", fill="y")
+        return tabela
+
     def mostrar_resultado(self, resultado):
         """
         Abre (ou reaproveita) o painel de Resultado — Tela 3. Recebe o dict
@@ -1635,21 +1732,8 @@ class App(ctk.CTk):
         total = resultado.get("total", len(processados) + len(pendentes))
         tempo_str = self._formatar_tempo(resultado.get("tempo_segundos", 0))
 
-        if getattr(self, "_janela_resultado", None) is not None and self._janela_resultado.winfo_exists():
-            for widget in self._janela_resultado.winfo_children():
-                widget.destroy()
-            janela = self._janela_resultado
-            janela.focus_force()
-        else:
-            janela = ctk.CTkToplevel(self)
-            self._janela_resultado = janela
-
-        janela.title("Resultado do processamento")
-        janela.geometry("820x680")
-        janela.minsize(640, 480)
-        janela.resizable(True, True)
-        janela.configure(fg_color=tema["fundo"])
-        janela.transient(self)
+        janela = self._montar_painel_resultado(
+            "Resultado do processamento", "820x680", (640, 480))
 
         # dados de cada pendente, indexados pelo iid da linha na tabela —
         # usado pelos botões de ação e pelo duplo clique para recuperar o
@@ -1657,31 +1741,11 @@ class App(ctk.CTk):
         self._pend_por_iid = {}
 
         # ===================== FAIXA DE CARTÕES =====================
-        faixa = ctk.CTkFrame(janela, corner_radius=0, fg_color=tema["fundo"])
-        faixa.pack(fill="x", padx=24, pady=(24, 0))
-        faixa.columnconfigure(0, weight=1)
-        faixa.columnconfigure(2, weight=1)
-        faixa.columnconfigure(4, weight=1)
-
-        def montar_cartao(parent, coluna, caption, valor, cor_caption, cor_valor):
-            bloco = ctk.CTkFrame(parent, corner_radius=0, fg_color=tema["fundo"])
-            bloco.grid(row=0, column=coluna, sticky="nsew", padx=16)
-            ctk.CTkLabel(
-                bloco, text=caption, font=(fonte, 11), text_color=cor_caption, anchor="w",
-            ).pack(fill="x", anchor="w")
-            ctk.CTkLabel(
-                bloco, text=valor, font=(fonte, 40), text_color=cor_valor, anchor="w",
-            ).pack(fill="x", anchor="w")
-
-        def hairline_vertical(parent, coluna):
-            linha = ctk.CTkFrame(parent, width=1, corner_radius=0, fg_color=tema["borda"])
-            linha.grid(row=0, column=coluna, sticky="ns")
-
-        montar_cartao(faixa, 0, "PROCESSADOS", str(len(processados)), tema["texto_secundario"], tema["texto"])
-        hairline_vertical(faixa, 1)
-        montar_cartao(faixa, 2, "PENDENTES", str(len(pendentes)), tema["acento"], tema["acento"])
-        hairline_vertical(faixa, 3)
-        montar_cartao(faixa, 4, "TEMPO", tempo_str, tema["texto_secundario"], tema["texto"])
+        self._montar_faixa_cartoes(janela, [
+            (str(len(processados)), "PROCESSADOS", False),
+            (str(len(pendentes)), "PENDENTES", True),
+            (tempo_str, "TEMPO", False),
+        ], fonte=fonte)
 
         hairline = ctk.CTkFrame(janela, height=1, corner_radius=0, fg_color=tema["borda"])
         hairline.pack(fill="x", padx=24, pady=(24, 0))
@@ -1709,21 +1773,8 @@ class App(ctk.CTk):
                 font=(fonte, 13), text_color=tema["texto_secundario"], anchor="w",
             ).pack(fill="x", pady=(0, 16))
         else:
-            frame_tabela_pend = ctk.CTkFrame(area, corner_radius=0, fg_color=tema["fundo"])
-            frame_tabela_pend.pack(fill="both", expand=False, pady=(0, 8))
-
-            tabela_pend = ttk.Treeview(
-                frame_tabela_pend, columns=("arquivo", "motivo"), show="headings", height=6,
-            )
-            tabela_pend.heading("arquivo", text="Arquivo")
-            tabela_pend.heading("motivo", text="Motivo")
-            tabela_pend.column("arquivo", width=280, anchor="w")
-            tabela_pend.column("motivo", width=420, anchor="w")
-            tabela_pend.pack(side="left", fill="both", expand=True)
-
-            scroll_pend = ttk.Scrollbar(frame_tabela_pend, orient="vertical", command=tabela_pend.yview)
-            tabela_pend.configure(yscrollcommand=scroll_pend.set)
-            scroll_pend.pack(side="left", fill="y")
+            tabela_pend = self._montar_tabela_resultado(
+                area, [("arquivo", "Arquivo"), ("motivo", "Motivo")], [280, 420])
 
             for i, dados in enumerate(pendentes):
                 iid = f"pend{i}"
@@ -1813,23 +1864,11 @@ class App(ctk.CTk):
                 font=(fonte, 13), text_color=tema["texto_secundario"], anchor="w",
             ).pack(fill="x", pady=(0, 16))
         else:
-            frame_tabela_proc = ctk.CTkFrame(area, corner_radius=0, fg_color=tema["fundo"])
-            frame_tabela_proc.pack(fill="both", expand=False, pady=(0, 16))
-
-            tabela_proc = ttk.Treeview(
-                frame_tabela_proc, columns=("arquivo", "codigo", "origem"), show="headings", height=8,
-            )
-            tabela_proc.heading("arquivo", text="Arquivo")
-            tabela_proc.heading("codigo", text="Código")
-            tabela_proc.heading("origem", text="Origem")
-            tabela_proc.column("arquivo", width=280, anchor="w")
-            tabela_proc.column("codigo", width=90, anchor="center")
-            tabela_proc.column("origem", width=280, anchor="w")
-            tabela_proc.pack(side="left", fill="both", expand=True)
-
-            scroll_proc = ttk.Scrollbar(frame_tabela_proc, orient="vertical", command=tabela_proc.yview)
-            tabela_proc.configure(yscrollcommand=scroll_proc.set)
-            scroll_proc.pack(side="left", fill="y")
+            tabela_proc = self._montar_tabela_resultado(
+                area,
+                [("arquivo", "Arquivo"), ("codigo", "Código"), ("origem", "Origem")],
+                [280, 90, 280], altura=8,
+                ancoras=["w", "center", "w"], pady=(0, 16))
 
             for i, dados in enumerate(processados):
                 tabela_proc.insert(
@@ -2299,12 +2338,16 @@ class App(ctk.CTk):
         try:
             salvar_planilha_nfse(destino, linhas)
         except Exception as e:
+            #  `erro=e` como argumento padrão: o `except ... as e` desvincula
+            #  `e` ao sair do bloco, e o `self.after` só executa a lambda bem
+            #  depois — sem o argumento padrão, ela veria "cannot access free
+            #  variable 'e'" em vez da mensagem amigável.
             self.after(0, lambda: self.label_status_extracao.configure(
                 text="Não foi possível salvar a planilha."))
             self.after(0, self._atualizar_botao_extrair)
-            self.after(0, lambda: messagebox.showerror(
+            self.after(0, lambda erro=e: messagebox.showerror(
                 "Erro ao salvar",
-                f"Não foi possível gravar a planilha:\n{e}\n\n"
+                f"Não foi possível gravar a planilha:\n{erro}\n\n"
                 "Se ela estiver aberta no Excel, feche e tente de novo."))
             return
 
@@ -2557,33 +2600,12 @@ class App(ctk.CTk):
         aviso.pack(padx=24, pady=(0, 8), anchor="w")
 
         def confirmar():
-            texto = entrada.get().strip().replace("R$", "").replace(" ", "")
-            texto = texto.replace(".", "").replace(",", ".") if "," in texto else texto
-            try:
-                valor = Decimal(texto)
-            except (InvalidOperation, ValueError):
-                aviso.configure(text="Digite um número, como 3,85.")
-                return
-            if not valor.is_finite() or valor <= 0:
-                aviso.configure(text="O valor precisa ser maior que zero.")
-                return
-            try:
-                arredondado = valor.quantize(Decimal("0.01"))
-            except InvalidOperation:
-                #  Número absurdamente grande (ex.: trinta dígitos, ou
-                #  1e30) — o quantize não consegue arredondar dentro da
-                #  precisão do contexto. Mesmo aviso inline das outras
-                #  entradas inválidas, em vez de deixar a exceção subir
-                #  pro handler global e virar popup técnico.
-                aviso.configure(text="Digite um número, como 3,85.")
-                return
-            if valor != arredondado:
-                #  Mais de duas casas decimais produz um carimbo com conta
-                #  que não fecha no papel (ex.: 100 un × R$ 3,86 = R$ 385,50,
-                #  quando a tarifa digitada era 3,855) e, na planilha, uma
-                #  coluna Tarifa que não bate com Unidades × Tarifa quando
-                #  alguém recalcula a partir do valor exibido.
-                aviso.configure(text="No máximo duas casas decimais, como 3,85.")
+            #  Exemplo "3,85": a tarifa é por linha entregue, valor pequeno —
+            #  o mesmo exemplo do valor manual (300,30) pareceria sugerir uma
+            #  ordem de grandeza errada aqui.
+            valor, mensagem = converter_valor_digitado(entrada.get(), exemplo="3,85")
+            if valor is None:
+                aviso.configure(text=mensagem)
                 return
             resultado["valor"] = valor
             janela.destroy()
@@ -2702,6 +2724,9 @@ class App(ctk.CTk):
         pendentes = 0
         ignorados = 0
         falhas_carimbo = 0
+        processados_painel = []
+        pendentes_painel = []
+        ignorados_painel = []
 
         for indice, nome in enumerate(arquivos, 1):
             caminho = os.path.join(pasta, nome)
@@ -2808,6 +2833,12 @@ class App(ctk.CTk):
                                              unidades, tarifa, config, codigos)
                     carimbados += 1
                 except Exception as e:
+                    #  Erro ao carimbar não desfaz a cobrança (o valor é
+                    #  devido pela entrega, não pelo carimbo ter dado certo),
+                    #  mas `observacao` fica marcada aqui pra alimentar o
+                    #  motivo tanto na planilha quanto no painel — as duas
+                    #  telas precisam contar a mesma história sobre este
+                    #  arquivo.
                     observacao = f"Erro ao carimbar: {e}"
                     falhas_carimbo += 1
             elif nao_e_protocolo:
@@ -2820,21 +2851,98 @@ class App(ctk.CTk):
                 #  pendência sob a ótica de quem vai olhar o resumo.
                 pendentes += 1
 
-            linhas.append(linha_planilha_protocolo(
-                nome, dados, self.cadastro, tarifa, unidades, observacao))
+            linha_protocolo = linha_planilha_protocolo(
+                nome, dados, self.cadastro, tarifa, unidades, observacao)
+            linhas.append(linha_protocolo)
+            #  Observação final, já com o que `linha_planilha_protocolo`
+            #  acrescenta por conta própria (ex.: "Código não cadastrado") —
+            #  é o texto que vai pra planilha, então é esse que o painel
+            #  precisa mostrar, não a `observacao` local de antes da chamada
+            #  (que fica sem esse acréscimo). Guardada à parte de `observacao`
+            #  porque a resolução manual (`_acao_informar_valor`) reusa a
+            #  RAW `observacao` como semente — repassar a já mesclada faria
+            #  "Código não cadastrado" aparecer em dobro na 2ª mesclagem.
+            observacao_planilha = linha_protocolo[-1]
+
+            registro_cadastro = self.cadastro.get(
+                codigos.get((dados or {}).get("codigo") or "", "")) or None
+            if registro_cadastro:
+                condominio_painel = f"{dados['codigo']} {registro_cadastro['nome']}"
+            elif dados:
+                condominio_painel = dados.get("condominio", "")
+            else:
+                condominio_painel = ""
+
+            registro_painel = {
+                "arquivo": nome,
+                "condominio": condominio_painel,
+                "codigo": (dados or {}).get("codigo"),
+                "caminho": caminho,
+                "indice_linha": len(linhas) - 1,
+            }
+            if unidades is not None:
+                registro_painel["unidades"] = unidades
+                #  Decimal até a hora de exibir — só a escrita na planilha
+                #  converte pra float (é o Excel que soma float, não o
+                #  painel).
+                registro_painel["valor"] = valor_protocolo(unidades, tarifa)
+                #  Mostra o MESMO motivo que foi pra planilha — inclui tanto
+                #  "Erro ao carimbar: ..." (quando `_carimbar_protocolo`
+                #  levantou exceção) quanto "Código não cadastrado" (quando o
+                #  carimbo lateral saiu sem código por falta de cadastro):
+                #  antes só o primeiro caso aparecia aqui, e uma linha
+                #  CALCULADOS podia parecer limpa quando na verdade saiu sem
+                #  o carimbo de identificação.
+                if observacao_planilha:
+                    registro_painel["motivo"] = observacao_planilha
+                #  `motivo_original` (sem o acréscimo de código) é o que
+                #  `_acao_informar_valor` usa como semente ao resolver essa
+                #  linha à mão mais tarde — repassar a já mesclada duplicaria
+                #  o "Código não cadastrado".
+                registro_painel["motivo_original"] = observacao
+                processados_painel.append(registro_painel)
+            elif nao_e_protocolo:
+                ignorados_painel.append({"arquivo": nome, "motivo": observacao_planilha})
+            else:
+                registro_painel["motivo"] = observacao_planilha
+                registro_painel["motivo_original"] = observacao
+                pendentes_painel.append(registro_painel)
+
             self.after(0, lambda v=indice: self.barra_protocolos.configure(value=v))
 
+        planilha_salva = True
         try:
             salvar_planilha_protocolo(destino, linhas)
         except Exception as e:
-            self.after(0, lambda: self.label_status_protocolos.configure(
-                text="Não foi possível salvar a planilha."))
-            self.after(0, self._atualizar_botao_protocolos)
-            self.after(0, lambda: messagebox.showerror(
-                "Erro ao salvar",
-                f"Não foi possível gravar a planilha:\n{e}\n\n"
-                "Se ela estiver aberta no Excel, feche e tente de novo."))
-            return
+            #  Ao contrário da aba 2 (onde essa falha aborta o lote), aqui o
+            #  painel precisa abrir mesmo assim: as pendências já foram
+            #  apuradas e reprocessar o lote inteiro é caro (cada protocolo é
+            #  lido na melhor qualidade). O usuário resolve um pendente à
+            #  mão — o que já regrava a planilha inteira — ou reabre o
+            #  painel depois de fechar o Excel.
+            #  `erro=e` como argumento padrão: o `except ... as e` desvincula
+            #  `e` ao sair do bloco, e o `self.after` só executa a lambda bem
+            #  depois — sem o argumento padrão, ela mostraria "cannot access
+            #  free variable 'e'" em vez da mensagem amigável.
+            planilha_salva = False
+            #  A frase final muda conforme existe ou não pendente pra
+            #  resolver — sem pendente nenhum (lote inteiro calculado com
+            #  sucesso), "resolva um pendente" seria uma instrução
+            #  impossível de seguir; o botão "Abrir planilha" do painel
+            #  tenta gravar de novo nesse caso (ver
+            #  `_acao_abrir_planilha_protocolos`).
+            if pendentes:
+                como_regravar = ("A lista de protocolos não foi perdida — ela é "
+                                  "regravada assim que você resolver um pendente "
+                                  "no painel a seguir.")
+            else:
+                como_regravar = ("A lista de protocolos não foi perdida — no "
+                                  "painel a seguir, use o botão \"Abrir planilha\" "
+                                  "para tentar gravar de novo.")
+            self.after(0, lambda erro=e, msg=como_regravar: messagebox.showwarning(
+                "Planilha não salva",
+                f"Não foi possível gravar a planilha:\n{erro}\n\n"
+                f"Se ela estiver aberta no Excel, feche o arquivo. {msg}"))
 
         #  A planilha guarda float (é o que o Excel soma), mas o total do
         #  resumo volta para Decimal antes de somar: em lote grande, somar
@@ -2859,21 +2967,56 @@ class App(ctk.CTk):
             resumo += f" · {pendentes} pendente(s) (não lido(s) ou contagem a conferir)"
         if ignorados:
             resumo += f" · {ignorados} ignorado(s) (não é protocolo dos Correios)"
+        if not planilha_salva:
+            if pendentes:
+                resumo += " · planilha não salva — resolva um pendente para regravar"
+            else:
+                resumo += (" · planilha não salva — use o botão \"Abrir planilha\" "
+                            "no painel para tentar gravar de novo")
 
         self.after(0, lambda: self.label_status_protocolos.configure(text=resumo))
         self.after(0, self._atualizar_botao_protocolos)
-        self.after(0, lambda: self._concluir_extracao(destino, resumo))
+
+        self._ctx_protocolos = {
+            "pasta_saida": pasta_saida,
+            "config": config,
+            "destino": destino,
+            "codigos": codigos,
+            "linhas": linhas,
+            #  Preferência de separar em lotes + o contador de arquivos já
+            #  carimbados neste processamento: a resolução manual de um
+            #  pendente (`_acao_informar_valor`) precisa continuar essa
+            #  mesma contagem para cair na subpasta "Lote NN" certa, em vez
+            #  de ir parar solta na raiz — ver `caminho_do_lote`.
+            "separar_em_lotes": separar_em_lotes,
+            "tamanho_lote": tamanho_lote,
+            "carimbados": carimbados,
+        }
+        resultado = {
+            "total": total,
+            "total_valor": total_valor,
+            "processados": processados_painel,
+            "pendentes": pendentes_painel,
+            "ignorados": ignorados_painel,
+        }
+        self.after(0, lambda: self.mostrar_resultado_protocolos(resultado))
 
     def _carimbar_protocolo(self, caminho, pasta_saida, nome, dados, unidades,
-                            tarifa, config, codigos):
+                            tarifa, config, codigos, valor_manual=None):
         """
         Dois carimbos num passe só: o lateral rotacionado com o código (igual
         ao da aba 1, para a IA do Superlógica continuar lendo) e o valor no
         topo direito. Código fora do cadastro carimba só o valor — o valor não
         depende do cadastro, e perder a cobrança por isso seria pior.
         """
-        valor = valor_protocolo(unidades, tarifa)
-        texto_valor = montar_texto_valor_protocolo(unidades, tarifa, valor)
+        valor = valor_manual if valor_manual is not None else valor_protocolo(unidades, tarifa)
+
+        #  O carimbo traz SÓ o valor, nunca a conta que o gerou. O Superlógica
+        #  lê esse carimbo, e uma linha como "15 un × R$ 3,85 = R$ 57,75" tem
+        #  dois valores em reais: ele pode capturar a tarifa no lugar do total.
+        #  Com um número só não há o que confundir. A conta continua na
+        #  planilha, nas colunas Unidades e Tarifa.
+        texto_valor = formatar_reais(valor)
 
         cnpj = codigos.get(dados.get("codigo") or "")
         registro = self.cadastro.get(cnpj) if cnpj else None
@@ -2920,6 +3063,350 @@ class App(ctk.CTk):
 
         caminho_saida = os.path.join(pasta_saida, nome)
         processar_pdf(caminho, caminho_saida, texto_lateral, config_carimbo, extras)
+
+    def mostrar_resultado_protocolos(self, resultado):
+        """
+        Painel de encerramento da aba 3. Mesma linguagem do painel da aba 1:
+        cartões no topo, pendentes primeiro, ações por linha. A diferença é o
+        que resolve uma pendência aqui — informar o valor em reais.
+        """
+        tema = self.tema_atual
+        fonte = familia_fonte()
+        self._resultado_protocolos = resultado
+
+        processados = resultado.get("processados", []) or []
+        pendentes = resultado.get("pendentes", []) or []
+        ignorados = resultado.get("ignorados", []) or []
+        total_valor = resultado.get("total_valor", Decimal("0.00"))
+
+        janela = self._montar_painel_resultado(
+            "Resultado dos protocolos", "860x680", (680, 480))
+
+        self._montar_faixa_cartoes(janela, [
+            (str(len(processados)), "PROTOCOLOS", False),
+            (str(len(pendentes)), "PENDENTES", True),
+            (formatar_reais(total_valor), "TOTAL", False),
+        ], fonte=fonte)
+
+        ctk.CTkFrame(janela, height=1, corner_radius=0,
+                     fg_color=tema["borda"]).pack(fill="x", padx=24, pady=(24, 0))
+
+        #  Rodapé: contagem total à esquerda + botão neutro pra abrir a
+        #  planilha (o entregável final do fluxo) à direita. Antes do painel,
+        #  era um messagebox "Abrir a planilha agora?" ao final do
+        #  processamento — o painel novo precisa manter esse caminho, só que
+        #  como botão em vez de pergunta automática.
+        rodape = ctk.CTkFrame(janela, corner_radius=0, fg_color=tema["fundo"])
+        rodape.pack(side="bottom", fill="x", padx=24, pady=16)
+
+        ctk.CTkLabel(
+            rodape, text=f"{resultado.get('total', 0)} arquivo(s) no total.",
+            font=(fonte, 12), text_color=tema["texto_terciario"], anchor="w",
+        ).pack(side="left", fill="x", expand=True)
+
+        ctk.CTkButton(
+            rodape, text="Abrir planilha", corner_radius=0,
+            fg_color="transparent", hover_color=tema["superficie"],
+            border_width=1, border_color=tema["borda_forte"],
+            text_color=tema["texto"], font=(fonte, 13),
+            command=self._acao_abrir_planilha_protocolos,
+        ).pack(side="right")
+
+        area = ctk.CTkScrollableFrame(janela, corner_radius=0, fg_color=tema["fundo"])
+        area.pack(side="top", fill="both", expand=True, padx=24, pady=(16, 0))
+
+        # --- PENDENTES ---
+        ctk.CTkLabel(
+            area, text="PENDENTES — PRECISAM DE AÇÃO", font=(fonte, 11, "bold"),
+            text_color=tema["acento"], anchor="w",
+        ).pack(fill="x", pady=(0, 8))
+
+        self._pend_protocolo_por_iid = {}
+        if not pendentes:
+            ctk.CTkLabel(
+                area, text="Nenhum pendente — todos os protocolos foram calculados.",
+                font=(fonte, 13), text_color=tema["texto_secundario"], anchor="w",
+            ).pack(fill="x", pady=(0, 16))
+        else:
+            tabela = self._montar_tabela_resultado(
+                area,
+                [("arquivo", "Arquivo"), ("condominio", "Condomínio"), ("motivo", "Motivo")],
+                [240, 200, 320],
+            )
+            for i, dados in enumerate(pendentes):
+                iid = f"prot{i}"
+                self._pend_protocolo_por_iid[iid] = dados
+                tabela.insert("", "end", iid=iid, values=(
+                    dados.get("arquivo", ""), dados.get("condominio", ""),
+                    dados.get("motivo", "")))
+
+            acoes = ctk.CTkFrame(area, corner_radius=0, fg_color=tema["fundo"])
+            acoes.pack(fill="x", pady=(0, 16))
+
+            botao_valor = ctk.CTkButton(
+                acoes, text="Informar valor", corner_radius=0, state="disabled",
+                fg_color=tema["borda"], hover_color=tema["acento_hover"],
+                text_color=tema["sobre_acento"], border_width=0, font=(fonte, 13),
+                command=lambda: self._acao_informar_valor(
+                    self._protocolo_selecionado(tabela)),
+            )
+            botao_valor.pack(side="left", padx=(0, 8))
+
+            botao_abrir = ctk.CTkButton(
+                acoes, text="Abrir PDF", corner_radius=0, state="disabled",
+                fg_color="transparent", hover_color=tema["superficie"],
+                border_width=1, border_color=tema["borda_forte"],
+                text_color=tema["texto"], font=(fonte, 13),
+                command=lambda: self._acao_abrir_pdf_protocolo(
+                    self._protocolo_selecionado(tabela)),
+            )
+            botao_abrir.pack(side="left", padx=(0, 8))
+
+            def ao_selecionar(_evento=None):
+                #  Botão cobalto desabilitado tem que apagar o fg_color, senão
+                #  fica azul e parece clicável.
+                tem_linha = bool(tabela.selection())
+                botao_valor.configure(
+                    state="normal" if tem_linha else "disabled",
+                    fg_color=tema["acento"] if tem_linha else tema["borda"])
+                botao_abrir.configure(state="normal" if tem_linha else "disabled")
+
+            tabela.bind("<<TreeviewSelect>>", ao_selecionar)
+            tabela.bind("<Double-1>", lambda _e: self._acao_informar_valor(
+                self._protocolo_selecionado(tabela)))
+
+        # --- CALCULADOS ---
+        ctk.CTkLabel(
+            area, text="CALCULADOS", font=(fonte, 11, "bold"),
+            text_color=tema["texto_secundario"], anchor="w",
+        ).pack(fill="x", pady=(8, 8))
+
+        if processados:
+            #  Coluna "Motivo" mostra "Erro ao carimbar: ..." quando
+            #  `_carimbar_protocolo` levantou exceção — o arquivo continua
+            #  cobrado (a linha permanece em CALCULADOS, soma no TOTAL), mas
+            #  o painel precisa contar a mesma história que a planilha: quem
+            #  não recebeu o carimbo aparece aqui com o motivo visível, em
+            #  vez de parecer que tudo correu bem.
+            tabela_ok = self._montar_tabela_resultado(
+                area,
+                [("arquivo", "Arquivo"), ("condominio", "Condomínio"),
+                 ("unidades", "Unidades"), ("valor", "Valor"), ("motivo", "Motivo")],
+                [200, 160, 80, 100, 220],
+            )
+            for dados in processados:
+                unidades = dados.get("unidades")
+                tabela_ok.insert("", "end", values=(
+                    dados.get("arquivo", ""), dados.get("condominio", ""),
+                    "" if unidades is None else unidades,
+                    formatar_reais(dados.get("valor", 0)),
+                    dados.get("motivo", "")))
+        else:
+            ctk.CTkLabel(
+                area, text="Nenhum protocolo calculado neste lote.",
+                font=(fonte, 13), text_color=tema["texto_secundario"], anchor="w",
+            ).pack(fill="x", pady=(0, 16))
+
+        # --- IGNORADOS (sem ação: não são protocolos) ---
+        if ignorados:
+            ctk.CTkLabel(
+                area, text="IGNORADOS — NÃO SÃO PROTOCOLOS", font=(fonte, 11, "bold"),
+                text_color=tema["texto_secundario"], anchor="w",
+            ).pack(fill="x", pady=(16, 8))
+            tabela_ign = self._montar_tabela_resultado(
+                area, [("arquivo", "Arquivo"), ("motivo", "Motivo")],
+                [300, 360], altura=3)
+            for dados in ignorados:
+                tabela_ign.insert("", "end", values=(
+                    dados.get("arquivo", ""), dados.get("motivo", "")))
+
+    def _protocolo_selecionado(self, tabela):
+        """Dict do pendente na linha selecionada, ou None."""
+        selecao = tabela.selection()
+        if not selecao:
+            return None
+        return self._pend_protocolo_por_iid.get(selecao[0])
+
+    def _acao_abrir_pdf_protocolo(self, dados):
+        if not dados:
+            return
+        try:
+            os.startfile(dados["caminho"])
+        except Exception as e:
+            messagebox.showerror(
+                "Erro", f"Não foi possível abrir o PDF:\n{e}",
+                parent=self._janela_resultado)
+
+    def _acao_abrir_planilha_protocolos(self):
+        """Abre a planilha de cobrança gerada por este lote (o entregável
+        final do fluxo — sem isso o painel não teria nenhum jeito de chegar
+        até ela). A gravação inicial pode ter falhado (ver `planilha_salva`
+        em `_processar_protocolos_em_thread`) — nesse caso o arquivo ainda
+        não existe. Antes, esse caso só instruía "resolva um pendente", o
+        que virava um beco sem saída quando o lote inteiro tinha sido
+        calculado com sucesso (nenhum pendente pra resolver) e só a
+        gravação tinha falhado: agora o próprio botão tenta gravar de novo
+        — todos os dados já estão em `_ctx_protocolos["linhas"]`, não
+        precisa reprocessar o lote (caro: cada protocolo é relido na
+        melhor qualidade)."""
+        ctx = self._ctx_protocolos or {}
+        destino = ctx.get("destino")
+        if not destino:
+            return
+        if not os.path.isfile(destino):
+            try:
+                salvar_planilha_protocolo(destino, ctx.get("linhas", []))
+            except Exception as e:
+                messagebox.showinfo(
+                    "Planilha ainda não salva",
+                    f"Não foi possível gravar a planilha agora:\n{e}\n\n"
+                    "Se ela estiver aberta no Excel, feche o arquivo e "
+                    "clique de novo neste botão.",
+                    parent=self._janela_resultado)
+                return
+        try:
+            os.startfile(destino)
+        except Exception as e:
+            messagebox.showerror(
+                "Erro", f"Não foi possível abrir a planilha:\n{e}",
+                parent=self._janela_resultado)
+
+    def _pedir_valor_protocolo(self, dados):
+        """
+        Janelinha que pede o valor em reais de um protocolo pendente. Devolve
+        Decimal, ou None se o usuário cancelar. Mesma validação da tarifa,
+        pela mesma função.
+        """
+        tema = self.tema_atual
+        fonte = familia_fonte()
+        janela = ctk.CTkToplevel(self._janela_resultado)
+        janela.title("Informar valor")
+        janela.configure(fg_color=tema["fundo"])
+        janela.resizable(False, False)
+        janela.transient(self._janela_resultado)
+        janela.grab_set()
+
+        escolha = {"valor": None}
+
+        ctk.CTkLabel(janela, text="Qual o valor deste protocolo?",
+                     font=(fonte, 15), text_color=tema["texto"]).pack(
+            padx=24, pady=(24, 4), anchor="w")
+        ctk.CTkLabel(janela, text=dados.get("arquivo", ""), font=(fonte, 12),
+                     text_color=tema["texto_secundario"]).pack(padx=24, anchor="w")
+        ctk.CTkLabel(janela, text=dados.get("condominio", ""), font=(fonte, 12),
+                     text_color=tema["texto_terciario"]).pack(padx=24, anchor="w")
+
+        entrada = ctk.CTkEntry(janela, corner_radius=0, width=200,
+                               fg_color=tema["superficie"], border_width=1,
+                               border_color=tema["borda"], text_color=tema["texto"],
+                               font=(fonte, 14))
+        entrada.pack(padx=24, pady=(12, 4), anchor="w")
+        entrada.focus_set()
+
+        aviso = ctk.CTkLabel(janela, text="", font=(fonte, 12),
+                             text_color=tema["acento"])
+        aviso.pack(padx=24, pady=(0, 8), anchor="w")
+
+        def confirmar():
+            valor, mensagem = converter_valor_digitado(entrada.get())
+            if valor is None:
+                aviso.configure(text=mensagem)
+                return
+            escolha["valor"] = valor
+            janela.destroy()
+
+        botoes = ctk.CTkFrame(janela, corner_radius=0, fg_color=tema["fundo"])
+        botoes.pack(padx=24, pady=(0, 24), anchor="e")
+        ctk.CTkButton(botoes, text="Cancelar", corner_radius=0, width=100,
+                      fg_color="transparent", hover_color=tema["superficie"],
+                      border_width=1, border_color=tema["borda_forte"],
+                      text_color=tema["texto"], font=(fonte, 13),
+                      command=janela.destroy).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(botoes, text="Confirmar", corner_radius=0, width=120,
+                      fg_color=tema["acento"], hover_color=tema["acento_hover"],
+                      text_color=tema["sobre_acento"], border_width=0,
+                      font=(fonte, 13), command=confirmar).pack(side="left")
+
+        entrada.bind("<Return>", lambda _e: confirmar())
+        self.wait_window(janela)
+        return escolha["valor"]
+
+    def _acao_informar_valor(self, dados):
+        """
+        Pede o valor em reais e resolve a pendência: carimba o PDF, move a
+        linha para os calculados e regrava a planilha.
+        """
+        if not dados:
+            return
+        ctx = getattr(self, "_ctx_protocolos", None)
+        if not ctx:
+            messagebox.showerror(
+                "Erro",
+                "O contexto do processamento se perdeu. Rode o lote de novo.",
+                parent=self._janela_resultado)
+            return
+
+        valor = self._pedir_valor_protocolo(dados)
+        if valor is None:
+            return
+
+        #  Toda a decisão de pasta/lote, o carimbo (via callback pra não
+        #  virar dependência de PDF de verdade em `logica.py`) e a
+        #  atualização de `ctx` (linha da planilha e contador de carimbados)
+        #  vivem em `resolver_protocolo_manual` — extraído pra ficar
+        #  testável sem instanciar a janela. Se o carimbo falhar, a exceção
+        #  sobe daqui sem `ctx` ter sido tocado (não faz sentido marcar como
+        #  resolvido um arquivo que não saiu carimbado).
+        def carimbar(pasta_destino, registro_dados):
+            self._carimbar_protocolo(
+                dados["caminho"], pasta_destino, dados["arquivo"],
+                registro_dados, None, None, ctx["config"], ctx["codigos"],
+                valor_manual=valor)
+
+        try:
+            linha_atualizada, motivo_painel, _pasta_destino = resolver_protocolo_manual(
+                ctx, dados, valor, self.cadastro, carimbar)
+        except Exception as e:
+            messagebox.showerror(
+                "Erro ao carimbar", f"Não foi possível carimbar o PDF:\n{e}",
+                parent=self._janela_resultado)
+            return
+
+        #  Move do painel de pendentes para os calculados. O motivo que
+        #  aparece aqui é o MESMO texto que acabou de ir para a planilha
+        #  (última coluna de `linha_atualizada`) — inclui, por exemplo,
+        #  "Código não cadastrado" quando for o caso, em vez de deixar a
+        #  linha do painel parecer resolvida sem ressalva nenhuma.
+        resultado = self._resultado_protocolos
+        resultado["pendentes"] = [p for p in resultado["pendentes"] if p is not dados]
+        registro_processado = {
+            "arquivo": dados["arquivo"],
+            "condominio": dados.get("condominio", ""),
+            "unidades": None,
+            #  Decimal, igual ao resto do painel — só a planilha converte
+            #  para float na hora de gravar.
+            "valor": valor,
+        }
+        if motivo_painel:
+            registro_processado["motivo"] = motivo_painel
+        resultado["processados"].append(registro_processado)
+        resultado["total_valor"] = resultado.get("total_valor", Decimal("0.00")) + valor
+
+        #  2. Regrava a planilha inteira. Se falhar (tipicamente porque está
+        #     aberta no Excel), o valor NÃO se perde: já está em ctx["linhas"]
+        #     e no resultado, e vai junto na próxima regravação.
+        try:
+            salvar_planilha_protocolo(ctx["destino"], ctx["linhas"])
+        except Exception as e:
+            messagebox.showwarning(
+                "Planilha não atualizada",
+                f"O valor foi carimbado no PDF, mas a planilha não pôde ser "
+                f"regravada:\n{e}\n\nSe ela estiver aberta no Excel, feche e "
+                f"informe o próximo valor — a planilha é regravada inteira a "
+                f"cada correção.",
+                parent=self._janela_resultado)
+
+        self.mostrar_resultado_protocolos(resultado)
 
     def _montar_aba_logs(self, parent):
         fonte = familia_fonte()
