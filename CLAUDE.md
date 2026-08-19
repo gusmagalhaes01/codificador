@@ -177,6 +177,27 @@ similaridade de nome sozinha.
   — assim pendentes não ocupam vaga e cada lote sai cheio. A preferência
   fica no nível raiz do `config.json` (não dentro da predefinição): depende
   do sistema de destino, não do tipo de documento. Desligada por padrão.
+- **v6.13.0 — painel de resultado na aba 3, com valor em reais digitado à
+  mão**: a aba dos Protocolos dos Correios passa a encerrar com painel
+  (Protocolos / Pendentes / Total), no mesmo molde da aba 1 e reaproveitando
+  os mesmos três helpers de UI (`_montar_painel_resultado`,
+  `_montar_faixa_cartoes`, `_montar_tabela_resultado`,
+  `identificacao_por_cnpj_6_0.py`). A pendência criada quando a conferência
+  não aceita a contagem (ver "Regra de aceite" acima) se resolve pelo botão
+  "Informar valor" — em reais, não em unidades, porque é o número que a
+  pessoa já escreveu à caneta na folha do protocolo. A linha resolvida assim
+  sai da planilha (`linha_planilha_protocolo`, parâmetro `valor_manual`) com
+  Unidades e Tarifa vazias e observação `Valor informado manualmente`; o
+  carimbo no PDF mostra só o valor, sem a conta, então o papel sozinho não
+  distingue valor calculado de valor digitado — só a planilha guarda essa
+  diferença. Motivado por um caso real: no protocolo do `11049 APART HOTEL`
+  o `Listando 76 unidades` impresso foi riscado à caneta e trocado por `78`,
+  e a contagem de "Correio" concordava com o número riscado (76) — nenhum
+  conferidor automático pega esse tipo de rasura. Validado contra o lote
+  real de 4 protocolos multipágina (`C:\Users\Dell\Downloads\TESTE
+  CORREIO\Nova pasta`, fora do repo): 3 calculados (36, 31 e 60 unidades,
+  R$ 138,60 + R$ 119,35 + R$ 231,00 = R$ 488,95 à tarifa de R$ 3,85) e 1
+  pendente, o do 11049, exatamente como esperado.
 
 ## Melhorias implementadas (a partir da versão 5_3)
 
@@ -471,6 +492,38 @@ contagem de linhas deu 1 (subcontou), contagem de "Correio" deu 3 (bateu). A
 aceitação passou porque basta um dos dois, não porque os dois concordaram.
 Quem for endurecer essa regra (ex.: exigir os dois conferidores) precisa
 saber que isso teria recusado um protocolo real do lote de aceitação.
+
+**Painel de resultado (v6.13.0):** a aba 3 passou a encerrar com o mesmo
+painel da aba 1 — cartões de resumo (Protocolos / Pendentes / Total) e
+tabelas de calculados/pendentes — em vez do `messagebox` antigo.
+`_montar_painel_resultado`, `_montar_faixa_cartoes` e `_montar_tabela_resultado`
+(`identificacao_por_cnpj_6_0.py`) são os três helpers compartilhados entre as
+duas abas; só o conteúdo interno muda.
+
+A pendência se resolve pelo botão "Informar valor", digitando o **valor em
+reais**, não a quantidade de unidades — porque é o que a pessoa já escreve à
+caneta na folha do protocolo (nos protocolos de referência os manuscritos são
+7,70 / 57,75 / 11,55 / 46,20; ver "Lote de aceitação" acima). Pedir a
+quantidade obrigaria a pessoa a fazer de novo, de cabeça, a mesma conta que já
+está escrita na folha.
+
+A linha resolvida manualmente sai da planilha com Unidades e Tarifa vazias e
+observação `Valor informado manualmente` (`linha_planilha_protocolo`, param.
+`valor_manual`); o carimbo no PDF mostra **só o valor** em reais, sem a conta
+por trás — então olhando só o papel carimbado ninguém distingue um valor
+calculado (unidades × tarifa) de um valor digitado à mão. O rastro dessa
+diferença existe **só na planilha**, nunca no PDF.
+
+**O caso que motivou o recurso:** no protocolo real do `11049 APART HOTEL`, o
+`Listando 76 unidades` impresso na folha foi riscado a caneta e substituído
+por `78` escrito embaixo. A correção manual está fora do que a máquina lê —
+ela continua vendo `76` — e, nesse documento, a contagem de "Correio" batia
+exatamente com o número riscado (76), não com o corrigido (78): se o risco
+estivesse mais leve ou não tivesse sido feito, os dois conferidores
+concordariam entre si e o programa cobraria o valor errado com total
+confiança. Não existe conferidor automático capaz de pegar esse caso — só uma
+pessoa lendo a folha física resolve, e é exatamente para isso que existe o
+"Informar valor".
 
 ## Divergências de lógica só no 6_0 (pós-redesign)
 
