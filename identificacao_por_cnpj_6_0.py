@@ -2711,6 +2711,9 @@ class App(ctk.CTk):
         pendentes = 0
         ignorados = 0
         falhas_carimbo = 0
+        processados_painel = []
+        pendentes_painel = []
+        ignorados_painel = []
 
         for indice, nome in enumerate(arquivos, 1):
             caminho = os.path.join(pasta, nome)
@@ -2831,6 +2834,33 @@ class App(ctk.CTk):
 
             linhas.append(linha_planilha_protocolo(
                 nome, dados, self.cadastro, tarifa, unidades, observacao))
+
+            registro_cadastro = self.cadastro.get(
+                codigos.get((dados or {}).get("codigo") or "", "")) or None
+            if registro_cadastro:
+                condominio_painel = f"{dados['codigo']} {registro_cadastro['nome']}"
+            elif dados:
+                condominio_painel = dados.get("condominio", "")
+            else:
+                condominio_painel = ""
+
+            registro_painel = {
+                "arquivo": nome,
+                "condominio": condominio_painel,
+                "codigo": (dados or {}).get("codigo"),
+                "caminho": caminho,
+                "indice_linha": len(linhas) - 1,
+            }
+            if unidades is not None:
+                registro_painel["unidades"] = unidades
+                registro_painel["valor"] = float(valor_protocolo(unidades, tarifa))
+                processados_painel.append(registro_painel)
+            elif nao_e_protocolo:
+                ignorados_painel.append({"arquivo": nome, "motivo": observacao})
+            else:
+                registro_painel["motivo"] = observacao
+                pendentes_painel.append(registro_painel)
+
             self.after(0, lambda v=indice: self.barra_protocolos.configure(value=v))
 
         try:
@@ -2871,7 +2901,22 @@ class App(ctk.CTk):
 
         self.after(0, lambda: self.label_status_protocolos.configure(text=resumo))
         self.after(0, self._atualizar_botao_protocolos)
-        self.after(0, lambda: self._concluir_extracao(destino, resumo))
+
+        self._ctx_protocolos = {
+            "pasta_saida": pasta_saida,
+            "config": config,
+            "destino": destino,
+            "codigos": codigos,
+            "linhas": linhas,
+        }
+        resultado = {
+            "total": total,
+            "total_valor": total_valor,
+            "processados": processados_painel,
+            "pendentes": pendentes_painel,
+            "ignorados": ignorados_painel,
+        }
+        self.after(0, lambda: self.mostrar_resultado_protocolos(resultado))
 
     def _carimbar_protocolo(self, caminho, pasta_saida, nome, dados, unidades,
                             tarifa, config, codigos):
@@ -2929,6 +2974,165 @@ class App(ctk.CTk):
 
         caminho_saida = os.path.join(pasta_saida, nome)
         processar_pdf(caminho, caminho_saida, texto_lateral, config_carimbo, extras)
+
+    def mostrar_resultado_protocolos(self, resultado):
+        """
+        Painel de encerramento da aba 3. Mesma linguagem do painel da aba 1:
+        cartões no topo, pendentes primeiro, ações por linha. A diferença é o
+        que resolve uma pendência aqui — informar o valor em reais.
+        """
+        tema = self.tema_atual
+        fonte = familia_fonte()
+        self._resultado_protocolos = resultado
+
+        processados = resultado.get("processados", []) or []
+        pendentes = resultado.get("pendentes", []) or []
+        ignorados = resultado.get("ignorados", []) or []
+        total_valor = resultado.get("total_valor", Decimal("0.00"))
+
+        janela = self._montar_painel_resultado(
+            "Resultado dos protocolos", "860x680", (680, 480))
+
+        self._montar_faixa_cartoes(janela, [
+            (str(len(processados)), "PROTOCOLOS", False),
+            (str(len(pendentes)), "PENDENTES", True),
+            (formatar_reais(total_valor), "TOTAL", False),
+        ], fonte=fonte)
+
+        ctk.CTkFrame(janela, height=1, corner_radius=0,
+                     fg_color=tema["borda"]).pack(fill="x", padx=24, pady=(24, 0))
+
+        ctk.CTkLabel(
+            janela, text=f"{resultado.get('total', 0)} arquivo(s) no total.",
+            font=(fonte, 12), text_color=tema["texto_terciario"], anchor="w",
+        ).pack(side="bottom", fill="x", padx=24, pady=16)
+
+        area = ctk.CTkScrollableFrame(janela, corner_radius=0, fg_color=tema["fundo"])
+        area.pack(side="top", fill="both", expand=True, padx=24, pady=(16, 0))
+
+        # --- PENDENTES ---
+        ctk.CTkLabel(
+            area, text="PENDENTES — PRECISAM DE AÇÃO", font=(fonte, 11, "bold"),
+            text_color=tema["acento"], anchor="w",
+        ).pack(fill="x", pady=(0, 8))
+
+        self._pend_protocolo_por_iid = {}
+        if not pendentes:
+            ctk.CTkLabel(
+                area, text="Nenhum pendente — todos os protocolos foram calculados.",
+                font=(fonte, 13), text_color=tema["texto_secundario"], anchor="w",
+            ).pack(fill="x", pady=(0, 16))
+        else:
+            tabela = self._montar_tabela_resultado(
+                area,
+                [("arquivo", "Arquivo"), ("condominio", "Condomínio"), ("motivo", "Motivo")],
+                [240, 200, 320],
+            )
+            for i, dados in enumerate(pendentes):
+                iid = f"prot{i}"
+                self._pend_protocolo_por_iid[iid] = dados
+                tabela.insert("", "end", iid=iid, values=(
+                    dados.get("arquivo", ""), dados.get("condominio", ""),
+                    dados.get("motivo", "")))
+
+            acoes = ctk.CTkFrame(area, corner_radius=0, fg_color=tema["fundo"])
+            acoes.pack(fill="x", pady=(0, 16))
+
+            botao_valor = ctk.CTkButton(
+                acoes, text="Informar valor", corner_radius=0, state="disabled",
+                fg_color=tema["borda"], hover_color=tema["acento_hover"],
+                text_color=tema["sobre_acento"], border_width=0, font=(fonte, 13),
+                command=lambda: self._acao_informar_valor(
+                    self._protocolo_selecionado(tabela)),
+            )
+            botao_valor.pack(side="left", padx=(0, 8))
+
+            botao_abrir = ctk.CTkButton(
+                acoes, text="Abrir PDF", corner_radius=0, state="disabled",
+                fg_color="transparent", hover_color=tema["superficie"],
+                border_width=1, border_color=tema["borda_forte"],
+                text_color=tema["texto"], font=(fonte, 13),
+                command=lambda: self._acao_abrir_pdf_protocolo(
+                    self._protocolo_selecionado(tabela)),
+            )
+            botao_abrir.pack(side="left", padx=(0, 8))
+
+            def ao_selecionar(_evento=None):
+                #  Botão cobalto desabilitado tem que apagar o fg_color, senão
+                #  fica azul e parece clicável.
+                tem_linha = bool(tabela.selection())
+                botao_valor.configure(
+                    state="normal" if tem_linha else "disabled",
+                    fg_color=tema["acento"] if tem_linha else tema["borda"])
+                botao_abrir.configure(state="normal" if tem_linha else "disabled")
+
+            tabela.bind("<<TreeviewSelect>>", ao_selecionar)
+            tabela.bind("<Double-1>", lambda _e: self._acao_informar_valor(
+                self._protocolo_selecionado(tabela)))
+
+        # --- CALCULADOS ---
+        ctk.CTkLabel(
+            area, text="CALCULADOS", font=(fonte, 11, "bold"),
+            text_color=tema["texto_secundario"], anchor="w",
+        ).pack(fill="x", pady=(8, 8))
+
+        if processados:
+            tabela_ok = self._montar_tabela_resultado(
+                area,
+                [("arquivo", "Arquivo"), ("condominio", "Condomínio"),
+                 ("unidades", "Unidades"), ("valor", "Valor")],
+                [240, 200, 90, 120],
+            )
+            for dados in processados:
+                unidades = dados.get("unidades")
+                tabela_ok.insert("", "end", values=(
+                    dados.get("arquivo", ""), dados.get("condominio", ""),
+                    "" if unidades is None else unidades,
+                    formatar_reais(dados.get("valor", 0))))
+        else:
+            ctk.CTkLabel(
+                area, text="Nenhum protocolo calculado neste lote.",
+                font=(fonte, 13), text_color=tema["texto_secundario"], anchor="w",
+            ).pack(fill="x", pady=(0, 16))
+
+        # --- IGNORADOS (sem ação: não são protocolos) ---
+        if ignorados:
+            ctk.CTkLabel(
+                area, text="IGNORADOS — NÃO SÃO PROTOCOLOS", font=(fonte, 11, "bold"),
+                text_color=tema["texto_secundario"], anchor="w",
+            ).pack(fill="x", pady=(16, 8))
+            tabela_ign = self._montar_tabela_resultado(
+                area, [("arquivo", "Arquivo"), ("motivo", "Motivo")],
+                [300, 360], altura=3)
+            for dados in ignorados:
+                tabela_ign.insert("", "end", values=(
+                    dados.get("arquivo", ""), dados.get("motivo", "")))
+
+    def _protocolo_selecionado(self, tabela):
+        """Dict do pendente na linha selecionada, ou None."""
+        selecao = tabela.selection()
+        if not selecao:
+            return None
+        return self._pend_protocolo_por_iid.get(selecao[0])
+
+    def _acao_abrir_pdf_protocolo(self, dados):
+        if not dados:
+            return
+        try:
+            os.startfile(dados["caminho"])
+        except Exception as e:
+            messagebox.showerror(
+                "Erro", f"Não foi possível abrir o PDF:\n{e}",
+                parent=self._janela_resultado)
+
+    def _acao_informar_valor(self, dados):
+        #  Implementado na tarefa seguinte; o painel já liga o botão a ele para
+        #  que esta tarefa feche com a tela navegável.
+        if not dados:
+            return
+        messagebox.showinfo(
+            "Em construção", "Informar valor chega na próxima etapa.",
+            parent=self._janela_resultado)
 
     def _montar_aba_logs(self, parent):
         fonte = familia_fonte()
