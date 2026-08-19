@@ -76,7 +76,7 @@ from logica import (
     valor_protocolo, montar_texto_valor_protocolo, formatar_reais,
     converter_valor_digitado,
     linha_planilha_protocolo, salvar_planilha_protocolo,
-    extrair_texto_escaneado, COLUNAS_PROTOCOLO,
+    extrair_texto_escaneado, COLUNAS_PROTOCOLO, resolver_protocolo_manual,
 )
 
 
@@ -3350,54 +3350,33 @@ class App(ctk.CTk):
         if valor is None:
             return
 
-        registro_dados = {"codigo": dados.get("codigo"),
-                          "condominio": dados.get("condominio", "")}
-
-        #  Mesma pasta de lote que o processamento automático usaria para o
-        #  próximo arquivo carimbado — sem isso, o arquivo resolvido à mão
-        #  cai solto na raiz da saída, fora da subpasta "Lote NN" que quem
-        #  envia pro Superlógica está de fato mandando (ver caminho_do_lote).
-        pasta_destino = (caminho_do_lote(
-                             ctx["pasta_saida"], ctx.get("carimbados", 0),
-                             ctx.get("tamanho_lote", 0))
-                         if ctx.get("separar_em_lotes") else ctx["pasta_saida"])
-
-        #  1. Carimba o PDF: código na lateral (se cadastrado) e valor no topo
-        #     direito. Falhou aqui, nada mais acontece — não faz sentido marcar
-        #     como resolvido um arquivo que não saiu carimbado.
-        try:
+        #  Toda a decisão de pasta/lote, o carimbo (via callback pra não
+        #  virar dependência de PDF de verdade em `logica.py`) e a
+        #  atualização de `ctx` (linha da planilha e contador de carimbados)
+        #  vivem em `resolver_protocolo_manual` — extraído pra ficar
+        #  testável sem instanciar a janela. Se o carimbo falhar, a exceção
+        #  sobe daqui sem `ctx` ter sido tocado (não faz sentido marcar como
+        #  resolvido um arquivo que não saiu carimbado).
+        def carimbar(pasta_destino, registro_dados):
             self._carimbar_protocolo(
                 dados["caminho"], pasta_destino, dados["arquivo"],
                 registro_dados, None, None, ctx["config"], ctx["codigos"],
                 valor_manual=valor)
+
+        try:
+            linha_atualizada, motivo_painel, _pasta_destino = resolver_protocolo_manual(
+                ctx, dados, valor, self.cadastro, carimbar)
         except Exception as e:
             messagebox.showerror(
                 "Erro ao carimbar", f"Não foi possível carimbar o PDF:\n{e}",
                 parent=self._janela_resultado)
             return
 
-        #  O contador só avança depois do carimbo ter dado certo — mesma
-        #  regra do laço automático ("carimbados" conta só quem foi
-        #  efetivamente carimbado), pra manter as próximas resoluções à mão
-        #  (e um eventual próximo processamento) caindo no lote certo.
-        ctx["carimbados"] = ctx.get("carimbados", 0) + 1
-
-        #  2. Atualiza a linha da planilha em memória. Passa o motivo
-        #     original (ex.: "Não foi possível ler o total impresso...") como
-        #     observação — `linha_planilha_protocolo` sabe concatenar com
-        #     "Valor informado manualmente", preservando o rastro de por que
-        #     a pendência existiu, em vez de apagá-lo.
-        linha_atualizada = linha_planilha_protocolo(
-            dados["arquivo"], registro_dados, self.cadastro,
-            observacao=dados.get("motivo_original", ""), valor_manual=valor)
-        ctx["linhas"][dados["indice_linha"]] = linha_atualizada
-
-        #  3. Move do painel de pendentes para os calculados. O motivo que
-        #     aparece aqui é o MESMO texto que acabou de ir para a planilha
-        #     (última coluna de `linha_atualizada`) — inclui, por exemplo,
-        #     "Código não cadastrado" quando for o caso, em vez de deixar a
-        #     linha do painel parecer resolvida sem ressalva nenhuma.
-        motivo_painel = linha_atualizada[-1]
+        #  Move do painel de pendentes para os calculados. O motivo que
+        #  aparece aqui é o MESMO texto que acabou de ir para a planilha
+        #  (última coluna de `linha_atualizada`) — inclui, por exemplo,
+        #  "Código não cadastrado" quando for o caso, em vez de deixar a
+        #  linha do painel parecer resolvida sem ressalva nenhuma.
         resultado = self._resultado_protocolos
         resultado["pendentes"] = [p for p in resultado["pendentes"] if p is not dados]
         registro_processado = {
@@ -3413,7 +3392,7 @@ class App(ctk.CTk):
         resultado["processados"].append(registro_processado)
         resultado["total_valor"] = resultado.get("total_valor", Decimal("0.00")) + valor
 
-        #  4. Regrava a planilha inteira. Se falhar (tipicamente porque está
+        #  2. Regrava a planilha inteira. Se falhar (tipicamente porque está
         #     aberta no Excel), o valor NÃO se perde: já está em ctx["linhas"]
         #     e no resultado, e vai junto na próxima regravação.
         try:

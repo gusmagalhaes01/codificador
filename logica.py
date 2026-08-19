@@ -1505,6 +1505,47 @@ def linha_planilha_protocolo(nome_arquivo, dados, cadastro, tarifa=None,
             float(tarifa), float(valor), observacao]
 
 
+def resolver_protocolo_manual(ctx, dados, valor, cadastro, carimbar):
+    """
+    Resolve à mão uma pendência da aba 3 (contagem dos Correios) —
+    lógica de `_acao_informar_valor` extraída pra cá pra ficar testável sem
+    depender de widget. Decide a pasta de saída (raiz ou a subpasta "Lote NN"
+    certa, continuando de onde o processamento automático parou — mesma
+    contagem `ctx["carimbados"]` que o laço automático usa, ver
+    `caminho_do_lote`), chama `carimbar` pra gravar o PDF de fato e, só se
+    isso der certo, avança `ctx["carimbados"]` e atualiza a linha da
+    planilha em memória (`ctx["linhas"]`).
+
+    `carimbar` é `(pasta_destino, registro_dados) -> None`, injetada pra
+    manter esta função sem I/O de PDF de verdade — se levantar exceção, ela
+    sobe sem `carimbados` avançar nem a linha da planilha mudar (mesma regra
+    do laço automático: `carimbados` conta só quem foi de fato carimbado).
+
+    Devolve `(linha_atualizada, motivo_painel, pasta_destino)` pro chamador
+    montar o registro do painel de resultado.
+    """
+    registro_dados = {"codigo": dados.get("codigo"),
+                      "condominio": dados.get("condominio", "")}
+
+    pasta_destino = (
+        caminho_do_lote(ctx["pasta_saida"], ctx.get("carimbados", 0),
+                        ctx.get("tamanho_lote", 0))
+        if ctx.get("separar_em_lotes") else ctx["pasta_saida"]
+    )
+
+    carimbar(pasta_destino, registro_dados)  # deixa exceção subir sem tocar ctx
+
+    ctx["carimbados"] = ctx.get("carimbados", 0) + 1
+
+    linha_atualizada = linha_planilha_protocolo(
+        dados["arquivo"], registro_dados, cadastro,
+        observacao=dados.get("motivo_original", ""), valor_manual=valor)
+    ctx["linhas"][dados["indice_linha"]] = linha_atualizada
+
+    motivo_painel = linha_atualizada[-1]
+    return linha_atualizada, motivo_painel, pasta_destino
+
+
 def salvar_planilha_protocolo(caminho, linhas):
     """
     Grava a planilha dos protocolos com linha de TOTAL no rodapé. Os totais
