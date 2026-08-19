@@ -1637,15 +1637,19 @@ class App(ctk.CTk):
         janela.transient(self)
         return janela
 
-    def _montar_faixa_cartoes(self, parent, cartoes):
+    def _montar_faixa_cartoes(self, parent, cartoes, fonte=None):
         """
         Linha de caixinhas de resumo no topo do painel: rótulo pequeno em cima,
         número grande embaixo, separados por hairlines verticais. `cartoes` é
         uma lista de (valor, rotulo, destaque); o destaque sai em cobalto,
-        reservado ao que exige ação do usuário.
+        reservado ao que exige ação do usuário. `fonte` é opcional — quem
+        chama pode passar a `familia_fonte()` já calculada (evita consultar
+        de novo as fontes do sistema); se omitido, o helper calcula sozinho,
+        pra continuar funcionando também fora de `mostrar_resultado`.
         """
         tema = self.tema_atual
-        fonte = familia_fonte()
+        if fonte is None:
+            fonte = familia_fonte()
 
         faixa = ctk.CTkFrame(parent, corner_radius=0, fg_color=tema["fundo"])
         faixa.pack(fill="x", padx=24, pady=(24, 0))
@@ -1671,20 +1675,27 @@ class App(ctk.CTk):
 
         return faixa
 
-    def _montar_tabela_resultado(self, parent, colunas, larguras, altura=6):
+    def _montar_tabela_resultado(self, parent, colunas, larguras, altura=6,
+                                  ancoras=None, pady=(0, 8)):
         """
         Treeview estilizada com a aparência do projeto, com barra de rolagem.
         `colunas` é uma lista de (chave, titulo); `larguras` casa por posição.
-        Devolve a tabela; quem chama insere as linhas.
+        `ancoras`, se informado, também casa por posição com `colunas` e
+        define o alinhamento de cada coluna (padrão "w" em todas quando
+        omitido). `pady` controla o espaçamento vertical do frame que envolve
+        a tabela (padrão (0, 8), igual ao da tabela de pendentes). Devolve a
+        tabela; quem chama insere as linhas.
         """
         frame = ctk.CTkFrame(parent, corner_radius=0, fg_color=self.tema_atual["fundo"])
-        frame.pack(fill="both", expand=False, pady=(0, 8))
+        frame.pack(fill="both", expand=False, pady=pady)
 
         chaves = [c[0] for c in colunas]
+        if ancoras is None:
+            ancoras = ["w"] * len(colunas)
         tabela = ttk.Treeview(frame, columns=chaves, show="headings", height=altura)
-        for (chave, titulo), largura in zip(colunas, larguras):
+        for (chave, titulo), largura, ancora in zip(colunas, larguras, ancoras):
             tabela.heading(chave, text=titulo)
-            tabela.column(chave, width=largura, anchor="w")
+            tabela.column(chave, width=largura, anchor=ancora)
         tabela.pack(side="left", fill="both", expand=True)
 
         scroll = ttk.Scrollbar(frame, orient="vertical", command=tabela.yview)
@@ -1728,7 +1739,7 @@ class App(ctk.CTk):
             (str(len(processados)), "PROCESSADOS", False),
             (str(len(pendentes)), "PENDENTES", True),
             (tempo_str, "TEMPO", False),
-        ])
+        ], fonte=fonte)
 
         hairline = ctk.CTkFrame(janela, height=1, corner_radius=0, fg_color=tema["borda"])
         hairline.pack(fill="x", padx=24, pady=(24, 0))
@@ -1850,11 +1861,8 @@ class App(ctk.CTk):
             tabela_proc = self._montar_tabela_resultado(
                 area,
                 [("arquivo", "Arquivo"), ("codigo", "Código"), ("origem", "Origem")],
-                [280, 90, 280], altura=8)
-            # o frame desta tabela original usava pady=(0, 16) (a de pendentes
-            # usa (0, 8)) — o helper fixa (0, 8), então corrige aqui pra não
-            # mudar o espaçamento abaixo da última tabela do painel
-            tabela_proc.master.pack_configure(pady=(0, 16))
+                [280, 90, 280], altura=8,
+                ancoras=["w", "center", "w"], pady=(0, 16))
 
             for i, dados in enumerate(processados):
                 tabela_proc.insert(
