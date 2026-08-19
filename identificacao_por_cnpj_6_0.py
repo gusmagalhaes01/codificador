@@ -2820,6 +2820,12 @@ class App(ctk.CTk):
                                              unidades, tarifa, config, codigos)
                     carimbados += 1
                 except Exception as e:
+                    #  Erro ao carimbar não desfaz a cobrança (o valor é
+                    #  devido pela entrega, não pelo carimbo ter dado certo),
+                    #  mas `observacao` fica marcada aqui pra alimentar o
+                    #  motivo tanto na planilha quanto no painel — as duas
+                    #  telas precisam contar a mesma história sobre este
+                    #  arquivo.
                     observacao = f"Erro ao carimbar: {e}"
                     falhas_carimbo += 1
             elif nao_e_protocolo:
@@ -2853,7 +2859,17 @@ class App(ctk.CTk):
             }
             if unidades is not None:
                 registro_painel["unidades"] = unidades
-                registro_painel["valor"] = float(valor_protocolo(unidades, tarifa))
+                #  Decimal até a hora de exibir — só a escrita na planilha
+                #  converte pra float (é o Excel que soma float, não o
+                #  painel).
+                registro_painel["valor"] = valor_protocolo(unidades, tarifa)
+                #  `observacao` só está preenchida aqui quando o carimbo
+                #  falhou (unidades != None e sucesso não passa por essa
+                #  variável) — mesma observação que foi pra planilha, então
+                #  as duas telas concordam sobre o que aconteceu com o
+                #  arquivo.
+                if observacao:
+                    registro_painel["motivo"] = observacao
                 processados_painel.append(registro_painel)
             elif nao_e_protocolo:
                 ignorados_painel.append({"arquivo": nome, "motivo": observacao})
@@ -3002,10 +3018,26 @@ class App(ctk.CTk):
         ctk.CTkFrame(janela, height=1, corner_radius=0,
                      fg_color=tema["borda"]).pack(fill="x", padx=24, pady=(24, 0))
 
+        #  Rodapé: contagem total à esquerda + botão neutro pra abrir a
+        #  planilha (o entregável final do fluxo) à direita. Antes do painel,
+        #  era um messagebox "Abrir a planilha agora?" ao final do
+        #  processamento — o painel novo precisa manter esse caminho, só que
+        #  como botão em vez de pergunta automática.
+        rodape = ctk.CTkFrame(janela, corner_radius=0, fg_color=tema["fundo"])
+        rodape.pack(side="bottom", fill="x", padx=24, pady=16)
+
         ctk.CTkLabel(
-            janela, text=f"{resultado.get('total', 0)} arquivo(s) no total.",
+            rodape, text=f"{resultado.get('total', 0)} arquivo(s) no total.",
             font=(fonte, 12), text_color=tema["texto_terciario"], anchor="w",
-        ).pack(side="bottom", fill="x", padx=24, pady=16)
+        ).pack(side="left", fill="x", expand=True)
+
+        ctk.CTkButton(
+            rodape, text="Abrir planilha", corner_radius=0,
+            fg_color="transparent", hover_color=tema["superficie"],
+            border_width=1, border_color=tema["borda_forte"],
+            text_color=tema["texto"], font=(fonte, 13),
+            command=self._acao_abrir_planilha_protocolos,
+        ).pack(side="right")
 
         area = ctk.CTkScrollableFrame(janela, corner_radius=0, fg_color=tema["fundo"])
         area.pack(side="top", fill="both", expand=True, padx=24, pady=(16, 0))
@@ -3077,18 +3109,25 @@ class App(ctk.CTk):
         ).pack(fill="x", pady=(8, 8))
 
         if processados:
+            #  Coluna "Motivo" mostra "Erro ao carimbar: ..." quando
+            #  `_carimbar_protocolo` levantou exceção — o arquivo continua
+            #  cobrado (a linha permanece em CALCULADOS, soma no TOTAL), mas
+            #  o painel precisa contar a mesma história que a planilha: quem
+            #  não recebeu o carimbo aparece aqui com o motivo visível, em
+            #  vez de parecer que tudo correu bem.
             tabela_ok = self._montar_tabela_resultado(
                 area,
                 [("arquivo", "Arquivo"), ("condominio", "Condomínio"),
-                 ("unidades", "Unidades"), ("valor", "Valor")],
-                [240, 200, 90, 120],
+                 ("unidades", "Unidades"), ("valor", "Valor"), ("motivo", "Motivo")],
+                [200, 160, 80, 100, 220],
             )
             for dados in processados:
                 unidades = dados.get("unidades")
                 tabela_ok.insert("", "end", values=(
                     dados.get("arquivo", ""), dados.get("condominio", ""),
                     "" if unidades is None else unidades,
-                    formatar_reais(dados.get("valor", 0))))
+                    formatar_reais(dados.get("valor", 0)),
+                    dados.get("motivo", "")))
         else:
             ctk.CTkLabel(
                 area, text="Nenhum protocolo calculado neste lote.",
@@ -3123,6 +3162,20 @@ class App(ctk.CTk):
         except Exception as e:
             messagebox.showerror(
                 "Erro", f"Não foi possível abrir o PDF:\n{e}",
+                parent=self._janela_resultado)
+
+    def _acao_abrir_planilha_protocolos(self):
+        """Abre a planilha de cobrança gerada por este lote (o entregável
+        final do fluxo — sem isso o painel não teria nenhum jeito de chegar
+        até ela)."""
+        destino = (self._ctx_protocolos or {}).get("destino")
+        if not destino:
+            return
+        try:
+            os.startfile(destino)
+        except Exception as e:
+            messagebox.showerror(
+                "Erro", f"Não foi possível abrir a planilha:\n{e}",
                 parent=self._janela_resultado)
 
     def _acao_informar_valor(self, dados):
