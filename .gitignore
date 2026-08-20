@@ -13,3 +13,6 @@ dist/
 !codificador.spec
 .pytest_cache/
 tests/__pycache__/
+# Cópias de segurança do cadastro (feitas antes de importações em massa) —
+# a planilha em si é versionada, o backup é só rede local.
+cadastro_condominios_BACKUP_*.xlsx

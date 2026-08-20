@@ -1125,7 +1125,15 @@ def processar_pdf(caminho_entrada, caminho_saida, texto, config, carimbos_extras
 # ============================================================
 
 def carregar_cadastro(caminho):
-    """Retorna dict: cnpj_normalizado -> {'codigo':..., 'nome':...}"""
+    """
+    Retorna dict: cnpj_normalizado -> {'codigo':..., 'nome':..., 'id_sl':...}.
+
+    "ID SL" (4ª coluna) é o código do condomínio no Superlógica — outro
+    número, sem relação com o código interno (ex: KLOSTERS é 10004 aqui e 44
+    lá). Guardado só como referência: nada da identificação nem dos carimbos
+    usa esse campo. Planilha antiga de 3 colunas carrega normalmente, com o
+    campo vazio.
+    """
     cadastro = {}
     if not os.path.isfile(caminho):
         return cadastro
@@ -1134,26 +1142,35 @@ def carregar_cadastro(caminho):
     for linha in sheet.iter_rows(min_row=2, values_only=True):
         if not linha or not linha[0]:
             continue
-        cnpj, codigo, nome = (list(linha) + [None, None, None])[:3]
+        cnpj, codigo, nome, id_sl = (list(linha) + [None, None, None, None])[:4]
         cnpj_norm = normalizar_cnpj(str(cnpj))
         if cnpj_norm:
             cadastro[cnpj_norm] = {
                 "codigo": str(codigo).strip() if codigo is not None else "",
                 "nome": str(nome).strip() if nome is not None else "",
+                "id_sl": str(id_sl).strip() if id_sl is not None else "",
             }
     return cadastro
 
 
 def salvar_cadastro(caminho, cadastro):
+    """
+    Reescreve a planilha inteira a partir do dict. A coluna "ID SL" é gravada
+    junto — sem isso, qualquer edição pela aba de Cadastro apagaria o ID SL de
+    todos os condomínios de uma vez, em silêncio. Registro sem a chave (vindo
+    de um formulário antigo) grava a coluna em branco.
+    """
     wb = Workbook()
     sheet = wb.active
     sheet.title = "Condominios"
-    sheet.append(["CNPJ", "Código", "Nome do Condomínio"])
+    sheet.append(["CNPJ", "Código", "Nome do Condomínio", "ID SL"])
     for cnpj_norm, dados in sorted(cadastro.items(), key=lambda kv: kv[1]["nome"]):
-        sheet.append([formatar_cnpj(cnpj_norm), dados["codigo"], dados["nome"]])
+        sheet.append([formatar_cnpj(cnpj_norm), dados["codigo"], dados["nome"],
+                       dados.get("id_sl", "")])
     sheet.column_dimensions["A"].width = 20
     sheet.column_dimensions["B"].width = 12
     sheet.column_dimensions["C"].width = 35
+    sheet.column_dimensions["D"].width = 10
     wb.save(caminho)
 
 

@@ -18,7 +18,20 @@ testes (`tests/`) importam diretamente (`import logica as app`). A versão anter
 no repo como referência. A lógica de identificação começou byte-idêntica entre 5_3
 e 6_0 (o 6_0 nasceu como redesign exclusivo de interface), mas divergiu depois em
 3 pontos, só no 6_0 — ver "Divergências de lógica só no 6_0 (pós-redesign)".
-Cadastro de condomínios: `cadastro_condominios.xlsx` (colunas: CNPJ, Código, Nome)
+Cadastro de condomínios: `cadastro_condominios.xlsx` (colunas: CNPJ, Código,
+Nome, **ID SL**). "ID SL" é o código do condomínio no **Superlógica** — outro
+número, sem relação com o código interno (ex: KLOSTERS é `10004` aqui e `44`
+lá). Guardado **só como referência**: nada da identificação nem dos carimbos
+usa esse campo. Planilha antiga de 3 colunas continua carregando (campo
+vazio) — mas cuidado: `salvar_cadastro` reescreve a planilha inteira, então
+qualquer coluna nova precisa ser gravada lá também, senão a primeira edição
+pela aba de Cadastro apaga a coluna de todos os condomínios em silêncio.
+Preenchido a partir do export "condomínios ativos" do Superlógica via
+`tests/_importar_id_sl.py` (uso único, reexecutável). O cruzamento é pelo
+**código**, não pelo CNPJ: no export de 2026-08-20 vários CNPJs vinham
+malformados (8 deles como `00.000.000/0000-00`), e cruzar por CNPJ casava só
+632 dos 757 — contra 747 pelo código, sem nenhum conflito de nome. Os 10 sem
+correspondência (não estão no export de ativos) ficam com o campo vazio.
 Configuração da interface: `config.json` (ao lado do script, gitignored) — 3
 predefinições de lote (FedCorp/F&F/Notas Diversas, ver seção "Predefinições de
 lote") + tema; criado na 1ª execução com defaults.

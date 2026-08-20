@@ -211,6 +211,8 @@ class App(ctk.CTk):
         # Variáveis - aba cadastro (formulário)
         self.form_cnpj = tk.StringVar()
         self.form_codigo = tk.StringVar()
+        # Código do condomínio no Superlógica — guardado só como referência
+        self.form_id_sl = tk.StringVar()
         self.form_nome = tk.StringVar()
 
         # Variáveis - aba de extração de notas para planilha
@@ -378,18 +380,22 @@ class App(ctk.CTk):
         frame_form.pack(fill="x", padx=24)
         frame_form.columnconfigure(0, weight=0)
         frame_form.columnconfigure(1, weight=0)
-        frame_form.columnconfigure(2, weight=1)
+        frame_form.columnconfigure(2, weight=0)
+        frame_form.columnconfigure(3, weight=1)
 
         caption_in(frame_form, "CNPJ").grid(row=0, column=0, sticky="w", padx=(0, 16))
         caption_in(frame_form, "Código").grid(row=0, column=1, sticky="w", padx=(0, 16))
-        caption_in(frame_form, "Nome").grid(row=0, column=2, sticky="w")
+        caption_in(frame_form, "ID SL").grid(row=0, column=2, sticky="w", padx=(0, 16))
+        caption_in(frame_form, "Nome").grid(row=0, column=3, sticky="w")
 
         ttk.Entry(frame_form, textvariable=self.form_cnpj, width=22, font=(fonte, 12)).grid(
             row=1, column=0, sticky="w", padx=(0, 16), pady=(2, 12))
         ttk.Entry(frame_form, textvariable=self.form_codigo, width=12, font=(fonte, 12)).grid(
             row=1, column=1, sticky="w", padx=(0, 16), pady=(2, 12))
+        ttk.Entry(frame_form, textvariable=self.form_id_sl, width=10, font=(fonte, 12)).grid(
+            row=1, column=2, sticky="w", padx=(0, 16), pady=(2, 12))
         ttk.Entry(frame_form, textvariable=self.form_nome, font=(fonte, 12)).grid(
-            row=1, column=2, sticky="ew", pady=(2, 12))
+            row=1, column=3, sticky="ew", pady=(2, 12))
 
         linha_botoes_form = ttk.Frame(parent)
         linha_botoes_form.pack(fill="x", padx=24, pady=(0, 16))
@@ -408,14 +414,16 @@ class App(ctk.CTk):
         frame_tabela = ttk.Frame(parent)
         frame_tabela.pack(fill="both", expand=True, padx=24)
 
-        colunas = ("cnpj", "codigo", "nome")
+        colunas = ("cnpj", "codigo", "id_sl", "nome")
         self.tabela = ttk.Treeview(frame_tabela, columns=colunas, show="headings", height=14)
         self.tabela.heading("cnpj", text="CNPJ")
         self.tabela.heading("codigo", text="Código")
+        self.tabela.heading("id_sl", text="ID SL")
         self.tabela.heading("nome", text="Nome do Condomínio")
         self.tabela.column("cnpj", width=150, anchor="w")
         self.tabela.column("codigo", width=80, anchor="w")
-        self.tabela.column("nome", width=380, anchor="w")
+        self.tabela.column("id_sl", width=70, anchor="w")
+        self.tabela.column("nome", width=330, anchor="w")
         self.tabela.pack(fill="both", expand=True, side="left")
         self.tabela.bind("<<TreeviewSelect>>", self._selecionar_linha)
 
@@ -435,7 +443,8 @@ class App(ctk.CTk):
         self.tabela.delete(*self.tabela.get_children())
         for cnpj_norm, dados in sorted(self.cadastro.items(), key=lambda kv: kv[1]["codigo"]):
             self.tabela.insert("", "end", iid=cnpj_norm,
-                                values=(formatar_cnpj(cnpj_norm), dados["codigo"], dados["nome"]))
+                                values=(formatar_cnpj(cnpj_norm), dados["codigo"],
+                                        dados.get("id_sl", ""), dados["nome"]))
         if hasattr(self, "label_contagem_cadastro"):
             self.label_contagem_cadastro.configure(text=f"{len(self.cadastro)} CADASTRADOS")
 
@@ -447,17 +456,20 @@ class App(ctk.CTk):
         dados = self.cadastro.get(cnpj_norm, {})
         self.form_cnpj.set(formatar_cnpj(cnpj_norm))
         self.form_codigo.set(dados.get("codigo", ""))
+        self.form_id_sl.set(dados.get("id_sl", ""))
         self.form_nome.set(dados.get("nome", ""))
 
     def _limpar_form(self):
         self.form_cnpj.set("")
         self.form_codigo.set("")
+        self.form_id_sl.set("")
         self.form_nome.set("")
         self.tabela.selection_remove(self.tabela.selection())
 
     def _adicionar_ou_atualizar(self):
         cnpj_raw = self.form_cnpj.get().strip()
         codigo = self.form_codigo.get().strip()
+        id_sl = self.form_id_sl.get().strip()
         nome = self.form_nome.get().strip()
 
         cnpj_norm = normalizar_cnpj(cnpj_raw)
@@ -468,7 +480,7 @@ class App(ctk.CTk):
             messagebox.showerror("Erro", "Informe o código.")
             return
 
-        self.cadastro[cnpj_norm] = {"codigo": codigo, "nome": nome}
+        self.cadastro[cnpj_norm] = {"codigo": codigo, "nome": nome, "id_sl": id_sl}
         self._atualizar_tabela_cadastro()
         self._salvar_planilha(silencioso=True)
         self._limpar_form()
@@ -1895,6 +1907,8 @@ class App(ctk.CTk):
         cnpj = dados.get("cnpj")
         self.form_cnpj.set(formatar_cnpj(cnpj) if cnpj else "")
         self.form_codigo.set("")
+        # limpa: senão herdaria o ID SL da linha que estivesse selecionada
+        self.form_id_sl.set("")
         self.form_nome.set(dados.get("nome_sugerido") or "")
         self.notebook.select(self.aba_cadastro)
         self.lift()
