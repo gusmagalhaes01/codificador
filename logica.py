@@ -1601,3 +1601,89 @@ def salvar_planilha_protocolo(caminho, linhas):
         celula.number_format = COLUNAS_PROTOCOLO[coluna - 1][2]
 
     wb.save(caminho)
+
+
+# ============================================================
+#  PLANILHA DE DESPESAS DO SUPERLÓGICA
+# ============================================================
+
+#  Nomes das duas colunas que o programa preenche, já normalizados. O resto do
+#  layout (32 colunas na versão atual) pertence ao Superlógica e é copiado do
+#  modelo do usuário sem interpretação.
+COLUNA_DESPESA_CONDOMINIO = "condominio"
+COLUNA_DESPESA_VALOR = "valor"
+LINHA_MOLDE_DESPESAS = 2
+
+
+def _normalizar_cabecalho(texto):
+    """Cabeçalho sem acento, minúsculo e sem espaços nas pontas. Serve para
+    achar a coluna pelo NOME em vez da posição: o modelo é do Superlógica e
+    pode ser reordenado ou reacentuado sem aviso."""
+    if texto is None:
+        return ""
+    texto = unicodedata.normalize("NFKD", str(texto))
+    texto = texto.encode("ascii", "ignore").decode("ascii")
+    return texto.strip().lower()
+
+
+def gerar_planilha_despesas(caminho_modelo, caminho_saida, lancamentos):
+    """
+    Gera a planilha de importação de despesas do Superlógica a partir do
+    modelo do usuário. `lancamentos` é [(id_sl, valor), ...] na ordem de saída.
+
+    O modelo é ABERTO E PREENCHIDO, nunca reconstruído: copiar preserva
+    formatos de célula, validações e colunas ocultas que o importador do
+    Superlógica pode exigir e que uma planilha montada do zero perderia sem
+    aviso.
+
+    A linha 2 do modelo é o molde — os campos que se repetem em todo
+    lançamento (fornecedor, categoria, forma de pagamento...). Ela é
+    SUBSTITUÍDA pela primeira linha real; nenhuma linha de exemplo pode
+    sobrar no arquivo final.
+    """
+    if not lancamentos:
+        raise ValueError(
+            "Nenhum lançamento para gerar — a planilha não foi criada.")
+
+    wb = load_workbook(caminho_modelo)
+    sheet = wb.active
+
+    colunas = {}
+    for celula in sheet[1]:
+        nome = _normalizar_cabecalho(celula.value)
+        if nome:
+            colunas.setdefault(nome, celula.column)
+
+    faltando = [nome for nome in (COLUNA_DESPESA_CONDOMINIO, COLUNA_DESPESA_VALOR)
+                if nome not in colunas]
+    if faltando:
+        raise ValueError(
+            "O modelo não tem a(s) coluna(s): " + ", ".join(faltando) +
+            ". Confira se o arquivo é o modelo de despesas do Superlógica.")
+
+    coluna_condominio = colunas[COLUNA_DESPESA_CONDOMINIO]
+    coluna_valor = colunas[COLUNA_DESPESA_VALOR]
+
+    #  Valor e estilo de cada célula do molde, lidos ANTES de escrever — a
+    #  primeira linha gerada sobrescreve a própria linha-molde.
+    molde = []
+    for coluna in range(1, sheet.max_column + 1):
+        celula = sheet.cell(row=LINHA_MOLDE_DESPESAS, column=coluna)
+        molde.append((celula.value, copy.copy(celula._style)))
+
+    for indice, (id_sl, valor) in enumerate(lancamentos):
+        numero_linha = LINHA_MOLDE_DESPESAS + indice
+        for coluna, (valor_molde, estilo) in enumerate(molde, start=1):
+            celula = sheet.cell(row=numero_linha, column=coluna)
+            celula.value = valor_molde
+            celula._style = copy.copy(estilo)
+        sheet.cell(row=numero_linha, column=coluna_condominio).value = id_sl
+        sheet.cell(row=numero_linha, column=coluna_valor).value = float(valor)
+
+    #  Modelo salvo com mais de uma linha de exemplo não pode deixar resto
+    #  depois do último lançamento — seria despesa fantasma na importação.
+    primeira_sobra = LINHA_MOLDE_DESPESAS + len(lancamentos)
+    if sheet.max_row >= primeira_sobra:
+        sheet.delete_rows(primeira_sobra, sheet.max_row - primeira_sobra + 1)
+
+    wb.save(caminho_saida)
