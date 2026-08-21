@@ -78,6 +78,7 @@ from logica import (
     linha_planilha_protocolo, salvar_planilha_protocolo,
     extrair_texto_escaneado, COLUNAS_PROTOCOLO, resolver_protocolo_manual,
     lancamentos_de_despesa, gerar_planilha_despesas,
+    converter_data_digitada,
 )
 
 
@@ -3334,6 +3335,12 @@ class App(ctk.CTk):
                 parent=self._janela_resultado)
             return
 
+        #  Vencimento é dado do lote, como a tarifa — perguntado aqui em vez
+        #  de digitado no modelo, que é onde a data virava número.
+        vencimento = self._pedir_vencimento_despesas()
+        if vencimento is None:
+            return
+
         modelo = filedialog.askopenfilename(
             title="Escolha o modelo de despesas do Superlógica",
             filetypes=[("Excel", "*.xlsx")],
@@ -3354,7 +3361,8 @@ class App(ctk.CTk):
             return
 
         try:
-            gerar_planilha_despesas(modelo, destino, lancamentos)
+            gerar_planilha_despesas(modelo, destino, lancamentos,
+                                    vencimento=vencimento)
         except Exception as e:
             messagebox.showerror(
                 "Erro ao gerar",
@@ -3374,6 +3382,67 @@ class App(ctk.CTk):
                 messagebox.showerror(
                     "Erro", f"Não foi possível abrir a planilha:\n{e}",
                     parent=self._janela_resultado)
+
+    def _pedir_vencimento_despesas(self):
+        """
+        Janelinha que pede o vencimento do lote de despesas. Devolve datetime,
+        ou None se o usuário cancelar.
+
+        A data é do lote, não do modelo: perguntar aqui é o que impede alguém
+        de digitá-la na célula do modelo, onde ela virava número e fazia o
+        Superlógica gravar 01/01/1970 e recusar os lançamentos.
+        """
+        tema = self.tema_atual
+        fonte = familia_fonte()
+        janela = ctk.CTkToplevel(self._janela_resultado)
+        janela.title("Vencimento")
+        janela.configure(fg_color=tema["fundo"])
+        janela.resizable(False, False)
+        janela.transient(self._janela_resultado)
+        janela.grab_set()
+
+        escolha = {"data": None}
+
+        ctk.CTkLabel(janela, text="Qual o vencimento destas despesas?",
+                     font=(fonte, 15), text_color=tema["texto"]).pack(
+            padx=24, pady=(24, 4), anchor="w")
+        ctk.CTkLabel(janela, text="Ex.: 21/08/2026", font=(fonte, 12),
+                     text_color=tema["texto_terciario"]).pack(padx=24, anchor="w")
+
+        entrada = ctk.CTkEntry(janela, corner_radius=0, width=200,
+                               fg_color=tema["superficie"], border_width=1,
+                               border_color=tema["borda"], text_color=tema["texto"],
+                               font=(fonte, 14))
+        entrada.pack(padx=24, pady=(12, 4), anchor="w")
+        entrada.focus_set()
+
+        aviso = ctk.CTkLabel(janela, text="", font=(fonte, 12),
+                             text_color=tema["acento"])
+        aviso.pack(padx=24, pady=(0, 8), anchor="w")
+
+        def confirmar():
+            data, mensagem = converter_data_digitada(entrada.get())
+            if data is None:
+                aviso.configure(text=mensagem)
+                return
+            escolha["data"] = data
+            janela.destroy()
+
+        botoes = ctk.CTkFrame(janela, corner_radius=0, fg_color=tema["fundo"])
+        botoes.pack(padx=24, pady=(0, 24), anchor="e")
+        ctk.CTkButton(botoes, text="Cancelar", corner_radius=0, width=100,
+                      fg_color="transparent", hover_color=tema["superficie"],
+                      border_width=1, border_color=tema["borda_forte"],
+                      text_color=tema["texto"], font=(fonte, 13),
+                      command=janela.destroy).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(botoes, text="Continuar", corner_radius=0, width=120,
+                      fg_color=tema["acento"], hover_color=tema["acento_hover"],
+                      text_color=tema["sobre_acento"], border_width=0,
+                      font=(fonte, 13), command=confirmar).pack(side="left")
+
+        entrada.bind("<Return>", lambda _e: confirmar())
+        self.wait_window(janela)
+        return escolha["data"]
 
     def _pedir_valor_protocolo(self, dados):
         """

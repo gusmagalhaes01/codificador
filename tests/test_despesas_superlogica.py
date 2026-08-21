@@ -238,6 +238,98 @@ class TestColunasDeData(unittest.TestCase):
         self.assertTrue(celula.is_date)
 
 
+class TestConverterDataDigitada(unittest.TestCase):
+    """O vencimento é dado do lote, não do modelo — o programa pergunta a cada
+    geração, como já faz com a tarifa. Antes ele era digitado na célula do
+    modelo, e foi ali que a data virou número e a importação quebrou."""
+
+    def test_formato_brasileiro(self):
+        data, aviso = app.converter_data_digitada("21/08/2026")
+        self.assertEqual(data, datetime.datetime(2026, 8, 21))
+        self.assertEqual(aviso, "")
+
+    def test_aceita_traco_e_ponto_como_separador(self):
+        for texto in ("21-08-2026", "21.08.2026"):
+            self.assertEqual(app.converter_data_digitada(texto)[0],
+                             datetime.datetime(2026, 8, 21), texto)
+
+    def test_aceita_ano_de_dois_digitos(self):
+        self.assertEqual(app.converter_data_digitada("21/08/26")[0],
+                         datetime.datetime(2026, 8, 21))
+
+    def test_aceita_espacos_nas_pontas(self):
+        self.assertEqual(app.converter_data_digitada("  21/08/2026 ")[0],
+                         datetime.datetime(2026, 8, 21))
+
+    def test_recusa_data_que_nao_existe(self):
+        """31/02 não é erro de digitação inocente — recusar é melhor que
+        deslizar para 03/03."""
+        data, aviso = app.converter_data_digitada("31/02/2026")
+        self.assertIsNone(data)
+        self.assertTrue(aviso)
+
+    def test_recusa_formato_americano_ambiguo(self):
+        """2026-08-21 não é o formato que se digita aqui; aceitar convidaria a
+        confundir dia com mês em datas como 03/04."""
+        data, _ = app.converter_data_digitada("2026-08-21")
+        self.assertIsNone(data)
+
+    def test_recusa_texto_e_vazio(self):
+        for texto in ("amanhã", "", "   ", "21/08"):
+            data, aviso = app.converter_data_digitada(texto)
+            self.assertIsNone(data, texto)
+            self.assertTrue(aviso, texto)
+
+
+class TestVencimentoNaGeracao(unittest.TestCase):
+    def setUp(self):
+        self.pasta = tempfile.mkdtemp()
+        self.modelo = montar_modelo(os.path.join(self.pasta, "modelo.xlsx"))
+        self.saida = os.path.join(self.pasta, "despesas.xlsx")
+
+    def tearDown(self):
+        shutil.rmtree(self.pasta, ignore_errors=True)
+
+    def test_vencimento_informado_preenche_todas_as_linhas_como_data(self):
+        app.gerar_planilha_despesas(
+            self.modelo, self.saida,
+            [("45", Decimal("7.70")), ("48", Decimal("57.75"))],
+            vencimento=datetime.datetime(2026, 8, 21))
+        sheet = load_workbook(self.saida).active
+        for linha in (2, 3):
+            celula = sheet.cell(row=linha, column=2)
+            self.assertEqual(celula.value, datetime.datetime(2026, 8, 21))
+            self.assertTrue(celula.is_date, f"linha {linha} não saiu como data")
+
+    def test_vencimento_informado_vence_o_que_esta_no_modelo(self):
+        """Se alguém tiver deixado uma data velha no modelo, a do lote manda."""
+        wb = load_workbook(self.modelo)
+        wb.active.cell(row=2, column=2).value = datetime.datetime(2020, 1, 1)
+        wb.active.cell(row=2, column=2).number_format = "DD/MM/YYYY"
+        wb.save(self.modelo)
+        app.gerar_planilha_despesas(self.modelo, self.saida,
+                                    [("45", Decimal("7.70"))],
+                                    vencimento=datetime.datetime(2026, 8, 21))
+        celula = load_workbook(self.saida).active.cell(row=2, column=2)
+        self.assertEqual(celula.value, datetime.datetime(2026, 8, 21))
+
+    def test_sem_vencimento_o_modelo_continua_mandando(self):
+        """Chamada sem vencimento é o comportamento de antes — o modelo decide."""
+        app.gerar_planilha_despesas(self.modelo, self.saida,
+                                    [("45", Decimal("7.70"))])
+        self.assertIsNone(load_workbook(self.saida).active.cell(row=2, column=2).value)
+
+    def test_modelo_sem_coluna_vencimento_avisa_ao_informar_data(self):
+        modelo = montar_modelo(os.path.join(self.pasta, "sem_venc.xlsx"),
+                               cabecalho=["condomínio", "fornecedor", "valor"],
+                               molde=[None, "DINAMICA", None])
+        with self.assertRaises(ValueError) as erro:
+            app.gerar_planilha_despesas(modelo, self.saida,
+                                        [("45", Decimal("7.70"))],
+                                        vencimento=datetime.datetime(2026, 8, 21))
+        self.assertIn("vencimento", str(erro.exception))
+
+
 class TestNormalizarCabecalho(unittest.TestCase):
     def test_tira_acento_caixa_e_espacos(self):
         self.assertEqual(app._normalizar_cabecalho("  Condomínio "), "condominio")

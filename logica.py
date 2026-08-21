@@ -1612,6 +1612,7 @@ def salvar_planilha_protocolo(caminho, linhas):
 #  modelo do usuário sem interpretação.
 COLUNA_DESPESA_CONDOMINIO = "condominio"
 COLUNA_DESPESA_VALOR = "valor"
+COLUNA_DESPESA_VENCIMENTO = "vencimento"
 LINHA_MOLDE_DESPESAS = 2
 
 #  Colunas do modelo que o Superlógica lê como data. O Excel guarda data como
@@ -1660,7 +1661,33 @@ def _normalizar_cabecalho(texto):
     return texto.strip().lower()
 
 
-def gerar_planilha_despesas(caminho_modelo, caminho_saida, lancamentos):
+FORMATOS_DATA_ACEITOS = ("%d/%m/%Y", "%d/%m/%y")
+
+
+def converter_data_digitada(texto):
+    """
+    Lê uma data digitada por uma pessoa e devolve `(data, mensagem)`:
+    `(datetime, "")` quando válida, `(None, aviso)` quando não. O aviso vai
+    direto para a tela, então é frase em português, sem jargão.
+
+    Aceita só o formato brasileiro (`21/08/2026`, `21-08-2026`, `21.08.2026`,
+    `21/08/26`). Não aceita `2026-08-21` de propósito: misturar as duas
+    convenções é como uma data tipo `03/04` acaba lançada com o mês trocado.
+    """
+    bruto = (texto or "").strip().replace("-", "/").replace(".", "/")
+    if not bruto:
+        return None, "Digite a data, como 21/08/2026."
+
+    for formato in FORMATOS_DATA_ACEITOS:
+        try:
+            return datetime.datetime.strptime(bruto, formato), ""
+        except ValueError:
+            continue
+    return None, "Data inválida. Use o formato 21/08/2026."
+
+
+def gerar_planilha_despesas(caminho_modelo, caminho_saida, lancamentos,
+                            vencimento=None):
     """
     Gera a planilha de importação de despesas do Superlógica a partir do
     modelo do usuário. `lancamentos` é [(id_sl, valor), ...] na ordem de saída.
@@ -1674,6 +1701,12 @@ def gerar_planilha_despesas(caminho_modelo, caminho_saida, lancamentos):
     lançamento (fornecedor, categoria, forma de pagamento...). Ela é
     SUBSTITUÍDA pela primeira linha real; nenhuma linha de exemplo pode
     sobrar no arquivo final.
+
+    `vencimento` é data do LOTE, não do modelo: quando informada, vence o que
+    estiver na coluna `vencimento` e é gravada como data de verdade em todas
+    as linhas. Fica fora do modelo de propósito — ela muda a cada geração, e
+    era editando o modelo à mão que a data virava número e o Superlógica
+    recusava os lançamentos.
     """
     if not lancamentos:
         raise ValueError(
@@ -1688,8 +1721,10 @@ def gerar_planilha_despesas(caminho_modelo, caminho_saida, lancamentos):
         if nome:
             colunas.setdefault(nome, celula.column)
 
-    faltando = [nome for nome in (COLUNA_DESPESA_CONDOMINIO, COLUNA_DESPESA_VALOR)
-                if nome not in colunas]
+    obrigatorias = [COLUNA_DESPESA_CONDOMINIO, COLUNA_DESPESA_VALOR]
+    if vencimento is not None:
+        obrigatorias.append(COLUNA_DESPESA_VENCIMENTO)
+    faltando = [nome for nome in obrigatorias if nome not in colunas]
     if faltando:
         raise ValueError(
             "O modelo não tem a(s) coluna(s): " + ", ".join(faltando) +
@@ -1723,6 +1758,11 @@ def gerar_planilha_despesas(caminho_modelo, caminho_saida, lancamentos):
                 celula.number_format = formato
         sheet.cell(row=numero_linha, column=coluna_condominio).value = id_sl
         sheet.cell(row=numero_linha, column=coluna_valor).value = float(valor)
+        if vencimento is not None:
+            celula_venc = sheet.cell(row=numero_linha,
+                                     column=colunas[COLUNA_DESPESA_VENCIMENTO])
+            celula_venc.value = vencimento
+            celula_venc.number_format = FORMATO_DATA_DESPESAS
 
     #  Modelo salvo com mais de uma linha de exemplo não pode deixar resto
     #  depois do último lançamento — seria despesa fantasma na importação.
