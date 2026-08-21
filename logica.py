@@ -1614,6 +1614,40 @@ COLUNA_DESPESA_CONDOMINIO = "condominio"
 COLUNA_DESPESA_VALOR = "valor"
 LINHA_MOLDE_DESPESAS = 2
 
+#  Colunas do modelo que o Superlógica lê como data. O Excel guarda data como
+#  número de série (21/08/2026 é 46255) e só o FORMATO da célula diz que
+#  aquilo é data — um modelo com a célula em "General" gera uma planilha em
+#  que o importador lê o número cru e grava 01/01/1970. Aconteceu de verdade,
+#  e as linhas foram recusadas na importação.
+COLUNAS_DATA_DESPESAS = ("vencimento", "competencia", "liquidacao")
+EPOCA_EXCEL = datetime.datetime(1899, 12, 30)
+SERIAL_EXCEL_MINIMO = 36526   # 2000-01-01
+SERIAL_EXCEL_MAXIMO = 73050   # 2099-12-31
+FORMATO_DATA_DESPESAS = "DD/MM/YYYY"
+
+
+def _data_do_molde(nome_coluna, valor):
+    """
+    Converte para data de verdade o que o modelo trouxer numa coluna de data.
+    Devolve `(valor, formato)` — `formato` é `None` quando não há o que mudar.
+
+    Número dentro da faixa de datas plausíveis é série do Excel e vira data.
+    Qualquer outra coisa levanta erro: melhor recusar do que gerar cobrança
+    com data errada, que é o que acontecia antes desta checagem.
+    """
+    if valor is None:
+        return None, None
+    if isinstance(valor, (int, float)) and not isinstance(valor, bool):
+        if SERIAL_EXCEL_MINIMO <= valor <= SERIAL_EXCEL_MAXIMO:
+            return (EPOCA_EXCEL + datetime.timedelta(days=float(valor)),
+                    FORMATO_DATA_DESPESAS)
+    if isinstance(valor, (datetime.datetime, datetime.date)):
+        return valor, FORMATO_DATA_DESPESAS
+    raise ValueError(
+        f'A coluna "{nome_coluna}" do modelo tem {valor!r}, que não é uma '
+        "data. Abra o modelo e digite a data na célula (ex.: 21/08/2026) — "
+        "o Superlógica recusa o lançamento quando a data não vem como data.")
+
 
 def _normalizar_cabecalho(texto):
     """Cabeçalho sem acento, minúsculo e sem espaços nas pontas. Serve para
@@ -1664,19 +1698,29 @@ def gerar_planilha_despesas(caminho_modelo, caminho_saida, lancamentos):
     coluna_condominio = colunas[COLUNA_DESPESA_CONDOMINIO]
     coluna_valor = colunas[COLUNA_DESPESA_VALOR]
 
+    nomes_por_coluna = {celula.column: _normalizar_cabecalho(celula.value)
+                        for celula in sheet[1]}
+
     #  Valor e estilo de cada célula do molde, lidos ANTES de escrever — a
-    #  primeira linha gerada sobrescreve a própria linha-molde.
+    #  primeira linha gerada sobrescreve a própria linha-molde. Colunas de
+    #  data que não estejam como data de verdade (`is_date`) são convertidas
+    #  aqui; ver `_data_do_molde`.
     molde = []
     for coluna in range(1, sheet.max_column + 1):
         celula = sheet.cell(row=LINHA_MOLDE_DESPESAS, column=coluna)
-        molde.append((celula.value, copy.copy(celula._style)))
+        valor, formato = celula.value, None
+        if nomes_por_coluna.get(coluna) in COLUNAS_DATA_DESPESAS and not celula.is_date:
+            valor, formato = _data_do_molde(nomes_por_coluna[coluna], celula.value)
+        molde.append((valor, copy.copy(celula._style), formato))
 
     for indice, (id_sl, valor) in enumerate(lancamentos):
         numero_linha = LINHA_MOLDE_DESPESAS + indice
-        for coluna, (valor_molde, estilo) in enumerate(molde, start=1):
+        for coluna, (valor_molde, estilo, formato) in enumerate(molde, start=1):
             celula = sheet.cell(row=numero_linha, column=coluna)
             celula.value = valor_molde
             celula._style = copy.copy(estilo)
+            if formato:
+                celula.number_format = formato
         sheet.cell(row=numero_linha, column=coluna_condominio).value = id_sl
         sheet.cell(row=numero_linha, column=coluna_valor).value = float(valor)
 

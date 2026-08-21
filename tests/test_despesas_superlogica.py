@@ -2,6 +2,7 @@ import os
 import shutil
 import sys
 import tempfile
+import datetime
 import unittest
 from decimal import Decimal
 
@@ -159,6 +160,82 @@ class TestGerarPlanilhaDespesas(unittest.TestCase):
         for linha in (2, 3):
             self.assertTrue(sheet.cell(row=linha, column=3).font.bold)
             self.assertTrue(sheet.cell(row=linha, column=3).font.italic)
+
+
+class TestColunasDeData(unittest.TestCase):
+    """O Excel guarda data como número de série e só o formato da célula diz
+    que aquilo é data. Um modelo com a célula em "General" fazia o Superlógica
+    ler o número cru e gravar 01/01/1970 — aconteceu de verdade, e as linhas
+    foram recusadas na importação."""
+
+    def setUp(self):
+        self.pasta = tempfile.mkdtemp()
+        self.saida = os.path.join(self.pasta, "despesas.xlsx")
+
+    def tearDown(self):
+        shutil.rmtree(self.pasta, ignore_errors=True)
+
+    def modelo_com_vencimento(self, valor, formato=None, nome="vencimento"):
+        caminho = os.path.join(self.pasta, "m.xlsx")
+        wb = Workbook()
+        sheet = wb.active
+        sheet.append(["condomínio", nome, "fornecedor", "valor"])
+        sheet.append([None, valor, "DINAMICA", None])
+        if formato:
+            sheet.cell(row=2, column=2).number_format = formato
+        wb.save(caminho)
+        return caminho
+
+    def test_numero_de_serie_vira_data_de_verdade(self):
+        #  46255 é 21/08/2026 no calendário do Excel
+        modelo = self.modelo_com_vencimento(46255)
+        app.gerar_planilha_despesas(modelo, self.saida,
+                                    [("45", Decimal("7.70")), ("48", Decimal("57.75"))])
+        sheet = load_workbook(self.saida).active
+        for linha in (2, 3):
+            celula = sheet.cell(row=linha, column=2)
+            self.assertTrue(celula.is_date, f"linha {linha} não saiu como data")
+            self.assertEqual(celula.value, datetime.datetime(2026, 8, 21))
+
+    def test_data_de_verdade_no_modelo_e_preservada(self):
+        modelo = self.modelo_com_vencimento(datetime.datetime(2026, 8, 21),
+                                            formato="DD/MM/YYYY")
+        app.gerar_planilha_despesas(modelo, self.saida, [("45", Decimal("7.70"))])
+        celula = load_workbook(self.saida).active.cell(row=2, column=2)
+        self.assertTrue(celula.is_date)
+        self.assertEqual(celula.value, datetime.datetime(2026, 8, 21))
+
+    def test_vencimento_vazio_continua_vazio(self):
+        """O modelo original não preenche vencimento — isso é legítimo."""
+        modelo = self.modelo_com_vencimento(None)
+        app.gerar_planilha_despesas(modelo, self.saida, [("45", Decimal("7.70"))])
+        self.assertIsNone(load_workbook(self.saida).active.cell(row=2, column=2).value)
+
+    def test_texto_no_lugar_da_data_e_recusado(self):
+        modelo = self.modelo_com_vencimento("21/08/2026")
+        with self.assertRaises(ValueError) as erro:
+            app.gerar_planilha_despesas(modelo, self.saida, [("45", Decimal("7.70"))])
+        self.assertIn("vencimento", str(erro.exception))
+
+    def test_numero_fora_da_faixa_de_datas_e_recusado(self):
+        """123 como série seria 1900 — não é vencimento de ninguém, então é
+        mais provável que alguém tenha digitado outra coisa na coluna."""
+        modelo = self.modelo_com_vencimento(123)
+        with self.assertRaises(ValueError) as erro:
+            app.gerar_planilha_despesas(modelo, self.saida, [("45", Decimal("7.70"))])
+        self.assertIn("vencimento", str(erro.exception))
+
+    def test_competencia_recebe_o_mesmo_tratamento(self):
+        modelo = self.modelo_com_vencimento(46255, nome="competencia")
+        app.gerar_planilha_despesas(modelo, self.saida, [("45", Decimal("7.70"))])
+        celula = load_workbook(self.saida).active.cell(row=2, column=2)
+        self.assertTrue(celula.is_date)
+
+    def test_liquidacao_com_acento_no_cabecalho_tambem(self):
+        modelo = self.modelo_com_vencimento(46255, nome="liquidação")
+        app.gerar_planilha_despesas(modelo, self.saida, [("45", Decimal("7.70"))])
+        celula = load_workbook(self.saida).active.cell(row=2, column=2)
+        self.assertTrue(celula.is_date)
 
 
 class TestNormalizarCabecalho(unittest.TestCase):
