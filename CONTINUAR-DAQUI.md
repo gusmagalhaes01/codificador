@@ -2,91 +2,112 @@
 
 Apagar este arquivo quando o trabalho terminar.
 
-## O que fazer
+## Como retomar
 
 ```
 git checkout despesas-superlogica
 ```
 
-Pedir ao Claude: **"escreve o plano de implementação do spec de despesas e executa com subagente por task"**.
+E dizer ao Claude: **"leia CONTINUAR-DAQUI.md e continue"**.
 
-O spec já está aprovado em
-`docs/superpowers/specs/2026-08-19-despesas-superlogica-design.md`. Não precisa
-rediscutir o desenho — só planejar e implementar.
+## O que fazer primeiro, e é a única coisa que trava tudo
+
+**Importar `teste E - vencimento pelo programa.xlsx` no Superlógica.**
+
+Está em `C:\Users\Dell\Downloads\TESTE CORREIO\Nova pasta`. Foi gerado pelo
+programa já corrigido, usando o `Despesas.xlsx` do Downloads (o modelo sem
+vencimento) e a data vinda da janelinha nova. Duas linhas: condomínio 44 com
+R$ 57,75 e condomínio 42 com R$ 11,55, ambas com vencimento 21/08/2026.
+
+- **Se as duas entrarem certas:** o recurso está pronto. Falta só atualizar o
+  `CLAUDE.md` com o achado da data e fechar a v6.14.0 (merge, tag, exe,
+  release) — o mesmo caminho da v6.13.0.
+- **Se algo entrar errado:** anotar exatamente o que o Superlógica mostrou e
+  investigar antes de mexer no código.
 
 ## Estado
 
-- Branch `despesas-superlogica`: só o spec, nenhuma linha de código.
-- `main` em **v6.13.0**, publicada com executável. 164 testes passando.
+- Branch `despesas-superlogica`, **8 commits à frente** da `main`, tudo
+  commitado. **203 testes passando.**
+- `main` está na **v6.13.0**, publicada com executável.
+- O recurso está funcional de ponta a ponta; falta a confirmação no
+  Superlógica e a documentação.
 
-## O recurso, em uma frase
+## O que o recurso faz
 
-Botão **"Gerar planilha do Superlógica"** no painel de resultado da aba 3, que
-transforma o lote de protocolos na planilha de importação de despesas: uma
-linha por protocolo cobrável, `condomínio` = ID SL do cadastro, `valor` = valor
-apurado, demais campos copiados de uma linha-molde.
+Botão **"Gerar planilha do Superlógica"** no rodapé do painel de resultado da
+aba 3. Fluxo: confere as travas → **pergunta o vencimento** → você escolhe o
+modelo e onde salvar → gera uma linha por protocolo cobrável, com
+`condomínio` = ID SL do cadastro e `valor` = valor apurado.
 
-## Fatos já verificados — não redescobrir
+## O bug que dominou a sessão, e a lição
 
-Conferidos contra os arquivos reais nesta máquina:
+Você gerou uma planilha com três lançamentos e **só um entrou no Superlógica**,
+com vencimento 01/01/1970.
 
-- **Modelo:** `C:\Users\Dell\Downloads\Despesas.xlsx`, 32 colunas.
-  `condomínio` é a coluna 1 (com acento no cabeçalho: `'condomínio'`), `valor`
-  é a coluna 10. Mesmo assim o código deve achá-las **pelo nome normalizado**,
-  não pela posição — o layout é do Superlógica e pode mudar.
-- **Linha 2 do modelo** tem seis células preenchidas: colunas 4 (fornecedor),
-  5 (favorecido), 6 (conta_categoria), 7 (tipo_de_documento),
-  11 (forma_de_pagamento) e 16 (chave = `46`). É o molde, e **é substituída**
-  pela primeira linha real — não pode sobrar linha meio vazia.
-- **`carregar_cadastro` já devolve `id_sl`** em cada registro (string, vazia
-  quando não há). Nenhuma mudança necessária ali além da docstring, que ainda
-  afirma que o campo "não é usado por nada".
-- **`openpyxl` 3.1.5** copia estilo entre células com
-  `celula._style = copy.copy(outra._style)` — testado, funciona.
-- **`tests/cadastro_teste.py` ainda não tem `id_sl`.** Precisa ganhar o campo,
-  com um dos condomínios deixado sem ele de propósito (sugestão: LAGO
-  MAGGIORE), para cobrir o caso de cadastrado sem ID.
+Causa raiz: o Excel guarda data como número de série — `21/08/2026` é `46255` —
+e só o **formato da célula** diz que aquilo é uma data. O modelo tinha a célula
+em `General`, então o arquivo saía com o número cru. O Superlógica lia `46255`,
+gravava a época do Unix e recusava as linhas.
 
-## Correção a fazer no spec durante o planejamento
+Minha primeira suspeita foi o campo `chave`, repetido nas três linhas. **Estava
+errada.** Só não virou "conserto" porque testamos antes de mexer: dois arquivos
+variando só a `chave` e um variando só a data. O da data resolveu.
 
-O spec escreve `lancamentos_de_despesa(linhas, cadastro)`, recebendo as linhas
-da planilha de protocolos. **Isso não funciona.** Nas linhas prontas, um
-arquivo que não é protocolo e uma pendência do tipo "não foi possível ler o
-documento" ficam idênticos — código, condomínio e valor todos vazios — mas um
-deve travar a geração e o outro deve ser ignorado.
+Duas correções entraram:
 
-A função precisa receber o **`resultado` do painel**, que já separa
-`processados`, `pendentes` e `ignorados`.
+1. **Guarda:** número numa coluna de data (`vencimento`, `competência`,
+   `liquidação`) vira data de verdade se estiver na faixa 2000–2099; qualquer
+   outra coisa levanta erro com o nome da coluna, em vez de virar cobrança com
+   data errada.
+2. **O programa pergunta o vencimento**, em vez de você digitar no modelo. A
+   data é dado do lote, como a tarifa — deixá-la no modelo obrigava a editar o
+   arquivo toda vez, e era nessa edição que ela virava número. A guarda é a
+   rede; perguntar é o conserto na origem.
 
 ## Decisões fechadas (não rediscutir)
 
 - Modelo lido do arquivo do usuário e **copiado**, nunca reconstruído.
-- Mesmo condomínio em dois protocolos gera **duas linhas** (o 11161 MARILIA sai
-  como `496 / 138,60` e `496 / 119,35`).
-- **Não gera nada** enquanto houver protocolo cobrável incompleto — pendência
-  sem valor ou condomínio sem ID SL. A mensagem lista quais e onde resolver.
-- `vencimento` e `competência` continuam em branco, como no modelo.
-- Botão neutro (contornado); cobalto é reservado ao que resolve pendência.
+- Mesmo condomínio em dois protocolos gera **duas linhas**.
+- **Não gera nada** enquanto houver protocolo cobrável sem valor ou sem ID SL;
+  a mensagem lista quais e onde resolver cada caso.
+- Vencimento perguntado a cada geração, sem valor sugerido.
+- Campo de data aceita `21/08/2026`, `21-08-2026`, `21.08.2026`, `21/08/26`.
+  Recusa `2026-08-21` de propósito: misturar convenções é como `03/04` acaba
+  lançada com o mês trocado.
 
-## Ponto em aberto, sem pressa
+## Sobre trocar para CSV
 
-A trava para o lote inteiro por causa de **um** condomínio sem ID SL, e **10
-dos 764 estão sem**. Vai acontecer. Três saídas: preencher na aba de Cadastro
-quando travar; afrouxar a trava (gerar sem os incompletos, avisando); ou
-preencher os 10 de uma vez a partir de um export do Superlógica, com
-`tests/_importar_id_sl.py`, que é reexecutável.
+Você levantou, e a ideia é boa: esse bug é **impossível** em CSV, onde o texto
+é o valor e não existe metadado escondido. O argumento que me fez escolher
+xlsx — preservar formatos e validações do modelo — **caiu**: conferi as 32
+colunas do seu modelo e todas estão em `General`, sem validação nenhuma.
 
-## Lotes para teste (fora do repositório)
+Mantive xlsx porque agora está provado funcionando, e trocar de formato abriria
+três incógnitas (separador de campo, separador decimal, codificação por causa
+do acento em "bancária") para fechar uma já resolvida. Se aparecer outro
+problema de metadado invisível, a recomendação inverte. Para decidir, o que
+falta é um CSV modelo exportado do próprio Superlógica.
 
-- `C:\Users\Dell\Downloads\TESTE CORREIO` — quatro de uma página, fecham em
-  R$ 123,20 à tarifa de R$ 3,85.
-- `C:\Users\Dell\Downloads\TESTE CORREIO\Nova pasta` — quatro multipágina; três
-  fecham em R$ 488,95 e o do 11049 fica pendente de propósito (alguém riscou o
-  total impresso e escreveu 78 à caneta).
+## Arquivos de teste gerados (podem ser apagados)
 
-## Pendências herdadas da v6.13.0
+Em `C:\Users\Dell\Downloads\TESTE CORREIO\Nova pasta`:
 
-- Ninguém abriu o painel novo da aba 3 ainda — a aparência nunca foi conferida
-  por uma pessoa.
-- Confirmar que o Superlógica lê o carimbo novo, que passou a trazer só
+| Arquivo | O que é |
+|---|---|
+| `teste correios.xlsx` | o seu, com o defeito — vencimento como número |
+| `teste A - chave diferente.xlsx` | hipótese descartada |
+| `teste B - chave vazia.xlsx` | hipótese descartada |
+| `teste C - data corrigida.xlsx` | você corrigiu a data à mão; importou certo |
+| `teste D - gerado com a correcao.xlsx` | programa corrigindo um modelo quebrado |
+| **`teste E - vencimento pelo programa.xlsx`** | **o que importa testar** |
+
+## Pendências herdadas
+
+- Ninguém abriu o painel da aba 3 e olhou — a aparência nunca foi conferida por
+  uma pessoa.
+- Confirmar que o Superlógica lê o carimbo novo do PDF, que passou a trazer só
   `R$ 46,20` sem a conta, justamente para ele não capturar a tarifa.
+- 10 dos 764 condomínios estão sem ID SL. Vai travar um lote em algum momento;
+  o conserto é preencher na aba de Cadastro, ou reimportar via
+  `tests/_importar_id_sl.py`, que é reexecutável.
