@@ -77,6 +77,7 @@ from logica import (
     converter_valor_digitado,
     linha_planilha_protocolo, salvar_planilha_protocolo,
     extrair_texto_escaneado, COLUNAS_PROTOCOLO, resolver_protocolo_manual,
+    lancamentos_de_despesa, gerar_planilha_despesas,
 )
 
 
@@ -3119,6 +3120,14 @@ class App(ctk.CTk):
         ).pack(side="left", fill="x", expand=True)
 
         ctk.CTkButton(
+            rodape, text="Gerar planilha do Superlógica", corner_radius=0,
+            fg_color="transparent", hover_color=tema["superficie"],
+            border_width=1, border_color=tema["borda_forte"],
+            text_color=tema["texto"], font=(fonte, 13),
+            command=self._acao_gerar_despesas,
+        ).pack(side="right", padx=(0, 8))
+
+        ctk.CTkButton(
             rodape, text="Abrir planilha", corner_radius=0,
             fg_color="transparent", hover_color=tema["superficie"],
             border_width=1, border_color=tema["borda_forte"],
@@ -3285,6 +3294,87 @@ class App(ctk.CTk):
                 "Erro", f"Não foi possível abrir a planilha:\n{e}",
                 parent=self._janela_resultado)
 
+    def _acao_gerar_despesas(self):
+        """
+        Gera a planilha de importação de despesas do Superlógica a partir
+        deste lote: uma linha por protocolo cobrável, com o condomínio
+        preenchido pelo ID SL do cadastro.
+
+        Recusa gerar enquanto houver protocolo cobrável incompleto — e diz
+        quais são e onde resolver cada caso, porque "não gera nada" sem a
+        lista vira adivinhação.
+        """
+        resultado = getattr(self, "_resultado_protocolos", None)
+        if not resultado:
+            return
+
+        lancamentos, travas = lancamentos_de_despesa(resultado, self.cadastro)
+
+        if travas["sem_valor"] or travas["sem_id_sl"]:
+            partes = []
+            if travas["sem_valor"]:
+                partes.append(
+                    'Sem valor — resolva no botão "Informar valor":\n  '
+                    + "\n  ".join(travas["sem_valor"]))
+            if travas["sem_id_sl"]:
+                partes.append(
+                    'Sem o código do Superlógica — preencha o "ID SL" na aba '
+                    'de Cadastro:\n  ' + "\n  ".join(travas["sem_id_sl"]))
+            messagebox.showwarning(
+                "Ainda não dá para gerar",
+                "A planilha de despesas não foi gerada porque estes protocolos "
+                "estão incompletos:\n\n" + "\n\n".join(partes),
+                parent=self._janela_resultado)
+            return
+
+        if not lancamentos:
+            messagebox.showinfo(
+                "Nada para lançar",
+                "Nenhum protocolo deste lote vira despesa.",
+                parent=self._janela_resultado)
+            return
+
+        modelo = filedialog.askopenfilename(
+            title="Escolha o modelo de despesas do Superlógica",
+            filetypes=[("Excel", "*.xlsx")],
+            parent=self._janela_resultado)
+        if not modelo:
+            return
+
+        ctx = self._ctx_protocolos or {}
+        pasta_sugerida = os.path.dirname(ctx.get("destino", "")) or None
+        destino = filedialog.asksaveasfilename(
+            title="Salvar planilha de despesas como",
+            defaultextension=".xlsx",
+            filetypes=[("Excel", "*.xlsx")],
+            initialfile="despesas_superlogica.xlsx",
+            initialdir=pasta_sugerida,
+            parent=self._janela_resultado)
+        if not destino:
+            return
+
+        try:
+            gerar_planilha_despesas(modelo, destino, lancamentos)
+        except Exception as e:
+            messagebox.showerror(
+                "Erro ao gerar",
+                f"Não foi possível gerar a planilha de despesas:\n{e}",
+                parent=self._janela_resultado)
+            return
+
+        plural = "lançamento" if len(lancamentos) == 1 else "lançamentos"
+        if messagebox.askyesno(
+            "Planilha de despesas pronta",
+            f"{len(lancamentos)} {plural} gravado(s) em:\n{destino}\n\nAbrir agora?",
+            parent=self._janela_resultado,
+        ):
+            try:
+                os.startfile(destino)
+            except Exception as e:
+                messagebox.showerror(
+                    "Erro", f"Não foi possível abrir a planilha:\n{e}",
+                    parent=self._janela_resultado)
+
     def _pedir_valor_protocolo(self, dados):
         """
         Janelinha que pede o valor em reais de um protocolo pendente. Devolve
@@ -3396,6 +3486,11 @@ class App(ctk.CTk):
         registro_processado = {
             "arquivo": dados["arquivo"],
             "condominio": dados.get("condominio", ""),
+            #  O código é o que liga este protocolo ao ID SL do cadastro na
+            #  hora de gerar a planilha de despesas — sem ele, um protocolo
+            #  resolvido à mão travaria a geração por "sem ID SL", que é
+            #  justamente o caso que mais precisa entrar na cobrança.
+            "codigo": dados.get("codigo"),
             "unidades": None,
             #  Decimal, igual ao resto do painel — só a planilha converte
             #  para float na hora de gravar.
