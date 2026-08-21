@@ -16,6 +16,23 @@ if _AQUI not in sys.path:
     sys.path.insert(0, _AQUI)
 
 import logica as app
+from cadastro_teste import CADASTRO_TESTE
+
+KLOSTERS = {"arquivo": "a.pdf", "codigo": "10004", "condominio": "10004 KLOSTERS",
+            "valor": Decimal("57.75")}
+SAN_REMO = {"arquivo": "b.pdf", "codigo": "10002", "condominio": "10002 SAN REMO",
+            "valor": Decimal("11.55")}
+#  Cadastrado, mas sem ID no Superlógica — 10 dos 764 reais estão assim.
+LAGO = {"arquivo": "c.pdf", "codigo": "10590", "condominio": "10590 LAGO MAGGIORE",
+        "valor": Decimal("7.70")}
+#  Resolvido à mão depois de "não foi possível ler": não tem código nenhum.
+SEM_CODIGO = {"arquivo": "d.pdf", "codigo": None, "condominio": "",
+              "valor": Decimal("300.30")}
+
+
+def resultado_com(processados=(), pendentes=(), ignorados=()):
+    return {"processados": list(processados), "pendentes": list(pendentes),
+            "ignorados": list(ignorados)}
 
 #  Modelo sintético no formato do arquivo real do Superlógica: cabeçalho na
 #  linha 1 e uma linha de exemplo na 2, com os campos que se repetem
@@ -151,6 +168,70 @@ class TestNormalizarCabecalho(unittest.TestCase):
 
     def test_celula_vazia_vira_string_vazia(self):
         self.assertEqual(app._normalizar_cabecalho(None), "")
+
+
+class TestLancamentosDeDespesa(unittest.TestCase):
+    def test_um_lancamento_por_protocolo_na_ordem(self):
+        lancamentos, travas = app.lancamentos_de_despesa(
+            resultado_com([KLOSTERS, SAN_REMO]), CADASTRO_TESTE)
+        self.assertEqual(lancamentos, [("44", Decimal("57.75")),
+                                       ("42", Decimal("11.55"))])
+        self.assertEqual(travas, {"sem_valor": [], "sem_id_sl": []})
+
+    def test_mesmo_condominio_duas_vezes_gera_dois_lancamentos(self):
+        """Cada protocolo físico vira um lançamento — somar quebraria a
+        correspondência com o papel que originou cada um."""
+        outro = dict(KLOSTERS, arquivo="a2.pdf", valor=Decimal("138.60"))
+        lancamentos, _ = app.lancamentos_de_despesa(
+            resultado_com([KLOSTERS, outro]), CADASTRO_TESTE)
+        self.assertEqual(lancamentos, [("44", Decimal("57.75")),
+                                       ("44", Decimal("138.60"))])
+
+    def test_pendente_sem_valor_trava(self):
+        lancamentos, travas = app.lancamentos_de_despesa(
+            resultado_com([KLOSTERS], pendentes=[{"arquivo": "p.pdf"}]),
+            CADASTRO_TESTE)
+        self.assertEqual(travas["sem_valor"], ["p.pdf"])
+        self.assertEqual(travas["sem_id_sl"], [])
+
+    def test_condominio_sem_id_sl_trava(self):
+        lancamentos, travas = app.lancamentos_de_despesa(
+            resultado_com([KLOSTERS, LAGO]), CADASTRO_TESTE)
+        self.assertEqual(travas["sem_id_sl"], ["c.pdf"])
+        self.assertEqual(travas["sem_valor"], [])
+
+    def test_protocolo_sem_codigo_trava_por_falta_de_id(self):
+        _, travas = app.lancamentos_de_despesa(
+            resultado_com([SEM_CODIGO]), CADASTRO_TESTE)
+        self.assertEqual(travas["sem_id_sl"], ["d.pdf"])
+
+    def test_codigo_fora_do_cadastro_trava_por_falta_de_id(self):
+        fora = dict(KLOSTERS, arquivo="e.pdf", codigo="99999")
+        _, travas = app.lancamentos_de_despesa(
+            resultado_com([fora]), CADASTRO_TESTE)
+        self.assertEqual(travas["sem_id_sl"], ["e.pdf"])
+
+    def test_arquivo_que_nao_e_protocolo_nao_trava_nem_vira_lancamento(self):
+        """Ignorados nunca deveriam virar despesa — não podem travar o lote."""
+        lancamentos, travas = app.lancamentos_de_despesa(
+            resultado_com([KLOSTERS], ignorados=[{"arquivo": "outro.pdf"}]),
+            CADASTRO_TESTE)
+        self.assertEqual(lancamentos, [("44", Decimal("57.75"))])
+        self.assertEqual(travas, {"sem_valor": [], "sem_id_sl": []})
+
+    def test_lote_inteiro_travado_devolve_lista_vazia(self):
+        lancamentos, travas = app.lancamentos_de_despesa(
+            resultado_com([LAGO], pendentes=[{"arquivo": "p.pdf"}]),
+            CADASTRO_TESTE)
+        self.assertEqual(lancamentos, [])
+        self.assertEqual(travas["sem_id_sl"], ["c.pdf"])
+        self.assertEqual(travas["sem_valor"], ["p.pdf"])
+
+    def test_valor_continua_decimal(self):
+        """Dinheiro só vira float na escrita da planilha."""
+        lancamentos, _ = app.lancamentos_de_despesa(
+            resultado_com([KLOSTERS]), CADASTRO_TESTE)
+        self.assertIsInstance(lancamentos[0][1], Decimal)
 
 
 if __name__ == "__main__":

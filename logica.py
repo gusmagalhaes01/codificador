@@ -1130,8 +1130,8 @@ def carregar_cadastro(caminho):
 
     "ID SL" (4ª coluna) é o código do condomínio no Superlógica — outro
     número, sem relação com o código interno (ex: KLOSTERS é 10004 aqui e 44
-    lá). Guardado só como referência: nada da identificação nem dos carimbos
-    usa esse campo. Planilha antiga de 3 colunas carrega normalmente, com o
+    lá). Nada da identificação nem dos carimbos usa esse campo; quem usa é a
+    geração da planilha de despesas do Superlógica (`lancamentos_de_despesa`). Planilha antiga de 3 colunas carrega normalmente, com o
     campo vazio.
     """
     cadastro = {}
@@ -1687,3 +1687,44 @@ def gerar_planilha_despesas(caminho_modelo, caminho_saida, lancamentos):
         sheet.delete_rows(primeira_sobra, sheet.max_row - primeira_sobra + 1)
 
     wb.save(caminho_saida)
+
+
+def lancamentos_de_despesa(resultado, cadastro):
+    """
+    Monta os lançamentos de despesa a partir do resultado de um lote de
+    protocolos. Devolve `(lancamentos, travas)`:
+
+    - `lancamentos`: [(id_sl, valor)] na ordem do painel, pronto para
+      `gerar_planilha_despesas`;
+    - `travas`: {"sem_valor": [...], "sem_id_sl": [...]} com os nomes dos
+      arquivos que impedem a geração — a interface não gera nada enquanto
+      houver qualquer um, e mostra os dois grupos separados porque a ação é
+      diferente (pendência resolve no painel; ID SL resolve no cadastro).
+
+    Recebe o `resultado` do painel, e não as linhas da planilha, porque nas
+    linhas um arquivo que não é protocolo e uma pendência "não foi possível
+    ler o documento" ficam idênticos (código, condomínio e valor vazios) — e
+    um deve travar enquanto o outro deve ser ignorado.
+
+    Mesmo condomínio em dois protocolos gera dois lançamentos: cada um
+    continua rastreável até o papel que o originou.
+    """
+    codigos = _codigos_do_cadastro(cadastro)
+    lancamentos = []
+    travas = {"sem_valor": [], "sem_id_sl": []}
+
+    #  Ignorados ficam de fora sem travar: não são protocolo, nunca deveriam
+    #  virar despesa.
+    for item in resultado.get("pendentes", []) or []:
+        travas["sem_valor"].append(item.get("arquivo", ""))
+
+    for item in resultado.get("processados", []) or []:
+        codigo = item.get("codigo") or ""
+        registro = cadastro.get(codigos.get(codigo, "")) if codigo else None
+        id_sl = (registro or {}).get("id_sl", "")
+        if not id_sl:
+            travas["sem_id_sl"].append(item.get("arquivo", ""))
+            continue
+        lancamentos.append((id_sl, item["valor"]))
+
+    return lancamentos, travas
