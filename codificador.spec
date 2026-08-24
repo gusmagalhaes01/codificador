@@ -65,7 +65,15 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     # Reduz o tamanho do exe: nada aqui é usado pelo app.
-    excludes=["tkinter.test", "test", "unittest", "pydoc_data"],
+    #  lxml fica de fora de propósito. Ele não é dependência do projeto (não
+    #  está no requirements.txt), mas se estiver instalado por acaso na
+    #  máquina do build o PyInstaller o empacota — e aí o openpyxl passa a
+    #  ESCREVER o XML das planilhas por ele, em vez do parser da biblioteca
+    #  padrão. Todas as releases até a v6.13.0 saíram sem lxml; trocar o
+    #  gerador de XML sem querer, num programa cujo entregável é uma planilha
+    #  lida por outro sistema, é risco sem contrapartida. Também economiza
+    #  ~4 MB no zip.
+    excludes=["tkinter.test", "test", "unittest", "pydoc_data", "lxml"],
     noarchive=False,
     optimize=0,
 )
