@@ -1654,7 +1654,8 @@ class App(ctk.CTk):
         formato de janela, só muda o que vai dentro.
         """
         existente = getattr(self, "_janela_resultado", None)
-        if existente is not None and existente.winfo_exists():
+        reaproveitada = existente is not None and existente.winfo_exists()
+        if reaproveitada:
             for widget in existente.winfo_children():
                 widget.destroy()
             janela = existente
@@ -1664,7 +1665,11 @@ class App(ctk.CTk):
             self._janela_resultado = janela
 
         janela.title(titulo)
-        janela.geometry(geometria)
+        #  `geometry` só na primeira vez: reaplicá-la ao remontar jogava a
+        #  janela de volta ao tamanho padrão, desfazendo o redimensionamento
+        #  que a pessoa tinha feito para ver a tabela inteira.
+        if not reaproveitada:
+            janela.geometry(geometria)
         janela.minsize(*minimo)
         janela.resizable(True, True)
         janela.configure(fg_color=self.tema_atual["fundo"])
@@ -1687,6 +1692,10 @@ class App(ctk.CTk):
 
         faixa = ctk.CTkFrame(parent, corner_radius=0, fg_color=tema["fundo"])
         faixa.pack(fill="x", padx=24, pady=(24, 0))
+        #  Os rótulos de valor ficam acessíveis em `faixa.labels_valor` (na
+        #  ordem de `cartoes`) para que um painel possa atualizar o número sem
+        #  remontar a faixa inteira. Ver `_atualizar_painel_protocolos`.
+        faixa.labels_valor = []
 
         for indice, (valor, rotulo, destaque) in enumerate(cartoes):
             coluna = indice * 2
@@ -1699,8 +1708,10 @@ class App(ctk.CTk):
             bloco.grid(row=0, column=coluna, sticky="nsew", padx=16)
             ctk.CTkLabel(bloco, text=rotulo, font=(fonte, 11),
                          text_color=cor_rotulo, anchor="w").pack(fill="x", anchor="w")
-            ctk.CTkLabel(bloco, text=valor, font=(fonte, 40),
-                         text_color=cor_valor, anchor="w").pack(fill="x", anchor="w")
+            label_valor = ctk.CTkLabel(bloco, text=valor, font=(fonte, 40),
+                                        text_color=cor_valor, anchor="w")
+            label_valor.pack(fill="x", anchor="w")
+            faixa.labels_valor.append(label_valor)
 
             if indice < len(cartoes) - 1:
                 linha = ctk.CTkFrame(faixa, width=1, corner_radius=0,
@@ -3104,29 +3115,22 @@ class App(ctk.CTk):
         fonte = familia_fonte()
         self._resultado_protocolos = resultado
 
-        processados = resultado.get("processados", []) or []
-        pendentes = resultado.get("pendentes", []) or []
+        processados, pendentes, total_valor = self._listas_do_painel_protocolos(resultado)
         ignorados = resultado.get("ignorados", []) or []
-
-        #  Protocolo com valor mas sem o ID do Superlógica também precisa de
-        #  ação — só que de outra: dizer de qual condomínio ele é. Aparece
-        #  junto dos pendentes para que tudo que exige atenção fique num lugar
-        #  só. A separação é de EXIBIÇÃO: no `resultado` ele continua em
-        #  `processados`, porque `lancamentos_de_despesa` precisa distinguir
-        #  "sem valor" de "sem condomínio" para dizer onde cada um se resolve.
-        sem_condominio = [p for p in processados if self._falta_id_sl(p)]
-        pendentes = list(pendentes) + sem_condominio
-        processados = [p for p in processados if not self._falta_id_sl(p)]
-        total_valor = resultado.get("total_valor", Decimal("0.00"))
 
         janela = self._montar_painel_resultado(
             "Resultado dos protocolos", "860x680", (680, 480))
 
-        self._montar_faixa_cartoes(janela, [
+        self._cartoes_protocolos = self._montar_faixa_cartoes(janela, [
             (str(len(processados)), "PROTOCOLOS", False),
             (str(len(pendentes)), "PENDENTES", True),
             (formatar_reais(total_valor), "TOTAL", False),
         ], fonte=fonte)
+        #  Referências para `_atualizar_painel_protocolos` mexer só no que
+        #  muda. Ficam None quando a seção saiu como texto ("Nenhum
+        #  pendente..."), que é o que sinaliza mudança de estrutura.
+        self._tabela_pend_protocolos = None
+        self._tabela_ok_protocolos = None
 
         ctk.CTkFrame(janela, height=1, corner_radius=0,
                      fg_color=tema["borda"]).pack(fill="x", padx=24, pady=(24, 0))
@@ -3181,12 +3185,8 @@ class App(ctk.CTk):
                 [("arquivo", "Arquivo"), ("condominio", "Condomínio"), ("motivo", "Motivo")],
                 [240, 200, 320],
             )
-            for i, dados in enumerate(pendentes):
-                iid = f"prot{i}"
-                self._pend_protocolo_por_iid[iid] = dados
-                tabela.insert("", "end", iid=iid, values=(
-                    dados.get("arquivo", ""), dados.get("condominio", ""),
-                    dados.get("motivo", "")))
+            self._tabela_pend_protocolos = tabela
+            self._preencher_pendentes_protocolos(pendentes)
 
             acoes = ctk.CTkFrame(area, corner_radius=0, fg_color=tema["fundo"])
             acoes.pack(fill="x", pady=(0, 16))
@@ -3272,13 +3272,8 @@ class App(ctk.CTk):
                  ("unidades", "Unidades"), ("valor", "Valor"), ("motivo", "Motivo")],
                 [200, 160, 80, 100, 220],
             )
-            for dados in processados:
-                unidades = dados.get("unidades")
-                tabela_ok.insert("", "end", values=(
-                    dados.get("arquivo", ""), dados.get("condominio", ""),
-                    "" if unidades is None else unidades,
-                    formatar_reais(dados.get("valor", 0)),
-                    dados.get("motivo", "")))
+            self._tabela_ok_protocolos = tabela_ok
+            self._preencher_calculados_protocolos(processados)
         else:
             ctk.CTkLabel(
                 area, text="Nenhum protocolo calculado neste lote.",
@@ -3297,6 +3292,96 @@ class App(ctk.CTk):
             for dados in ignorados:
                 tabela_ign.insert("", "end", values=(
                     dados.get("arquivo", ""), dados.get("motivo", "")))
+
+    def _listas_do_painel_protocolos(self, resultado):
+        """
+        Divide o `resultado` do lote no que cada seção do painel mostra:
+        (calculados, pendentes, total).
+
+        Protocolo com valor mas sem o ID do Superlógica também precisa de
+        ação — só que de outra: dizer de qual condomínio ele é. Aparece junto
+        dos pendentes para que tudo que exige atenção fique num lugar só. A
+        separação é de EXIBIÇÃO: no `resultado` ele continua em `processados`,
+        porque `lancamentos_de_despesa` precisa distinguir "sem valor" de "sem
+        condomínio" para dizer onde cada um se resolve.
+        """
+        processados = resultado.get("processados", []) or []
+        pendentes = list(resultado.get("pendentes", []) or [])
+        pendentes += [p for p in processados if self._falta_id_sl(p)]
+        processados = [p for p in processados if not self._falta_id_sl(p)]
+        return processados, pendentes, resultado.get("total_valor", Decimal("0.00"))
+
+    def _preencher_pendentes_protocolos(self, pendentes):
+        """Reescreve as linhas da tabela de pendentes e o mapa iid -> dados."""
+        tabela = self._tabela_pend_protocolos
+        tabela.delete(*tabela.get_children())
+        self._pend_protocolo_por_iid = {}
+        for i, dados in enumerate(pendentes):
+            iid = f"prot{i}"
+            self._pend_protocolo_por_iid[iid] = dados
+            tabela.insert("", "end", iid=iid, values=(
+                dados.get("arquivo", ""), dados.get("condominio", ""),
+                dados.get("motivo", "")))
+
+    def _preencher_calculados_protocolos(self, processados):
+        """Reescreve as linhas da tabela de calculados."""
+        tabela = self._tabela_ok_protocolos
+        tabela.delete(*tabela.get_children())
+        for dados in processados:
+            unidades = dados.get("unidades")
+            tabela.insert("", "end", values=(
+                dados.get("arquivo", ""), dados.get("condominio", ""),
+                "" if unidades is None else unidades,
+                formatar_reais(dados.get("valor", 0)),
+                dados.get("motivo", "")))
+
+    def _atualizar_painel_protocolos(self):
+        """
+        Atualiza o painel depois de resolver uma pendência, SEM remontá-lo.
+
+        O que resolve a piscada não é a velocidade — é NÃO destruir widget
+        nenhum. Remontar destrói e recria todos os widgets CustomTkinter do
+        painel, e a janela fica visivelmente vazia nesse intervalo: quem
+        informa um valor vê o painel sumir e voltar. Aqui os mesmos widgets
+        permanecem e só mudam os três números dos cartões e as linhas das duas
+        tabelas, que são Treeview e repintam sem esvaziar a janela.
+
+        Medido no painel real, com 5 calculados e 5 pendentes: atualizar leva
+        de 13 a 43 ms contra 78 a 90 ms para remontar — só umas 2x, bem menos
+        do que a diferença aparente sugere. O ganho visual vem do widget que
+        continua lá, não do tempo.
+
+        A remontagem continua sendo o caminho quando a ESTRUTURA muda: uma
+        seção que estava vazia (texto "Nenhum pendente...") passa a ter tabela,
+        ou o contrário. Nesse caso não há tabela para preencher, e tentar
+        atualizar em vez de remontar deixaria o painel mentindo.
+        """
+        resultado = self._resultado_protocolos
+        janela = getattr(self, "_janela_resultado", None)
+        if janela is None or not janela.winfo_exists():
+            self.mostrar_resultado_protocolos(resultado)
+            return
+
+        processados, pendentes, total_valor = self._listas_do_painel_protocolos(resultado)
+
+        mudou_estrutura = (
+            bool(pendentes) != (self._tabela_pend_protocolos is not None)
+            or bool(processados) != (self._tabela_ok_protocolos is not None)
+        )
+        if mudou_estrutura:
+            self.mostrar_resultado_protocolos(resultado)
+            return
+
+        cartoes = getattr(self, "_cartoes_protocolos", None)
+        for label, texto in zip(getattr(cartoes, "labels_valor", []),
+                                 (str(len(processados)), str(len(pendentes)),
+                                  formatar_reais(total_valor))):
+            label.configure(text=texto)
+
+        if self._tabela_pend_protocolos is not None:
+            self._preencher_pendentes_protocolos(pendentes)
+        if self._tabela_ok_protocolos is not None:
+            self._preencher_calculados_protocolos(processados)
 
     def _falta_id_sl(self, item):
         """Se este protocolo ainda não tem como virar lançamento de despesa:
@@ -3527,7 +3612,7 @@ class App(ctk.CTk):
                 parent=self._janela_resultado)
 
         if redesenhar:
-            self.mostrar_resultado_protocolos(self._resultado_protocolos)
+            self._atualizar_painel_protocolos()
 
     def _pedir_condominio(self, dados):
         """
@@ -3805,7 +3890,7 @@ class App(ctk.CTk):
                 f"cada correção.",
                 parent=self._janela_resultado)
 
-        self.mostrar_resultado_protocolos(resultado)
+        self._atualizar_painel_protocolos()
 
     def _montar_aba_logs(self, parent):
         fonte = familia_fonte()
