@@ -21,8 +21,9 @@ e 6_0 (o 6_0 nasceu como redesign exclusivo de interface), mas divergiu depois e
 Cadastro de condomínios: `cadastro_condominios.xlsx` (colunas: CNPJ, Código,
 Nome, **ID SL**). "ID SL" é o código do condomínio no **Superlógica** — outro
 número, sem relação com o código interno (ex: KLOSTERS é `10004` aqui e `44`
-lá). Guardado **só como referência**: nada da identificação nem dos carimbos
-usa esse campo. Planilha antiga de 3 colunas continua carregando (campo
+lá). Nada da identificação nem dos carimbos usa esse campo — quem usa é a
+geração da planilha de despesas do Superlógica (aba 3, v6.14.0), que preenche
+com ele a coluna `condomínio` do arquivo de importação. Planilha antiga de 3 colunas continua carregando (campo
 vazio) — mas cuidado: `salvar_cadastro` reescreve a planilha inteira, então
 qualquer coluna nova precisa ser gravada lá também, senão a primeira edição
 pela aba de Cadastro apaga a coluna de todos os condomínios em silêncio.
@@ -190,6 +191,23 @@ similaridade de nome sozinha.
   — assim pendentes não ocupam vaga e cada lote sai cheio. A preferência
   fica no nível raiz do `config.json` (não dentro da predefinição): depende
   do sistema de destino, não do tipo de documento. Desligada por padrão.
+- **v6.14.0 — planilha de Despesas do Superlógica (aba 3)**: botão "Gerar
+  planilha do Superlógica" no painel de resultado, que transforma o lote em
+  arquivo de importação de despesas — uma linha por protocolo cobrável, com
+  `condomínio` preenchido pelo **ID SL** do cadastro e `valor` pelo valor
+  apurado. O modelo vem do arquivo do usuário (baixado do próprio Superlógica)
+  e é **copiado, não reconstruído**: preserva formatos, validações e colunas
+  ocultas que o importador pode exigir, e sobrevive a mudanças de layout que
+  não são nossas. As colunas `condomínio` e `valor` são achadas pelo nome
+  normalizado, nunca pela posição. A linha 2 do modelo é o molde, com os
+  campos que se repetem (fornecedor, categoria, forma de pagamento), e é
+  substituída pela primeira linha real. **Mesmo condomínio em dois protocolos
+  gera duas linhas**, de propósito: cada lançamento continua rastreável até o
+  papel que o originou. O **vencimento é perguntado a cada geração**, como a
+  tarifa: quando ficava no modelo, a data virava número de série em célula
+  `General` e o Superlógica gravava 01/01/1970 e recusava os lançamentos. Ver
+  "Planilha de Despesas do Superlógica" abaixo e o spec
+  `docs/superpowers/specs/2026-08-19-despesas-superlogica-design.md`.
 - **v6.13.0 — painel de resultado na aba 3, com valor em reais digitado à
   mão**: a aba dos Protocolos dos Correios passa a encerrar com painel
   (Protocolos / Pendentes / Total), no mesmo molde da aba 1 e reaproveitando
@@ -546,6 +564,84 @@ concordariam entre si e o programa cobraria o valor errado com total
 confiança. Não existe conferidor automático capaz de pegar esse caso — só uma
 pessoa lendo a folha física resolve, e é exatamente para isso que existe o
 "Informar valor".
+
+## Planilha de Despesas do Superlógica (aba 3, v6.14.0)
+
+Terceiro passo do fluxo dos Correios, depois de contar e carimbar: o botão
+"Gerar planilha do Superlógica", no rodapé do painel de resultado, transforma
+o lote em arquivo de importação de despesas — uma linha por protocolo
+cobrável, `condomínio` = **ID SL** do cadastro, `valor` = valor apurado.
+
+**O modelo é do usuário e é copiado, não reconstruído.** O arquivo de
+importação (32 colunas na versão atual) é baixado do próprio Superlógica; numa
+cópia dele o usuário preenche a linha 2 com o que se repete em todo lançamento
+(fornecedor, favorecido, `conta_categoria`, tipo de documento, forma de
+pagamento e uma chave numérica), deixando `condomínio` e `valor` em branco.
+`gerar_planilha_despesas` (`logica.py`) abre esse arquivo e o preenche.
+Copiar em vez de montar do zero preserva formatos de célula, validações e
+colunas ocultas que o importador pode exigir e que se perderiam em silêncio —
+e o layout, sendo do Superlógica, pode mudar sem aviso.
+
+**A linha 2 é o molde e some.** Ela é substituída pela primeira linha real;
+nenhuma linha de exemplo pode sobrar no arquivo final (seria despesa fantasma
+na importação). Modelo salvo com várias linhas de exemplo tem o excesso
+removido.
+
+**Colunas achadas pelo nome, nunca pela posição** — `_normalizar_cabecalho`
+tira acento e caixa, então `condomínio`, `Condomínio` e `CONDOMÍNIO` são a
+mesma coluna. Modelo sem uma das duas colunas levanta erro com o nome da que
+falta, em vez de gerar arquivo silenciosamente errado.
+
+**Mesmo condomínio em dois protocolos gera duas linhas.** No lote de
+referência, dois protocolos são do `11161 MARILIA`: saem como `496 / 138,60` e
+`496 / 119,35`. Somar quebraria a correspondência entre lançamento e papel.
+
+**O vencimento é perguntado a cada geração, não fica no modelo.** É dado do
+lote, como a tarifa — e foi justamente por estar no modelo que ele quebrou a
+importação: o Excel guarda data como número de série (`21/08/2026` é `46255`) e
+só o **formato da célula** diz que aquilo é data. Com a célula em `General`, o
+arquivo saía com o número cru, o Superlógica gravava `01/01/1970` e **recusava
+os lançamentos** — de três, um entrava, e mesmo esse com a data errada.
+`converter_data_digitada` (`logica.py`) aceita só o formato brasileiro
+(`21/08/2026`, `21-08-2026`, `21.08.2026`, `21/08/26`); `2026-08-21` é recusado
+de propósito, porque misturar as duas convenções é como uma data tipo `03/04`
+acaba lançada com o mês trocado.
+
+**Guarda das colunas de data, como rede.** `_data_do_molde` converte para data
+de verdade o número que aparecer em `vencimento`, `competência` ou `liquidação`
+quando estiver na faixa 2000–2099; qualquer outra coisa levanta erro com o nome
+da coluna, em vez de virar cobrança com data errada. Perguntar o vencimento é o
+conserto na origem; a guarda cobre quem mesmo assim preencher data no modelo.
+
+**A primeira suspeita foi a errada, e só não virou conserto porque foi
+testada.** Com três lançamentos e um só importado, a hipótese natural era o
+campo `chave`, repetido nas três linhas e com cara de identificador único. Dois
+arquivos variando só a `chave` e um variando só a data mostraram que a `chave`
+não tinha nada a ver. Vale lembrar disso antes de "consertar" o próximo sintoma
+parecido.
+
+**A geração trava por completo** enquanto houver protocolo cobrável
+incompleto, e `lancamentos_de_despesa` devolve os travados separados por
+motivo, porque a ação é diferente: pendência sem valor resolve no próprio
+painel ("Informar valor"); condomínio sem ID SL resolve na aba de Cadastro.
+Arquivos que não são protocolo não travam — nunca deveriam virar despesa.
+**10 dos 764 condomínios estão sem ID SL**, então essa trava vai acontecer; o
+conserto é preencher o campo no cadastro.
+
+**`lancamentos_de_despesa` recebe o `resultado` do painel, não as linhas da
+planilha.** Nas linhas prontas, um arquivo que não é protocolo e uma pendência
+"não foi possível ler o documento" ficam idênticos (código, condomínio e valor
+vazios) — mas um deve travar e o outro deve ser ignorado. Só o `resultado`
+separa os dois grupos.
+
+**O item resolvido à mão precisa carregar `codigo`** no dict que vai para
+`resultado["processados"]` (`_acao_informar_valor`). Sem ele não há como achar
+o ID SL, e justamente os protocolos que exigiram atenção manual travariam a
+geração.
+
+Validado contra o modelo e o cadastro reais: os três protocolos multipágina
+saem como `496 / 138,60`, `496 / 119,35` e `649 / 231,00`, com os seis campos
+repetidos idênticos nas três linhas e nenhuma linha em branco.
 
 ## Divergências de lógica só no 6_0 (pós-redesign)
 

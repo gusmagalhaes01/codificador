@@ -1130,8 +1130,8 @@ def carregar_cadastro(caminho):
 
     "ID SL" (4ª coluna) é o código do condomínio no Superlógica — outro
     número, sem relação com o código interno (ex: KLOSTERS é 10004 aqui e 44
-    lá). Guardado só como referência: nada da identificação nem dos carimbos
-    usa esse campo. Planilha antiga de 3 colunas carrega normalmente, com o
+    lá). Nada da identificação nem dos carimbos usa esse campo; quem usa é a
+    geração da planilha de despesas do Superlógica (`lancamentos_de_despesa`). Planilha antiga de 3 colunas carrega normalmente, com o
     campo vazio.
     """
     cadastro = {}
@@ -1601,3 +1601,214 @@ def salvar_planilha_protocolo(caminho, linhas):
         celula.number_format = COLUNAS_PROTOCOLO[coluna - 1][2]
 
     wb.save(caminho)
+
+
+# ============================================================
+#  PLANILHA DE DESPESAS DO SUPERLÓGICA
+# ============================================================
+
+#  Nomes das duas colunas que o programa preenche, já normalizados. O resto do
+#  layout (32 colunas na versão atual) pertence ao Superlógica e é copiado do
+#  modelo do usuário sem interpretação.
+COLUNA_DESPESA_CONDOMINIO = "condominio"
+COLUNA_DESPESA_VALOR = "valor"
+COLUNA_DESPESA_VENCIMENTO = "vencimento"
+LINHA_MOLDE_DESPESAS = 2
+
+#  Colunas do modelo que o Superlógica lê como data. O Excel guarda data como
+#  número de série (21/08/2026 é 46255) e só o FORMATO da célula diz que
+#  aquilo é data — um modelo com a célula em "General" gera uma planilha em
+#  que o importador lê o número cru e grava 01/01/1970. Aconteceu de verdade,
+#  e as linhas foram recusadas na importação.
+COLUNAS_DATA_DESPESAS = ("vencimento", "competencia", "liquidacao")
+EPOCA_EXCEL = datetime.datetime(1899, 12, 30)
+SERIAL_EXCEL_MINIMO = 36526   # 2000-01-01
+SERIAL_EXCEL_MAXIMO = 73050   # 2099-12-31
+FORMATO_DATA_DESPESAS = "DD/MM/YYYY"
+
+
+def _data_do_molde(nome_coluna, valor):
+    """
+    Converte para data de verdade o que o modelo trouxer numa coluna de data.
+    Devolve `(valor, formato)` — `formato` é `None` quando não há o que mudar.
+
+    Número dentro da faixa de datas plausíveis é série do Excel e vira data.
+    Qualquer outra coisa levanta erro: melhor recusar do que gerar cobrança
+    com data errada, que é o que acontecia antes desta checagem.
+    """
+    if valor is None:
+        return None, None
+    if isinstance(valor, (int, float)) and not isinstance(valor, bool):
+        if SERIAL_EXCEL_MINIMO <= valor <= SERIAL_EXCEL_MAXIMO:
+            return (EPOCA_EXCEL + datetime.timedelta(days=float(valor)),
+                    FORMATO_DATA_DESPESAS)
+    if isinstance(valor, (datetime.datetime, datetime.date)):
+        return valor, FORMATO_DATA_DESPESAS
+    raise ValueError(
+        f'A coluna "{nome_coluna}" do modelo tem {valor!r}, que não é uma '
+        "data. Abra o modelo e digite a data na célula (ex.: 21/08/2026) — "
+        "o Superlógica recusa o lançamento quando a data não vem como data.")
+
+
+def _normalizar_cabecalho(texto):
+    """Cabeçalho sem acento, minúsculo e sem espaços nas pontas. Serve para
+    achar a coluna pelo NOME em vez da posição: o modelo é do Superlógica e
+    pode ser reordenado ou reacentuado sem aviso."""
+    if texto is None:
+        return ""
+    texto = unicodedata.normalize("NFKD", str(texto))
+    texto = texto.encode("ascii", "ignore").decode("ascii")
+    return texto.strip().lower()
+
+
+FORMATOS_DATA_ACEITOS = ("%d/%m/%Y", "%d/%m/%y")
+
+
+def converter_data_digitada(texto):
+    """
+    Lê uma data digitada por uma pessoa e devolve `(data, mensagem)`:
+    `(datetime, "")` quando válida, `(None, aviso)` quando não. O aviso vai
+    direto para a tela, então é frase em português, sem jargão.
+
+    Aceita só o formato brasileiro (`21/08/2026`, `21-08-2026`, `21.08.2026`,
+    `21/08/26`). Não aceita `2026-08-21` de propósito: misturar as duas
+    convenções é como uma data tipo `03/04` acaba lançada com o mês trocado.
+    """
+    bruto = (texto or "").strip().replace("-", "/").replace(".", "/")
+    if not bruto:
+        return None, "Digite a data, como 21/08/2026."
+
+    for formato in FORMATOS_DATA_ACEITOS:
+        try:
+            return datetime.datetime.strptime(bruto, formato), ""
+        except ValueError:
+            continue
+    return None, "Data inválida. Use o formato 21/08/2026."
+
+
+def gerar_planilha_despesas(caminho_modelo, caminho_saida, lancamentos,
+                            vencimento=None):
+    """
+    Gera a planilha de importação de despesas do Superlógica a partir do
+    modelo do usuário. `lancamentos` é [(id_sl, valor), ...] na ordem de saída.
+
+    O modelo é ABERTO E PREENCHIDO, nunca reconstruído: copiar preserva
+    formatos de célula, validações e colunas ocultas que o importador do
+    Superlógica pode exigir e que uma planilha montada do zero perderia sem
+    aviso.
+
+    A linha 2 do modelo é o molde — os campos que se repetem em todo
+    lançamento (fornecedor, categoria, forma de pagamento...). Ela é
+    SUBSTITUÍDA pela primeira linha real; nenhuma linha de exemplo pode
+    sobrar no arquivo final.
+
+    `vencimento` é data do LOTE, não do modelo: quando informada, vence o que
+    estiver na coluna `vencimento` e é gravada como data de verdade em todas
+    as linhas. Fica fora do modelo de propósito — ela muda a cada geração, e
+    era editando o modelo à mão que a data virava número e o Superlógica
+    recusava os lançamentos.
+    """
+    if not lancamentos:
+        raise ValueError(
+            "Nenhum lançamento para gerar — a planilha não foi criada.")
+
+    wb = load_workbook(caminho_modelo)
+    sheet = wb.active
+
+    colunas = {}
+    for celula in sheet[1]:
+        nome = _normalizar_cabecalho(celula.value)
+        if nome:
+            colunas.setdefault(nome, celula.column)
+
+    obrigatorias = [COLUNA_DESPESA_CONDOMINIO, COLUNA_DESPESA_VALOR]
+    if vencimento is not None:
+        obrigatorias.append(COLUNA_DESPESA_VENCIMENTO)
+    faltando = [nome for nome in obrigatorias if nome not in colunas]
+    if faltando:
+        raise ValueError(
+            "O modelo não tem a(s) coluna(s): " + ", ".join(faltando) +
+            ". Confira se o arquivo é o modelo de despesas do Superlógica.")
+
+    coluna_condominio = colunas[COLUNA_DESPESA_CONDOMINIO]
+    coluna_valor = colunas[COLUNA_DESPESA_VALOR]
+
+    nomes_por_coluna = {celula.column: _normalizar_cabecalho(celula.value)
+                        for celula in sheet[1]}
+
+    #  Valor e estilo de cada célula do molde, lidos ANTES de escrever — a
+    #  primeira linha gerada sobrescreve a própria linha-molde. Colunas de
+    #  data que não estejam como data de verdade (`is_date`) são convertidas
+    #  aqui; ver `_data_do_molde`.
+    molde = []
+    for coluna in range(1, sheet.max_column + 1):
+        celula = sheet.cell(row=LINHA_MOLDE_DESPESAS, column=coluna)
+        valor, formato = celula.value, None
+        if nomes_por_coluna.get(coluna) in COLUNAS_DATA_DESPESAS and not celula.is_date:
+            valor, formato = _data_do_molde(nomes_por_coluna[coluna], celula.value)
+        molde.append((valor, copy.copy(celula._style), formato))
+
+    for indice, (id_sl, valor) in enumerate(lancamentos):
+        numero_linha = LINHA_MOLDE_DESPESAS + indice
+        for coluna, (valor_molde, estilo, formato) in enumerate(molde, start=1):
+            celula = sheet.cell(row=numero_linha, column=coluna)
+            celula.value = valor_molde
+            celula._style = copy.copy(estilo)
+            if formato:
+                celula.number_format = formato
+        sheet.cell(row=numero_linha, column=coluna_condominio).value = id_sl
+        sheet.cell(row=numero_linha, column=coluna_valor).value = float(valor)
+        if vencimento is not None:
+            celula_venc = sheet.cell(row=numero_linha,
+                                     column=colunas[COLUNA_DESPESA_VENCIMENTO])
+            celula_venc.value = vencimento
+            celula_venc.number_format = FORMATO_DATA_DESPESAS
+
+    #  Modelo salvo com mais de uma linha de exemplo não pode deixar resto
+    #  depois do último lançamento — seria despesa fantasma na importação.
+    primeira_sobra = LINHA_MOLDE_DESPESAS + len(lancamentos)
+    if sheet.max_row >= primeira_sobra:
+        sheet.delete_rows(primeira_sobra, sheet.max_row - primeira_sobra + 1)
+
+    wb.save(caminho_saida)
+
+
+def lancamentos_de_despesa(resultado, cadastro):
+    """
+    Monta os lançamentos de despesa a partir do resultado de um lote de
+    protocolos. Devolve `(lancamentos, travas)`:
+
+    - `lancamentos`: [(id_sl, valor)] na ordem do painel, pronto para
+      `gerar_planilha_despesas`;
+    - `travas`: {"sem_valor": [...], "sem_id_sl": [...]} com os nomes dos
+      arquivos que impedem a geração — a interface não gera nada enquanto
+      houver qualquer um, e mostra os dois grupos separados porque a ação é
+      diferente (pendência resolve no painel; ID SL resolve no cadastro).
+
+    Recebe o `resultado` do painel, e não as linhas da planilha, porque nas
+    linhas um arquivo que não é protocolo e uma pendência "não foi possível
+    ler o documento" ficam idênticos (código, condomínio e valor vazios) — e
+    um deve travar enquanto o outro deve ser ignorado.
+
+    Mesmo condomínio em dois protocolos gera dois lançamentos: cada um
+    continua rastreável até o papel que o originou.
+    """
+    codigos = _codigos_do_cadastro(cadastro)
+    lancamentos = []
+    travas = {"sem_valor": [], "sem_id_sl": []}
+
+    #  Ignorados ficam de fora sem travar: não são protocolo, nunca deveriam
+    #  virar despesa.
+    for item in resultado.get("pendentes", []) or []:
+        travas["sem_valor"].append(item.get("arquivo", ""))
+
+    for item in resultado.get("processados", []) or []:
+        codigo = item.get("codigo") or ""
+        registro = cadastro.get(codigos.get(codigo, "")) if codigo else None
+        id_sl = (registro or {}).get("id_sl", "")
+        if not id_sl:
+            travas["sem_id_sl"].append(item.get("arquivo", ""))
+            continue
+        lancamentos.append((id_sl, item["valor"]))
+
+    return lancamentos, travas
