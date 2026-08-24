@@ -646,6 +646,17 @@ def sugerir_nome_condominio(texto):
 
 MARCADOR_PROTOCOLO_CORREIO = "Protocolo de Recebimento de Documento"
 
+#  Quanto ruído se tolera entre o código entre parênteses e o título do
+#  documento. Manuscrito lido pelo OCR cabe; um código de outro documento,
+#  mais distante, não.
+LIMITE_RUIDO_ANTES_DO_MARCADOR = 40
+#  Janela lida antes do título: o ruído tolerado mais o espaço do próprio
+#  código entre parênteses.
+JANELA_CODIGO_PROTOCOLO = LIMITE_RUIDO_ANTES_DO_MARCADOR + 12
+RE_MARCADOR_PROTOCOLO = re.compile(
+    re.escape(MARCADOR_PROTOCOLO_CORREIO), re.IGNORECASE)
+RE_CODIGO_ENTRE_PARENTESES = re.compile(r"\((\d+)\)")
+
 
 def extrair_codigo_protocolo_correio(texto):
     """
@@ -658,9 +669,29 @@ def extrair_codigo_protocolo_correio(texto):
     dele; None se o marcador não aparecer (documento de outro tipo — CNPJ
     continua sendo o caminho normal) ou se aparecer sem um código
     reconhecível. Não confirma se o código está cadastrado, só extrai.
+
+    O código nem sempre vem colado no título: gente escreve o valor à caneta
+    bem naquele espaço, e o OCR lê o manuscrito no meio (caso real do
+    `W700A DONATELLO (10536) 7.70 Protocolo de Recebimento...`, em que o
+    protocolo entrou na planilha sem código e travou a geração da planilha de
+    despesas). Por isso a busca tolera até
+    `LIMITE_RUIDO_ANTES_DO_MARCADOR` caracteres entre o código e o título —
+    curto de propósito, para não capturar um número entre parênteses que
+    esteja longe e não seja o código deste documento.
     """
-    m = re.search(r"\((\d+)\)\s*" + re.escape(MARCADOR_PROTOCOLO_CORREIO), texto, re.IGNORECASE)
-    return m.group(1) if m else None
+    texto = texto or ""
+    marcador = RE_MARCADOR_PROTOCOLO.search(texto)
+    if not marcador:
+        return None
+
+    #  Lê de trás para frente: o código deste documento é o ÚLTIMO antes
+    #  do título. Pegar o primeiro da janela atribuiria o condomínio
+    #  errado quando o OCR emenda o fim de um documento no começo do
+    #  outro — e cobrar do condomínio errado é pior que não identificar.
+    inicio = max(0, marcador.start() - JANELA_CODIGO_PROTOCOLO)
+    codigos = RE_CODIGO_ENTRE_PARENTESES.findall(
+        texto[inicio:marcador.start()])
+    return codigos[-1] if codigos else None
 
 
 def montar_texto_protocolo_correio(codigo, nome, cnpj_normalizado):

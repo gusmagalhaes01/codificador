@@ -49,5 +49,36 @@ class TestProtocoloCorreio(unittest.TestCase):
         self.assertIsNone(codigos_cadastro.get(codigo))
 
 
+class TestCodigoComRuidoAntesDoMarcador(unittest.TestCase):
+    """O código vem entre parênteses logo antes do título do documento, mas
+    nem sempre colado nele: gente escreve o valor à caneta bem ali, e o OCR
+    lê esse manuscrito no meio. Caso real do 10536 DONATELLO, em que o
+    "7,70" escrito à mão fez o programa não identificar o condomínio — o
+    protocolo entrou na planilha com valor e sem código, e travou a geração
+    da planilha de despesas sem nenhuma saída pela tela."""
+
+    def test_manuscrito_entre_o_codigo_e_o_titulo(self):
+        texto = ("W700A DONATELLO (10536) 7.70 Protocolo de Recebimento de "
+                 "Documento Unidade 401 - Fulano de Tal Listando 1 unidade")
+        self.assertEqual(app.extrair_codigo_protocolo_correio(texto), "10536")
+
+    def test_codigo_colado_no_titulo_continua_funcionando(self):
+        texto = ("W700A KLOSTERS (10004) Protocolo de Recebimento de Documento "
+                 "Unidade 401 - Fulano de Tal")
+        self.assertEqual(app.extrair_codigo_protocolo_correio(texto), "10004")
+
+    def test_ruido_longo_demais_nao_vale(self):
+        """A janela é curta de propósito: um número entre parênteses muito
+        antes do título não é o código deste documento."""
+        texto = ("(99999) " + "x" * 80 +
+                 " Protocolo de Recebimento de Documento Unidade")
+        self.assertIsNone(app.extrair_codigo_protocolo_correio(texto))
+
+    def test_pega_o_codigo_mais_proximo_do_titulo(self):
+        texto = ("(11111) documento anterior (10536) 7.70 "
+                 "Protocolo de Recebimento de Documento")
+        self.assertEqual(app.extrair_codigo_protocolo_correio(texto), "10536")
+
+
 if __name__ == "__main__":
     unittest.main()
