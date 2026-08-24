@@ -158,5 +158,36 @@ class TestCarimbosExtras(unittest.TestCase):
             self.assertIn("57,75", texto)
 
 
+class TestBlocoPaybox(unittest.TestCase):
+    """Bloco que o Paybox usa para anexar o protocolo à despesa sozinho.
+
+    A associação é por valor, vencimento e fornecedor — determinado
+    empiricamente contra o Superlógica real: um QR com BR Code Pix válido
+    chegou a ser extraído e mesmo assim não associou; passou a associar
+    quando o vencimento entrou na página."""
+
+    def test_quatro_linhas_na_ordem(self):
+        import datetime
+        from decimal import Decimal
+        texto = app.montar_bloco_paybox(datetime.date(2026, 9, 10), Decimal("7.70"))
+        self.assertEqual(texto.splitlines(), [
+            "DINAMICA SERVICOS POSTAIS E TELEMATICOS LTDA",
+            "CNPJ: 02.252.220/0001-38",
+            "VENCIMENTO: 10/09/2026",
+            "VALOR: R$ 7,70",
+        ])
+
+    def test_data_no_formato_brasileiro(self):
+        import datetime
+        from decimal import Decimal
+        texto = app.montar_bloco_paybox(datetime.datetime(2026, 1, 5, 14, 30),
+                                         Decimal("123.45"))
+        self.assertIn("VENCIMENTO: 05/01/2026", texto)
+        self.assertIn("VALOR: R$ 123,45", texto)
+
+    def test_cnpj_do_fornecedor_e_valido(self):
+        self.assertTrue(app.cnpj_valido(app.FORNECEDOR_PROTOCOLO_CNPJ))
+
+
 if __name__ == "__main__":
     unittest.main()

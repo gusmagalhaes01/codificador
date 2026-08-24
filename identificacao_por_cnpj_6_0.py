@@ -68,7 +68,7 @@ from logica import (
     normalizar_cnpj, formatar_documento, extrair_texto_pdf, cnpj_valido, cpf_valido,
     extrair_texto_ocr, extrair_texto_ocr_regiao, proximo_dpi_maior,
     extrair_cnpj_tomador, sugerir_nome_condominio, extrair_codigo_protocolo_correio,
-    montar_texto_protocolo_correio,
+    montar_texto_protocolo_correio, montar_bloco_paybox,
     normalizar_texto_busca, remover_palavras_tipo_doc, _codigos_do_cadastro,
     buscar_por_nome_arquivo, desempatar_por_cadastro, candidatos_por_nome,
     criar_overlay, processar_pdf, carregar_cadastro, salvar_cadastro,
@@ -109,6 +109,15 @@ TEMA_ESCURO = {
 #  1ª página de cada PDF (ver _carimbar_protocolo) — páginas menores que A4
 #  não teriam esse canto disponível se x/y ficassem fixos em 567/814.
 MARGEM_VALOR_PROTOCOLO = 28
+
+#  Bloco do Paybox (fornecedor / vencimento / valor) nos protocolos. Fica na
+#  faixa em branco logo abaixo da tabela de unidades — foi ali que a leitura
+#  foi validada contra o Superlógica. Se algum modelo de protocolo trouxer
+#  conteúdo nessa área (ex: recibo dos Correios colado no meio da folha),
+#  é aqui que se ajusta a posição, sem mexer em mais nada.
+X_BLOCO_PAYBOX = 60
+Y_BLOCO_PAYBOX = 560
+TAMANHO_BLOCO_PAYBOX = 11
 
 #  Qualidade de leitura dos protocolos dos Correios: fixa na melhor, de
 #  propósito, ignorando a que estiver escolhida na predefinição ativa.
@@ -2728,12 +2737,22 @@ class App(ctk.CTk):
         if tarifa is None:
             return
 
+        #  O vencimento é perguntado AQUI, junto da tarifa, e não mais só na
+        #  hora de gerar a planilha: ele vai carimbado no PDF (é um dos três
+        #  campos que o Paybox usa para anexar o documento à despesa sozinho)
+        #  e o carimbo acontece agora. Perguntar uma vez só também garante que
+        #  o vencimento do papel e o da planilha nunca divirjam — se
+        #  divergissem, o Paybox não acharia o lançamento e ninguém saberia.
+        vencimento = self._pedir_vencimento_despesas()
+        if vencimento is None:
+            return
+
         self.botao_protocolos.configure(state="disabled")
         self.label_status_protocolos.configure(text="Lendo os protocolos...")
 
         thread = threading.Thread(
             target=self._processar_protocolos_em_thread,
-            args=(pasta, pasta_saida, destino, tarifa), daemon=True)
+            args=(pasta, pasta_saida, destino, tarifa, vencimento), daemon=True)
         thread.start()
 
     def _ler_texto_protocolo(self, caminho, dpi):
@@ -2750,7 +2769,8 @@ class App(ctk.CTk):
             return texto, False
         return extrair_texto_escaneado(caminho, dpi=dpi), True
 
-    def _processar_protocolos_em_thread(self, pasta, pasta_saida, destino, tarifa):
+    def _processar_protocolos_em_thread(self, pasta, pasta_saida, destino, tarifa,
+                                         vencimento):
         arquivos = sorted(f for f in os.listdir(pasta) if f.lower().endswith(".pdf"))
         total = len(arquivos)
         self.after(0, lambda: self.barra_protocolos.configure(maximum=total, value=0))
@@ -2871,7 +2891,8 @@ class App(ctk.CTk):
                     pasta_destino = (caminho_do_lote(pasta_saida, carimbados, tamanho_lote)
                                       if separar_em_lotes else pasta_saida)
                     self._carimbar_protocolo(caminho, pasta_destino, nome, dados,
-                                             unidades, tarifa, config, codigos)
+                                             unidades, tarifa, config, codigos,
+                                             vencimento=vencimento)
                     carimbados += 1
                 except Exception as e:
                     #  Erro ao carimbar não desfaz a cobrança (o valor é
@@ -3032,6 +3053,10 @@ class App(ctk.CTk):
             "separar_em_lotes": separar_em_lotes,
             "tamanho_lote": tamanho_lote,
             "carimbados": carimbados,
+            #  Perguntado no início do lote: vai carimbado no PDF e depois
+            #  para a coluna `vencimento` da planilha de despesas. Tem que ser
+            #  o MESMO nos dois lugares, senão o Paybox não anexa o documento.
+            "vencimento": vencimento,
         }
         resultado = {
             "total": total,
@@ -3043,12 +3068,18 @@ class App(ctk.CTk):
         self.after(0, lambda: self.mostrar_resultado_protocolos(resultado))
 
     def _carimbar_protocolo(self, caminho, pasta_saida, nome, dados, unidades,
-                            tarifa, config, codigos, valor_manual=None):
+                            tarifa, config, codigos, valor_manual=None,
+                            vencimento=None):
         """
-        Dois carimbos num passe só: o lateral rotacionado com o código (igual
-        ao da aba 1, para a IA do Superlógica continuar lendo) e o valor no
-        topo direito. Código fora do cadastro carimba só o valor — o valor não
-        depende do cadastro, e perder a cobrança por isso seria pior.
+        Três carimbos num passe só: o lateral rotacionado com o código (igual
+        ao da aba 1, para a IA do Superlógica continuar lendo), o valor no
+        topo direito, e o bloco do Paybox (fornecedor, vencimento e valor —
+        ver `montar_bloco_paybox`), que é o que faz o documento se anexar
+        sozinho à despesa. Código fora do cadastro carimba só o valor — o
+        valor não depende do cadastro, e perder a cobrança por isso seria pior.
+
+        `vencimento` ausente simplesmente omite o bloco do Paybox: o resto do
+        carimbo continua igual, e o documento volta a exigir anexo manual.
         """
         valor = valor_manual if valor_manual is not None else valor_protocolo(unidades, tarifa)
 
@@ -3100,6 +3131,22 @@ class App(ctk.CTk):
                 "centralizado": False,
                 "angulo": 0,
                 "alinhamento": "direita",
+            })
+
+        #  Bloco que o Paybox lê para anexar o protocolo à despesa sozinho.
+        #  Negrito e corpo maior que o resto de propósito: o Superlógica faz
+        #  OCR da imagem da página, e letra pequena é o que mais atrapalha.
+        if vencimento is not None:
+            extras.append({
+                "texto": montar_bloco_paybox(vencimento, valor),
+                "fonte": "Helvetica-Bold",
+                "tamanho": TAMANHO_BLOCO_PAYBOX,
+                "cor": config["cor"],
+                "x": X_BLOCO_PAYBOX,
+                "y": Y_BLOCO_PAYBOX,
+                "centralizado": False,
+                "angulo": 0,
+                "alinhamento": "esquerda",
             })
 
         caminho_saida = os.path.join(pasta_saida, nome)
@@ -3487,9 +3534,15 @@ class App(ctk.CTk):
 
         #  Vencimento é dado do lote, como a tarifa — perguntado aqui em vez
         #  de digitado no modelo, que é onde a data virava número.
-        vencimento = self._pedir_vencimento_despesas()
+        #  O vencimento vem do que foi perguntado no início do lote e
+        #  carimbado nos PDFs. Perguntar de novo aqui abriria a porta para
+        #  digitar uma data diferente da que está no papel — e o Paybox só
+        #  anexa o documento quando as duas batem.
+        vencimento = (self._ctx_protocolos or {}).get("vencimento")
         if vencimento is None:
-            return
+            vencimento = self._pedir_vencimento_despesas()
+            if vencimento is None:
+                return
 
         #  O modelo vai junto do executável, como o cadastro: quem quiser
         #  trocar fornecedor, categoria ou forma de pagamento edita o arquivo
@@ -3588,7 +3641,8 @@ class App(ctk.CTk):
                 dados["caminho"], dados.get("pasta_destino") or ctx["pasta_saida"],
                 dados["arquivo"], registro_dados, dados.get("unidades"),
                 ctx.get("tarifa"), ctx["config"], ctx["codigos"],
-                valor_manual=dados.get("valor"))
+                valor_manual=dados.get("valor"),
+                vencimento=ctx.get("vencimento"))
         except Exception as e:
             messagebox.showerror(
                 "Erro ao carimbar",
@@ -3840,7 +3894,7 @@ class App(ctk.CTk):
             self._carimbar_protocolo(
                 dados["caminho"], pasta_destino, dados["arquivo"],
                 registro_dados, None, None, ctx["config"], ctx["codigos"],
-                valor_manual=valor)
+                valor_manual=valor, vencimento=ctx.get("vencimento"))
 
         try:
             linha_atualizada, motivo_painel, _pasta_destino = resolver_protocolo_manual(

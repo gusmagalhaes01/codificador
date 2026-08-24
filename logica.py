@@ -760,6 +760,41 @@ def extrair_codigo_protocolo_correio(texto):
     return codigos[-1] if codigos else None
 
 
+#  Fornecedor das postagens, carimbado no bloco que o Paybox lê. Fixo no
+#  código por decisão do usuário — se a empresa de postagem mudar, isto exige
+#  alterar o programa e gerar executável novo.
+FORNECEDOR_PROTOCOLO_NOME = "DINAMICA SERVICOS POSTAIS E TELEMATICOS LTDA"
+FORNECEDOR_PROTOCOLO_CNPJ = "02252220000138"
+
+
+def montar_bloco_paybox(vencimento, valor):
+    """
+    Bloco de texto que faz o Paybox anexar sozinho o protocolo à despesa.
+
+    O anexo automático do Paybox casa o documento com o lançamento por
+    **valor, vencimento e fornecedor** — não por código de barras, QR ou Pix.
+    Isso foi determinado empiricamente: um QR com BR Code Pix válido chegou a
+    ser extraído pelo Superlógica (campo `pix-copia-e-cola`) e mesmo assim não
+    associou; passou a associar quando o vencimento entrou na página. O
+    protocolo dos Correios não traz nada disso por conta própria — daí o
+    carimbo.
+
+    O Superlógica faz OCR da IMAGEM da página (visto em "EFICIO" no lugar de
+    "EDIFÍCIO"), então o bloco tem que estar visível e legível; não adianta
+    texto invisível nem metadado.
+
+    `vencimento` é date/datetime e precisa ser exatamente o mesmo que vai para
+    a coluna `vencimento` da planilha de despesas — se divergirem, o Paybox
+    não acha o lançamento e o arquivo cai na fila manual sem avisar ninguém.
+    """
+    return "\n".join([
+        FORNECEDOR_PROTOCOLO_NOME,
+        f"CNPJ: {formatar_documento(FORNECEDOR_PROTOCOLO_CNPJ)}",
+        f"VENCIMENTO: {vencimento.strftime('%d/%m/%Y')}",
+        f"VALOR: {formatar_reais(valor)}",
+    ])
+
+
 def montar_texto_protocolo_correio(codigo, nome, cnpj_normalizado):
     """
     Linha única do carimbo lateral do Protocolo de Recebimento de Documento.

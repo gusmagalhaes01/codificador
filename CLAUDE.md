@@ -129,6 +129,15 @@ similaridade de nome sozinha.
 
 ## Histórico de decisões
 
+- **v6.16.0 — anexo automático no Paybox (bloco carimbado)**: os protocolos
+  dos Correios passam a sair com um bloco de texto — fornecedor, CNPJ do
+  fornecedor, vencimento e valor (`montar_bloco_paybox`, `logica.py`) — que faz
+  o Paybox anexar o documento à despesa **sozinho**, eliminando a associação
+  manual. O vencimento passou a ser perguntado no **início** do lote, junto da
+  tarifa, porque o carimbo acontece antes da planilha existir; `_acao_gerar_despesas`
+  reusa esse mesmo valor em vez de perguntar de novo. Ver "Anexo automático no
+  Paybox" abaixo.
+
 - **v6.15.0 — condomínios identificados por CPF**: alguns condomínios não têm
   CNPJ próprio e aparecem nos boletos e notas com o **CPF do síndico**. A chave
   do cadastro deixou de ser "CNPJ" e passou a ser **documento normalizado**: 14
@@ -611,6 +620,68 @@ concordariam entre si e o programa cobraria o valor errado com total
 confiança. Não existe conferidor automático capaz de pegar esse caso — só uma
 pessoa lendo a folha física resolve, e é exatamente para isso que existe o
 "Informar valor".
+
+## Anexo automático no Paybox (aba 3, v6.16.0)
+
+O Paybox anexa um documento à despesa sozinho quando casa **valor, vencimento
+e fornecedor** — não por código de barras, QR Code nem Pix. Como o Protocolo de
+Recebimento de Documento não traz nenhum dos três por conta própria, o
+Codificador carimba um bloco com eles (`montar_bloco_paybox`).
+
+**Isso foi determinado por experimento contra o Superlógica real, e a hipótese
+inicial estava errada.** A suspeita era que o Paybox casasse pelo código de
+pagamento detectado na imagem. Foram testados quatro tipos de código impressos
+no mesmo protocolo: **Code128, Interleaved 2 of 5 e Code39 não são lidos** — o
+campo "Códigos detectados" volta vazio —, e **só o QR Code é reconhecido**. Mas
+mesmo um QR com **BR Code Pix válido**, que o Superlógica extraiu corretamente
+(apareceu o campo `pix-copia-e-cola` com o código inteiro), **não fez o Paybox
+associar**. Passou a associar quando o **vencimento** entrou na página. Um teste
+final sem QR nenhum, só com os três campos em texto, associou igual — então o
+Pix é dispensável, e com ele sai o risco de deixar um código pagável em cada
+lançamento.
+
+**O Superlógica faz OCR da imagem da página**, não lê a camada de texto: a
+prova é o nome do condomínio ter voltado como "CONDOMINIO DO EFICIO ..." em vez
+de "EDIFÍCIO", erro que só OCR comete. Por isso o bloco é carimbado em
+**negrito, corpo 11** — maior que o resto —, e por isso **não adianta** embutir
+dado invisível (metadado do PDF, texto oculto): tem que estar visível na folha.
+
+**Campos que o Superlógica extrai e não servem para associar:** ele lê e
+reporta `Documento do pagador` (o CNPJ do condomínio, vindo do carimbo lateral)
+e o `pix-copia-e-cola`. Nenhum dos dois participa do casamento.
+
+**Três campos da planilha de importação recusam identificador inventado**, cada
+um com sua validação: `linha_digitavel` exige código de barras de boleto
+(`"Código de barras inválido"`), `chave_pix` exige BR Code EMV
+(`"Chave BR Code inválida"`, e precisa de `tipo_de_chave_pix = 6` para QRCode),
+e `etiqueta_paybox` **não é uma etiqueta**: exige uma URL do `sldocs.com.br`,
+isto é, o link do documento já subido. Nenhum serve como gancho para um id
+nosso.
+
+**O vencimento carimbado e o da planilha têm que ser o mesmo.** Se divergirem,
+o Paybox não acha o lançamento e o arquivo cai na fila manual sem erro nenhum —
+falha silenciosa. É por isso que ele é perguntado uma vez só, no início do
+lote, e `_acao_gerar_despesas` reusa o valor guardado em `_ctx_protocolos`.
+
+**A despesa precisa existir ANTES do arquivo chegar ao Paybox.** O assistente
+não age retroativamente sobre a fila: importar a planilha primeiro, mandar os
+PDFs depois.
+
+**O CNPJ do fornecedor é fixo no código** (`FORNECEDOR_PROTOCOLO_CNPJ`,
+`logica.py`), por decisão do usuário — trocar de empresa de postagem exige
+alterar o programa e gerar executável novo. As alternativas descartadas foram
+uma coluna no `modelo_despesas.xlsx` e um campo em Configurações.
+
+**A posição do bloco** (`X_BLOCO_PAYBOX`/`Y_BLOCO_PAYBOX`,
+`identificacao_por_cnpj_6_0.py`) fica na faixa em branco abaixo da tabela de
+unidades, que foi onde a leitura foi validada. Protocolo que traga conteúdo
+nessa área — por exemplo o recibo dos Correios colado no meio da folha, que
+aparece em alguns — precisa de ajuste dessas constantes.
+
+**As regras ficam em `Despesas > Paybox > Configurações gerais > ASSISTENTE
+PARA ANEXOS AUTOMÁTICOS`**, exigem o perfil "Paybox - Alteração (1572)" e valem
+para a licença inteira, não por condomínio. O protocolo é classificado pelo
+Superlógica como `"outro"`, grupo que exige o mínimo de uma regra marcada.
 
 ## Planilha de Despesas do Superlógica (aba 3, v6.14.0)
 
