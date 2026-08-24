@@ -203,8 +203,11 @@ similaridade de nome sozinha.
   campos que se repetem (fornecedor, categoria, forma de pagamento), e é
   substituída pela primeira linha real. **Mesmo condomínio em dois protocolos
   gera duas linhas**, de propósito: cada lançamento continua rastreável até o
-  papel que o originou. Ver "Planilha de Despesas do Superlógica" abaixo e o
-  spec `docs/superpowers/specs/2026-08-19-despesas-superlogica-design.md`.
+  papel que o originou. O **vencimento é perguntado a cada geração**, como a
+  tarifa: quando ficava no modelo, a data virava número de série em célula
+  `General` e o Superlógica gravava 01/01/1970 e recusava os lançamentos. Ver
+  "Planilha de Despesas do Superlógica" abaixo e o spec
+  `docs/superpowers/specs/2026-08-19-despesas-superlogica-design.md`.
 - **v6.13.0 — painel de resultado na aba 3, com valor em reais digitado à
   mão**: a aba dos Protocolos dos Correios passa a encerrar com painel
   (Protocolos / Pendentes / Total), no mesmo molde da aba 1 e reaproveitando
@@ -592,6 +595,30 @@ falta, em vez de gerar arquivo silenciosamente errado.
 **Mesmo condomínio em dois protocolos gera duas linhas.** No lote de
 referência, dois protocolos são do `11161 MARILIA`: saem como `496 / 138,60` e
 `496 / 119,35`. Somar quebraria a correspondência entre lançamento e papel.
+
+**O vencimento é perguntado a cada geração, não fica no modelo.** É dado do
+lote, como a tarifa — e foi justamente por estar no modelo que ele quebrou a
+importação: o Excel guarda data como número de série (`21/08/2026` é `46255`) e
+só o **formato da célula** diz que aquilo é data. Com a célula em `General`, o
+arquivo saía com o número cru, o Superlógica gravava `01/01/1970` e **recusava
+os lançamentos** — de três, um entrava, e mesmo esse com a data errada.
+`converter_data_digitada` (`logica.py`) aceita só o formato brasileiro
+(`21/08/2026`, `21-08-2026`, `21.08.2026`, `21/08/26`); `2026-08-21` é recusado
+de propósito, porque misturar as duas convenções é como uma data tipo `03/04`
+acaba lançada com o mês trocado.
+
+**Guarda das colunas de data, como rede.** `_data_do_molde` converte para data
+de verdade o número que aparecer em `vencimento`, `competência` ou `liquidação`
+quando estiver na faixa 2000–2099; qualquer outra coisa levanta erro com o nome
+da coluna, em vez de virar cobrança com data errada. Perguntar o vencimento é o
+conserto na origem; a guarda cobre quem mesmo assim preencher data no modelo.
+
+**A primeira suspeita foi a errada, e só não virou conserto porque foi
+testada.** Com três lançamentos e um só importado, a hipótese natural era o
+campo `chave`, repetido nas três linhas e com cara de identificador único. Dois
+arquivos variando só a `chave` e um variando só a data mostraram que a `chave`
+não tinha nada a ver. Vale lembrar disso antes de "consertar" o próximo sintoma
+parecido.
 
 **A geração trava por completo** enquanto houver protocolo cobrável
 incompleto, e `lancamentos_de_despesa` devolve os travados separados por
