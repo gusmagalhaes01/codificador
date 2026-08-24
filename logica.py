@@ -61,6 +61,10 @@ _rapidocr_motor = None
 # ============================================================
 
 CNPJ_REGEX = re.compile(r"\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}")
+#  CPF pontuado. Os lookarounds impedem que os 11 primeiros (ou últimos)
+#  dígitos de um CNPJ colado sem separador sejam lidos como um CPF — sem
+#  eles, uma coincidência de checksum viraria carimbo com o código errado.
+CPF_REGEX = re.compile(r"(?<!\d)\d{3}\.\d{3}\.\d{3}-\d{2}(?![\d\-/])")
 NOME_ARQUIVO_PADRAO = "cadastro_condominios.xlsx"
 #  Modelo de importação de despesas do Superlógica, distribuído junto do
 #  executável como o cadastro. Fica AO LADO do .exe de propósito: é ali que o
@@ -334,12 +338,20 @@ def normalizar_cnpj(cnpj):
     return re.sub(r"\D", "", cnpj)
 
 
-def formatar_cnpj(cnpj_normalizado):
-    """Formata 14 dígitos como 00.000.000/0000-00 (se possível)."""
-    d = re.sub(r"\D", "", cnpj_normalizado)
+def formatar_documento(documento_normalizado):
+    """
+    Formata para exibição um documento de condomínio: 14 dígitos viram CNPJ,
+    11 viram CPF. O comprimento é o que distingue os dois — nenhum CPF pode
+    ser confundido com um CNPJ, nem o contrário.
+
+    Qualquer outro comprimento sai cru, sem formatação inventada.
+    """
+    d = re.sub(r"\D", "", documento_normalizado)
     if len(d) == 14:
         return f"{d[0:2]}.{d[2:5]}.{d[5:8]}/{d[8:12]}-{d[12:14]}"
-    return cnpj_normalizado
+    if len(d) == 11:
+        return f"{d[0:3]}.{d[3:6]}.{d[6:9]}-{d[9:11]}"
+    return documento_normalizado
 
 
 def extrair_texto_pdf(caminho):
@@ -368,6 +380,29 @@ def cnpj_valido(cnpj_normalizado):
     dv1 = _digito(d[:12], pesos1)
     dv2 = _digito(d[:12] + dv1, pesos2)
     return d[12] == dv1 and d[13] == dv2
+
+
+def cpf_valido(cpf_normalizado):
+    """
+    Valida os dígitos verificadores de um CPF (11 dígitos). Existe pelo mesmo
+    motivo de `cnpj_valido`: descartar leituras de OCR que "parecem" um
+    documento mas têm algum caractere errado.
+
+    O algoritmo é diferente do CNPJ (pesos decrescentes 10..2 e 11..2), mas o
+    contrato é o mesmo — recebe só dígitos, devolve bool.
+    """
+    d = cpf_normalizado
+    if len(d) != 11 or d == d[0] * 11:
+        return False
+
+    def _digito(nums, peso_inicial):
+        soma = sum(int(n) * p for n, p in zip(nums, range(peso_inicial, 1, -1)))
+        resto = soma % 11
+        return "0" if resto < 2 else str(11 - resto)
+
+    dv1 = _digito(d[:9], 10)
+    dv2 = _digito(d[:9] + dv1, 11)
+    return d[9] == dv1 and d[10] == dv2
 
 
 LIMITE_TEXTO_MINIMO = 30  # abaixo disso, consideramos que o PDF não tem texto legível
@@ -545,11 +580,15 @@ CNPJS_INTERMEDIARIOS = {
 }
 
 
-def extrair_cnpj_tomador(texto, cnpj_emitente_normalizado):
+def extrair_cnpj_tomador(texto, cnpj_emitente_normalizado, cadastro=None):
     """
-    Retorna lista de CNPJs candidatos (normalizados) encontrados no texto,
-    excluindo o CNPJ da empresa emitente (que se repete em todo documento)
-    e os CNPJs de intermediários conhecidos (ex: Imodata).
+    Retorna lista de documentos candidatos (normalizados, só dígitos) — CNPJ de
+    14 dígitos ou CPF de 11 — encontrados no texto, excluindo o documento da
+    empresa emitente (que se repete em todo documento) e os intermediários
+    conhecidos (ex: Imodata).
+
+    `cadastro` é opcional e só afeta a varredura genérica: sem ele, nenhum CPF
+    entra por ali. Ver o comentário no bloco do fallback.
 
     Estratégia em dois passos:
       1. Tenta extrair CNPJ de campos semânticos explícitos (CO-ESTIPULANTE,
@@ -564,31 +603,42 @@ def extrair_cnpj_tomador(texto, cnpj_emitente_normalizado):
     # co-estipulante com "-" (ou ".") no lugar da "/" — ex: 08.578.541-0001-03. O
     # separador antes do bloco 0001 e antes dos 2 dígitos finais aceita /, -, . ou espaço.
     CNPJ_FLEX = r"(\d{2}[\s.]?\d{3}[\s.]?\d{3}[\s/.\-]?\d{4}[\s.\-]?\d{2})"
+    #  Mesma tolerância para o CPF do síndico, quando o condomínio não tem
+    #  CNPJ próprio. Os lookarounds impedem casar dentro de um CNPJ.
+    CPF_FLEX = r"(?<!\d)(\d{3}[\s.]?\d{3}[\s.]?\d{3}[\s.\-]?\d{2})(?![\d\-/])"
 
-    cnpjs_a_ignorar = set(CNPJS_INTERMEDIARIOS.keys())
-    cnpjs_a_ignorar.add(cnpj_emitente_normalizado)
+    documentos_a_ignorar = set(CNPJS_INTERMEDIARIOS.keys())
+    documentos_a_ignorar.add(cnpj_emitente_normalizado)
 
-    PADROES_CAMPO = [
+    #  Um molde por rótulo, aplicado às duas formas de documento. O caminho do
+    #  CNPJ continua idêntico ao que sempre foi; o do CPF só acrescenta
+    #  candidatos, nunca remove.
+    MOLDES_CAMPO = [
         # Boleto/recibo FedCorp: CO-ESTIPULANTE ... CNPJ: xx.xxx.xxx/xxxx-xx
-        r"CO[-\s]?ESTIPULANTE[:\s]+.{0,120}?CNPJ[:\s]*" + CNPJ_FLEX,
+        r"CO[-\s]?ESTIPULANTE[:\s]+.{0,120}?CNPJ[:\s]*{DOC}",
         # Boleto genérico: linha Pagador ... CNPJ/CPF: xxxxxxxxxxxxxxx
-        r"PAGADOR[:\s]+.{0,150}?CNPJ[/\s]?CPF[:\s]*" + CNPJ_FLEX,
+        r"PAGADOR[:\s]+.{0,150}?CNPJ[/\s]?CPF[:\s]*{DOC}",
         # NFS-e: TOMADOR ... CNPJ: xx.xxx.xxx/xxxx-xx
-        r"TOMADOR[:\s]+.{0,120}?CNPJ[:\s]*" + CNPJ_FLEX,
+        r"TOMADOR[:\s]+.{0,120}?CNPJ[:\s]*{DOC}",
         # Detalhamento de faturamento: EMPREGADOR: nome (CNPJ xx...)
-        r"EMPREGADOR[:\s]+.{0,120}?\(CNPJ[:\s]*" + CNPJ_FLEX + r"\)",
+        r"EMPREGADOR[:\s]+.{0,120}?\(CNPJ[:\s]*{DOC}\)",
         # Contratos genéricos: CONTRATANTE / CLIENTE ... CNPJ
-        r"(?:CONTRATANTE|CLIENTE)[:\s]+.{0,100}?CNPJ[:\s]*" + CNPJ_FLEX,
+        r"(?:CONTRATANTE|CLIENTE)[:\s]+.{0,100}?CNPJ[:\s]*{DOC}",
     ]
+    #  `.replace` e não `.format`: os moldes têm chaves de quantificador
+    #  ({0,120}) que o format tentaria interpretar como campo de formatação.
+    PADROES_CAMPO = ([molde.replace("{DOC}", CNPJ_FLEX) for molde in MOLDES_CAMPO]
+                     + [molde.replace("{DOC}", CPF_FLEX) for molde in MOLDES_CAMPO])
 
     candidatos_campo = []
     for padrao in PADROES_CAMPO:
         for m in re.finditer(padrao, texto, re.IGNORECASE | re.DOTALL):
-            cnpj_norm = normalizar_cnpj(m.group(1))
-            if (len(cnpj_norm) == 14 and cnpj_valido(cnpj_norm)
-                    and cnpj_norm not in cnpjs_a_ignorar):
-                if cnpj_norm not in candidatos_campo:
-                    candidatos_campo.append(cnpj_norm)
+            documento = normalizar_cnpj(m.group(1))
+            valido = ((len(documento) == 14 and cnpj_valido(documento))
+                      or (len(documento) == 11 and cpf_valido(documento)))
+            if valido and documento not in documentos_a_ignorar:
+                if documento not in candidatos_campo:
+                    candidatos_campo.append(documento)
 
     if candidatos_campo:
         return candidatos_campo
@@ -596,7 +646,23 @@ def extrair_cnpj_tomador(texto, cnpj_emitente_normalizado):
     # --- Fallback: varredura genérica (comportamento original) ---
     encontrados = CNPJ_REGEX.findall(texto)
     normalizados = [normalizar_cnpj(c) for c in encontrados]
-    candidatos = [c for c in normalizados if cnpj_valido(c) and c not in cnpjs_a_ignorar]
+    candidatos = [c for c in normalizados
+                  if cnpj_valido(c) and c not in documentos_a_ignorar]
+
+    #  CPF é tratado aqui de forma deliberadamente mais restrita que o CNPJ:
+    #  sem rótulo, um CPF solto na página costuma ser de uma pessoa qualquer
+    #  (síndico, avalista, quem assinou), enquanto um CNPJ solto tende a ser de
+    #  alguma empresa envolvida na cobrança. Só entra quem já é condomínio
+    #  conhecido. Custo assumido: condomínio novo por CPF não vira pendente
+    #  "não cadastrado" por este caminho — ele cai no match por código/nome do
+    #  arquivo, que continua valendo como rede.
+    if cadastro:
+        for achado in CPF_REGEX.findall(texto):
+            documento = normalizar_cnpj(achado)
+            if (cpf_valido(documento) and documento in cadastro
+                    and documento not in documentos_a_ignorar):
+                candidatos.append(documento)
+
     vistos = set()
     unicos = []
     for c in candidatos:
@@ -695,9 +761,18 @@ def extrair_codigo_protocolo_correio(texto):
 
 
 def montar_texto_protocolo_correio(codigo, nome, cnpj_normalizado):
-    """Formata a linha única carimbada nos protocolos dos Correios:
-    "10005 VILLARS - 07.945.453/0001-30"."""
-    return f"{codigo} {nome} - {formatar_cnpj(cnpj_normalizado)}"
+    """
+    Linha única do carimbo lateral do Protocolo de Recebimento de Documento.
+
+    Com CNPJ sai "10005 VILLARS - 07.945.453/0001-30", como sempre. Com CPF o
+    documento é OMITIDO: o PDF carimbado circula e vai para o Superlógica, e
+    estampar o CPF de uma pessoa física nele é diferente de estampar o CNPJ de
+    um condomínio.
+    """
+    documento = re.sub(r"\D", "", cnpj_normalizado or "")
+    if len(documento) != 14:
+        return f"{codigo} {nome}"
+    return f"{codigo} {nome} - {formatar_documento(documento)}"
 
 
 RE_LISTANDO_PROTOCOLO = re.compile(r"Listando\s+(\d+)\s+unidade", re.IGNORECASE)
@@ -1195,13 +1270,19 @@ def salvar_cadastro(caminho, cadastro):
     junto — sem isso, qualquer edição pela aba de Cadastro apagaria o ID SL de
     todos os condomínios de uma vez, em silêncio. Registro sem a chave (vindo
     de um formulário antigo) grava a coluna em branco.
+
+    A coluna A guarda CNPJ (14 dígitos) ou CPF (11) — alguns condomínios não
+    têm CNPJ próprio e são identificados pelo CPF do síndico, que é o que sai
+    impresso no documento. `carregar_cadastro` lê por posição e nunca pelo nome
+    do cabeçalho, então planilha gravada por versão anterior (cabeçalho "CNPJ")
+    continua abrindo.
     """
     wb = Workbook()
     sheet = wb.active
     sheet.title = "Condominios"
-    sheet.append(["CNPJ", "Código", "Nome do Condomínio", "ID SL"])
-    for cnpj_norm, dados in sorted(cadastro.items(), key=lambda kv: kv[1]["nome"]):
-        sheet.append([formatar_cnpj(cnpj_norm), dados["codigo"], dados["nome"],
+    sheet.append(["CNPJ / CPF", "Código", "Nome do Condomínio", "ID SL"])
+    for documento, dados in sorted(cadastro.items(), key=lambda kv: kv[1]["nome"]):
+        sheet.append([formatar_documento(documento), dados["codigo"], dados["nome"],
                        dados.get("id_sl", "")])
     sheet.column_dimensions["A"].width = 20
     sheet.column_dimensions["B"].width = 12
@@ -1346,12 +1427,22 @@ def extrair_dados_nfse(texto):
     bloco_federal = bloco_secao(texto, "TRIBUTAÇÃO FEDERAL")
     bloco_total = bloco_secao(texto, "VALOR TOTAL DA NFS")
 
+    #  O tomador pode ser pessoa jurídica (CNPJ) ou física (CPF do síndico,
+    #  nos condomínios sem CNPJ próprio). A variável e a chave do dict
+    #  continuam se chamando "cnpj_tomador" para não espalhar a renomeação
+    #  por toda a planilha de notas — o conteúdo é o documento, seja qual for.
     cnpj_tomador = ""
     m_cnpj = CNPJ_REGEX.search(bloco_tomador)
     if m_cnpj:
         candidato = normalizar_cnpj(m_cnpj.group(0))
         if cnpj_valido(candidato):
             cnpj_tomador = candidato
+    if not cnpj_tomador:
+        m_cpf = CPF_REGEX.search(bloco_tomador)
+        if m_cpf:
+            candidato = normalizar_cnpj(m_cpf.group(0))
+            if cpf_valido(candidato):
+                cnpj_tomador = candidato
 
     # "Valor da Operação / Serviço" é o rótulo na DANFSe v2.0, no lugar de
     # "Valor do Serviço" — mesma renomeação de seção, tenta os dois.
@@ -1425,7 +1516,7 @@ def linha_planilha_nfse(nome_arquivo, dados, cadastro, observacao=""):
         dados["numero"],
         dados["competencia"],
         dados["emissao"],
-        formatar_cnpj(dados["cnpj_tomador"]) if dados["cnpj_tomador"] else "",
+        formatar_documento(dados["cnpj_tomador"]) if dados["cnpj_tomador"] else "",
         dados["nome_tomador"],
         codigo,
         dados["valor_servico"],

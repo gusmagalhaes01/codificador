@@ -15,8 +15,11 @@ from cadastro_teste import CADASTRO_TESTE
 
 class TestCnpjValido(unittest.TestCase):
     def test_cnpjs_reais_do_cadastro_sao_validos(self):
-        for cnpj in CADASTRO_TESTE:
-            self.assertTrue(app.cnpj_valido(cnpj), f"deveria ser válido: {cnpj}")
+        for documento in CADASTRO_TESTE:
+            if len(documento) == 11:
+                continue  # VILA MARINA é identificada por CPF, não por CNPJ
+            self.assertTrue(app.cnpj_valido(documento),
+                            f"deveria ser válido: {documento}")
 
     def test_checksum_invalido_do_nf927(self):
         # CNPJ que a FedCorp gerou errado (00.001.208-2497-38) — dígito não bate

@@ -34,6 +34,18 @@ class TestMontarTextoProtocoloCorreio(unittest.TestCase):
         texto = app.montar_texto_protocolo_correio("10005", "VILLARS", "07945453000130")
         self.assertEqual(texto, "10005 VILLARS - 07.945.453/0001-30")
 
+    def test_omite_o_cpf(self):
+        """O PDF carimbado circula e vai para o Superlógica. Estampar o CPF de
+        uma pessoa física nele é diferente de estampar o CNPJ de um
+        condomínio, então o documento fica de fora — e o traço junto."""
+        texto = app.montar_texto_protocolo_correio("11300", "VILA MARINA",
+                                                    "52998224725")
+        self.assertEqual(texto, "11300 VILA MARINA")
+
+    def test_sem_documento_tambem_omite(self):
+        texto = app.montar_texto_protocolo_correio("11300", "VILA MARINA", "")
+        self.assertEqual(texto, "11300 VILA MARINA")
+
 
 class TestCriarOverlayRotacionado(unittest.TestCase):
     def _texto_do_buffer(self, buffer):

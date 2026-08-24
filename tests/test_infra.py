@@ -17,11 +17,12 @@ class TestInfra(unittest.TestCase):
     def test_app_importa(self):
         self.assertTrue(hasattr(app, "buscar_por_nome_arquivo"))
 
-    def test_cadastro_tem_9_entradas(self):
-        self.assertEqual(len(CADASTRO_TESTE), 9)
-        # todos os CNPJs têm 14 dígitos
-        for cnpj in CADASTRO_TESTE:
-            self.assertEqual(len(cnpj), 14)
+    def test_cadastro_tem_10_entradas(self):
+        self.assertEqual(len(CADASTRO_TESTE), 10)
+        #  Toda chave é um documento: CNPJ de 14 dígitos ou CPF de 11 (a
+        #  VILA MARINA). Qualquer outro comprimento é entrada malformada.
+        for documento in CADASTRO_TESTE:
+            self.assertIn(len(documento), (11, 14))
 
     def test_fixtures_existem_e_tem_texto(self):
         dados = os.path.join(_AQUI, "dados")

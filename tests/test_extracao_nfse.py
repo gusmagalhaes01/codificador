@@ -237,5 +237,33 @@ class TestPlanilhaGerada(unittest.TestCase):
         self.assertIsNotNone(sheet.auto_filter.ref)
 
 
+class TestTomadorPessoaFisica(unittest.TestCase):
+    """Condomínio sem CNPJ próprio aparece na nota com o CPF do síndico no
+    bloco do tomador. Sem ler os dois formatos, a planilha de notas desses
+    condomínios sairia sistematicamente sem código."""
+
+    def setUp(self):
+        #  Mesma nota da fixture, com o documento do tomador trocado por um
+        #  CPF. O rótulo do DANFSe já é "CNPJ / CPF / NIF" — só o valor muda.
+        self.texto = ler("nfse_ff.txt").replace("01.195.716/0001-54",
+                                                 "529.982.247-25")
+
+    def test_acha_cpf_no_bloco_do_tomador(self):
+        dados = app.extrair_dados_nfse(self.texto)
+        self.assertIsNotNone(dados)
+        self.assertEqual(dados["cnpj_tomador"], "52998224725")
+
+    def test_cpf_com_dv_errado_nao_entra(self):
+        texto = self.texto.replace("529.982.247-25", "529.982.247-24")
+        dados = app.extrair_dados_nfse(texto)
+        self.assertIsNotNone(dados)
+        self.assertEqual(dados["cnpj_tomador"], "")
+
+    def test_nota_com_cnpj_continua_lendo_o_cnpj(self):
+        """A fixture original não pode mudar de resultado."""
+        dados = app.extrair_dados_nfse(ler("nfse_ff.txt"))
+        self.assertEqual(dados["cnpj_tomador"], KLOSTERS)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -86,7 +86,7 @@ class TestIdSl(unittest.TestCase):
         })
         sheet = load_workbook(self.caminho).active
         self.assertEqual([c.value for c in sheet[1]],
-                         ["CNPJ", "Código", "Nome do Condomínio", "ID SL"])
+                         ["CNPJ / CPF", "Código", "Nome do Condomínio", "ID SL"])
 
 
 if __name__ == "__main__":
