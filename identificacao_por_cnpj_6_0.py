@@ -65,7 +65,7 @@ from logica import (
     pasta_base, caminho_recurso, nome_saida_com_codigo, caminho_do_lote,
     _gravar_erros_log, _registrar_erro_config,
     carregar_config, salvar_config, rotacionar_log,
-    normalizar_cnpj, formatar_cnpj, extrair_texto_pdf, cnpj_valido,
+    normalizar_cnpj, formatar_documento, extrair_texto_pdf, cnpj_valido, cpf_valido,
     extrair_texto_ocr, extrair_texto_ocr_regiao, proximo_dpi_maior,
     extrair_cnpj_tomador, sugerir_nome_condominio, extrair_codigo_protocolo_correio,
     montar_texto_protocolo_correio,
@@ -387,7 +387,7 @@ class App(ctk.CTk):
         frame_form.columnconfigure(2, weight=0)
         frame_form.columnconfigure(3, weight=1)
 
-        caption_in(frame_form, "CNPJ").grid(row=0, column=0, sticky="w", padx=(0, 16))
+        caption_in(frame_form, "CNPJ / CPF").grid(row=0, column=0, sticky="w", padx=(0, 16))
         caption_in(frame_form, "Código").grid(row=0, column=1, sticky="w", padx=(0, 16))
         caption_in(frame_form, "ID SL").grid(row=0, column=2, sticky="w", padx=(0, 16))
         caption_in(frame_form, "Nome").grid(row=0, column=3, sticky="w")
@@ -420,7 +420,7 @@ class App(ctk.CTk):
 
         colunas = ("cnpj", "codigo", "id_sl", "nome")
         self.tabela = ttk.Treeview(frame_tabela, columns=colunas, show="headings", height=14)
-        self.tabela.heading("cnpj", text="CNPJ")
+        self.tabela.heading("cnpj", text="CNPJ / CPF")
         self.tabela.heading("codigo", text="Código")
         self.tabela.heading("id_sl", text="ID SL")
         self.tabela.heading("nome", text="Nome do Condomínio")
@@ -447,7 +447,7 @@ class App(ctk.CTk):
         self.tabela.delete(*self.tabela.get_children())
         for cnpj_norm, dados in sorted(self.cadastro.items(), key=lambda kv: kv[1]["codigo"]):
             self.tabela.insert("", "end", iid=cnpj_norm,
-                                values=(formatar_cnpj(cnpj_norm), dados["codigo"],
+                                values=(formatar_documento(cnpj_norm), dados["codigo"],
                                         dados.get("id_sl", ""), dados["nome"]))
         if hasattr(self, "label_contagem_cadastro"):
             self.label_contagem_cadastro.configure(text=f"{len(self.cadastro)} CADASTRADOS")
@@ -458,7 +458,7 @@ class App(ctk.CTk):
             return
         cnpj_norm = selecionado[0]
         dados = self.cadastro.get(cnpj_norm, {})
-        self.form_cnpj.set(formatar_cnpj(cnpj_norm))
+        self.form_cnpj.set(formatar_documento(cnpj_norm))
         self.form_codigo.set(dados.get("codigo", ""))
         self.form_id_sl.set(dados.get("id_sl", ""))
         self.form_nome.set(dados.get("nome", ""))
@@ -476,15 +476,27 @@ class App(ctk.CTk):
         id_sl = self.form_id_sl.get().strip()
         nome = self.form_nome.get().strip()
 
-        cnpj_norm = normalizar_cnpj(cnpj_raw)
-        if len(cnpj_norm) != 14:
-            messagebox.showerror("Erro", "CNPJ inválido — deve ter 14 dígitos.")
+        documento = normalizar_cnpj(cnpj_raw)
+        if len(documento) not in (11, 14):
+            messagebox.showerror(
+                "Erro",
+                "Documento inválido — informe um CNPJ (14 dígitos) ou um CPF "
+                "(11 dígitos).",
+            )
             return
         if not codigo:
             messagebox.showerror("Erro", "Informe o código.")
             return
 
-        self.cadastro[cnpj_norm] = {"codigo": codigo, "nome": nome, "id_sl": id_sl}
+        #  O documento é a chave do cadastro: trocá-lo num registro que já
+        #  existe precisa REMOVER a chave antiga, senão o condomínio passa a
+        #  existir duas vezes. É o caso de quem estava cadastrado por CPF e
+        #  depois obteve CNPJ próprio.
+        selecionado = self.tabela.selection()
+        if selecionado and selecionado[0] != documento:
+            self.cadastro.pop(selecionado[0], None)
+
+        self.cadastro[documento] = {"codigo": codigo, "nome": nome, "id_sl": id_sl}
         self._atualizar_tabela_cadastro()
         self._salvar_planilha(silencioso=True)
         self._limpar_form()
@@ -1909,7 +1921,7 @@ class App(ctk.CTk):
         if dados is None:
             return
         cnpj = dados.get("cnpj")
-        self.form_cnpj.set(formatar_cnpj(cnpj) if cnpj else "")
+        self.form_cnpj.set(formatar_documento(cnpj) if cnpj else "")
         self.form_codigo.set("")
         # limpa: senão herdaria o ID SL da linha que estivesse selecionada
         self.form_id_sl.set("")
@@ -1957,7 +1969,7 @@ class App(ctk.CTk):
         for cnpj_norm in candidatos:
             registro = self.cadastro.get(cnpj_norm)
             nome = registro.get("nome", "(não cadastrado)") if registro else "(não cadastrado)"
-            texto = f"{formatar_cnpj(cnpj_norm)} — {nome}"
+            texto = f"{formatar_documento(cnpj_norm)} — {nome}"
             ctk.CTkRadioButton(
                 area, text=texto, variable=var_escolha, value=cnpj_norm,
                 font=(fonte, 13), text_color=tema["texto"], fg_color=tema["acento"],
@@ -4037,7 +4049,7 @@ class App(ctk.CTk):
                         # 2a) OCR por região primeiro (mais rápido, se configurado)
                         if usar_ocr_regiao:
                             texto_regiao = extrair_texto_ocr_regiao(caminho_entrada_pdf, retangulo_regiao, dpi=dpi)
-                            candidatos_regiao = extrair_cnpj_tomador(texto_regiao, cnpj_emitente_norm)
+                            candidatos_regiao = extrair_cnpj_tomador(texto_regiao, cnpj_emitente_norm, self.cadastro)
                             if len(candidatos_regiao) == 1:
                                 texto = texto_regiao
                                 usado_ocr = True
@@ -4071,7 +4083,7 @@ class App(ctk.CTk):
                         else:
                             candidatos = []
                     else:
-                        candidatos = extrair_cnpj_tomador(texto, cnpj_emitente_norm)
+                        candidatos = extrair_cnpj_tomador(texto, cnpj_emitente_norm, self.cadastro)
 
                         # 2b.1) Lote sem emitente fixo (ex: Notas Diversas) — mais de
                         #       um candidato costuma ser o emitente da nota (não
@@ -4090,7 +4102,7 @@ class App(ctk.CTk):
                             proximo = proximo_dpi_maior(dpi_usado)
                             if proximo:
                                 texto_retry = extrair_texto_ocr(caminho_entrada_pdf, dpi=proximo)
-                                candidatos_retry = extrair_cnpj_tomador(texto_retry, cnpj_emitente_norm)
+                                candidatos_retry = extrair_cnpj_tomador(texto_retry, cnpj_emitente_norm, self.cadastro)
                                 if candidatos_retry:
                                     texto = texto_retry
                                     candidatos = candidatos_retry
@@ -4122,7 +4134,7 @@ class App(ctk.CTk):
                             "motivo": "Não foi possível ler", "cnpj": None, "nome_sugerido": None,
                             "candidatos": None})
                 elif len(candidatos) > 1:
-                    lista = ", ".join(formatar_cnpj(c) for c in candidatos)
+                    lista = ", ".join(formatar_documento(c) for c in candidatos)
                     pendentes.append((nome, f"CNPJ ambíguo: {lista}" + sufixo_origem))
                     msg = f"[{idx}/{len(arquivos)}] ⚠ {nome} — CNPJ ambíguo ({lista}){sufixo_origem}"
                     res_pendentes.append({
@@ -4134,7 +4146,7 @@ class App(ctk.CTk):
                     registro = self.cadastro.get(cnpj)
                     if registro is None:
                         nome_sugerido = sugerir_nome_condominio(texto) if texto else ""
-                        detalhe = f"CNPJ {formatar_cnpj(cnpj)} não cadastrado"
+                        detalhe = f"CNPJ {formatar_documento(cnpj)} não cadastrado"
                         if nome_sugerido:
                             detalhe += f" (nome sugerido: {nome_sugerido})"
                         detalhe += sufixo_origem
