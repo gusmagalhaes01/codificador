@@ -73,6 +73,40 @@ lista o fallback pegava o CNPJ da Imodata por engano.
 **Se aparecer um novo intermediário conhecido** (outra empresa de cobrança/gestão
 que não seja o condomínio), adicionar o CNPJ dele em `CNPJS_INTERMEDIARIOS`.
 
+## CPF do síndico: por que a regra é diferente da do CNPJ
+
+Condomínio sem CNPJ próprio é identificado pelo **CPF do síndico**, que sai
+impresso no campo do tomador/pagador. A extração trata os dois em dois níveis,
+com pesos deliberadamente diferentes:
+
+- **Depois de um rótulo** (`PAGADOR ... CNPJ/CPF`, `TOMADOR`,
+  `CO-ESTIPULANTE`...), o CPF é sempre aceito: o rótulo é a garantia de que
+  aquele documento é o do pagador.
+- **Na varredura genérica**, sem rótulo legível, o CPF **só vira candidato se
+  já estiver no cadastro** (parâmetro opcional `cadastro` de
+  `extrair_cnpj_tomador`). Num boleto, um CNPJ solto tende a ser de alguma
+  empresa envolvida na cobrança, mas um CPF solto costuma ser de uma pessoa
+  qualquer — síndico, sacador avalista, quem assinou. Aceitar todo CPF válido
+  da página encheria o processo de falso positivo, e falso positivo aqui é PDF
+  carimbado com o código do condomínio errado.
+
+**Custo assumido:** um condomínio novo identificado por CPF **não** vira
+pendente "não cadastrado" por esse caminho — ele cai no match por código/nome
+do arquivo, que continua valendo como rede. Quem for afrouxar a regra depois
+precisa saber que o ganho é esse e o risco é o carimbo errado.
+
+`CPF_REGEX` e `CPF_FLEX` (`logica.py`) começam com o lookbehind `(?<!\d)` e
+terminam com o lookahead `(?![\d\-/])`, que barra a continuação do número — de
+propósito: sem eles, os 11 primeiros dígitos de um CNPJ colado sem separador
+(OCR) poderiam casar como CPF, e uma coincidência de checksum viraria carimbo
+errado.
+
+**O CPF fica fora do carimbo do protocolo dos Correios**
+(`montar_texto_protocolo_correio`): com CNPJ o carimbo é
+`"{código} {nome} - {CNPJ}"`, com CPF sai só `"{código} {nome}"`. O PDF
+carimbado circula e vai para o Superlógica, e estampar o CPF de uma pessoa
+física nele é diferente de estampar o CNPJ de um condomínio.
+
 ## Cuidado: condomínios com nomes parecidos
 
 A planilha tem pares de condomínios com nomes quase idênticos e CNPJs diferentes.
@@ -95,6 +129,19 @@ similaridade de nome sozinha.
 
 ## Histórico de decisões
 
+- **v6.15.0 — condomínios identificados por CPF**: alguns condomínios não têm
+  CNPJ próprio e aparecem nos boletos e notas com o **CPF do síndico**. A chave
+  do cadastro deixou de ser "CNPJ" e passou a ser **documento normalizado**: 14
+  dígitos (CNPJ) ou 11 (CPF). Funciona sem ambiguidade porque o comprimento
+  distingue os dois sozinho, e cada um tem seu próprio dígito verificador
+  (`cnpj_valido` e `cpf_valido`, `logica.py`). `formatar_cnpj` virou
+  `formatar_documento`, formatando pelo comprimento. A coluna A da planilha
+  passou a se chamar `CNPJ / CPF`; `carregar_cadastro` lê por posição e nunca
+  pelo nome do cabeçalho, então planilha antiga continua abrindo. Junto veio
+  uma correção: editar o documento de um registro existente **criava um
+  segundo** em vez de atualizar o primeiro, porque o documento é a chave — é
+  exatamente o fluxo de quem estava cadastrado por CPF e depois obteve CNPJ.
+  Ver o spec `docs/superpowers/specs/2026-08-24-cadastro-por-cpf-design.md`.
 - **Fix (versão 5_3)**: adicionado `CNPJS_INTERMEDIARIOS` para excluir FedCorp e
   Imodata também no fallback genérico, não só no filtro por campo semântico.
   Corrigiu caso onde o OCR não lia o rótulo `CO-ESTIPULANTE` e o script pegava
@@ -669,8 +716,10 @@ no 6_0 — o `identificacao_por_cnpj_5_3.py` não tem nenhuma delas:
 ## Convenções do código
 
 - Comentários e nomes de variáveis em português (ex: `cadastro`, `formatar_cnpj`).
-- CNPJs sempre normalizados para 14 dígitos internamente (`normalizar_cnpj`),
-  formatados só na exibição/planilha (`formatar_cnpj`).
+- Documentos sempre normalizados para só dígitos internamente
+  (`normalizar_cnpj`) — 14 para CNPJ, 11 para CPF —, formatados só na
+  exibição/planilha (`formatar_documento`). O comprimento é o que distingue os
+  dois; nunca inferir o tipo de outro jeito.
 - Dependências: `customtkinter` (interface 6_0; traz `darkdetect`), `pypdf`,
   `reportlab`, `openpyxl`, `pymupdf`, `Pillow`, `winocr` (Windows). Versões
   fixas em `requirements.txt` (mantido em sincronia manualmente — sem
