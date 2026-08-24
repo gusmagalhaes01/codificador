@@ -3095,6 +3095,16 @@ class App(ctk.CTk):
         processados = resultado.get("processados", []) or []
         pendentes = resultado.get("pendentes", []) or []
         ignorados = resultado.get("ignorados", []) or []
+
+        #  Protocolo com valor mas sem o ID do Superlógica também precisa de
+        #  ação — só que de outra: dizer de qual condomínio ele é. Aparece
+        #  junto dos pendentes para que tudo que exige atenção fique num lugar
+        #  só. A separação é de EXIBIÇÃO: no `resultado` ele continua em
+        #  `processados`, porque `lancamentos_de_despesa` precisa distinguir
+        #  "sem valor" de "sem condomínio" para dizer onde cada um se resolve.
+        sem_condominio = [p for p in processados if self._falta_id_sl(p)]
+        pendentes = list(pendentes) + sem_condominio
+        processados = [p for p in processados if not self._falta_id_sl(p)]
         total_valor = resultado.get("total_valor", Decimal("0.00"))
 
         janela = self._montar_painel_resultado(
@@ -3178,6 +3188,16 @@ class App(ctk.CTk):
             )
             botao_valor.pack(side="left", padx=(0, 8))
 
+            botao_condominio = ctk.CTkButton(
+                acoes, text="Escolher condomínio", corner_radius=0,
+                state="disabled", fg_color=tema["borda"],
+                hover_color=tema["acento_hover"],
+                text_color=tema["sobre_acento"], border_width=0, font=(fonte, 13),
+                command=lambda: self._acao_escolher_condominio(
+                    self._protocolo_selecionado(tabela)),
+            )
+            botao_condominio.pack(side="left", padx=(0, 8))
+
             botao_abrir = ctk.CTkButton(
                 acoes, text="Abrir PDF", corner_radius=0, state="disabled",
                 fg_color="transparent", hover_color=tema["superficie"],
@@ -3189,17 +3209,37 @@ class App(ctk.CTk):
             botao_abrir.pack(side="left", padx=(0, 8))
 
             def ao_selecionar(_evento=None):
-                #  Botão cobalto desabilitado tem que apagar o fg_color, senão
+                #  Cada botão liga só para o que falta NAQUELA linha: sem
+                #  valor pede valor, sem condomínio pede condomínio. Oferecer
+                #  os dois sempre faria a pessoa tentar o que não resolve —
+                #  foi exatamente assim que "Informar valor" virou beco sem
+                #  saída para um protocolo a que só faltava o condomínio.
+                #  Botão cobalto desabilitado precisa apagar o fg_color, senão
                 #  fica azul e parece clicável.
-                tem_linha = bool(tabela.selection())
+                dados = self._protocolo_selecionado(tabela)
+                falta_valor = dados is not None and dados.get("valor") is None
+                falta_cond = dados is not None and self._falta_id_sl(dados)
                 botao_valor.configure(
-                    state="normal" if tem_linha else "disabled",
-                    fg_color=tema["acento"] if tem_linha else tema["borda"])
-                botao_abrir.configure(state="normal" if tem_linha else "disabled")
+                    state="normal" if falta_valor else "disabled",
+                    fg_color=tema["acento"] if falta_valor else tema["borda"])
+                botao_condominio.configure(
+                    state="normal" if falta_cond else "disabled",
+                    fg_color=tema["acento"] if falta_cond else tema["borda"])
+                botao_abrir.configure(
+                    state="normal" if dados and dados.get("caminho") else "disabled")
+
+            def ao_duplo_clique(_evento=None):
+                #  Duplo clique faz o que aquela linha precisa.
+                dados = self._protocolo_selecionado(tabela)
+                if dados is None:
+                    return
+                if dados.get("valor") is None:
+                    self._acao_informar_valor(dados)
+                elif self._falta_id_sl(dados):
+                    self._acao_escolher_condominio(dados)
 
             tabela.bind("<<TreeviewSelect>>", ao_selecionar)
-            tabela.bind("<Double-1>", lambda _e: self._acao_informar_valor(
-                self._protocolo_selecionado(tabela)))
+            tabela.bind("<Double-1>", ao_duplo_clique)
 
         # --- CALCULADOS ---
         ctk.CTkLabel(
@@ -3245,6 +3285,17 @@ class App(ctk.CTk):
             for dados in ignorados:
                 tabela_ign.insert("", "end", values=(
                     dados.get("arquivo", ""), dados.get("motivo", "")))
+
+    def _falta_id_sl(self, item):
+        """Se este protocolo ainda não tem como virar lançamento de despesa:
+        sem código lido, ou com código que não está no cadastro, ou cadastrado
+        sem o campo "ID SL"."""
+        codigo = (item or {}).get("codigo") or ""
+        if not codigo:
+            return True
+        cnpj = _codigos_do_cadastro(self.cadastro).get(codigo)
+        registro = self.cadastro.get(cnpj) if cnpj else None
+        return not (registro or {}).get("id_sl")
 
     def _protocolo_selecionado(self, tabela):
         """Dict do pendente na linha selecionada, ou None."""
@@ -3313,29 +3364,6 @@ class App(ctk.CTk):
 
         lancamentos, travas = lancamentos_de_despesa(resultado, self.cadastro)
 
-        #  Protocolo sem o ID do Superlógica é resolvível aqui mesmo: basta
-        #  dizer de qual condomínio ele é. Antes isso era um beco sem saída —
-        #  a mensagem mandava resolver, mas nenhum botão da tela resolvia, e
-        #  "Informar valor" não serve porque o valor esses já têm.
-        if travas["sem_id_sl"] and not travas["sem_valor"]:
-            quantos = len(travas["sem_id_sl"])
-            plural = "protocolo" if quantos == 1 else "protocolos"
-            lista = "\n  ".join(travas["sem_id_sl"])
-            if messagebox.askyesno(
-                "Falta dizer o condomínio",
-                f"{quantos} {plural} sem o condomínio identificado:\n\n  "
-                f"{lista}\n\nQuer escolher o condomínio de cada um agora?",
-                parent=self._janela_resultado,
-            ):
-                for nome_arquivo in list(travas["sem_id_sl"]):
-                    item = next((p for p in resultado.get("processados", [])
-                                 if p.get("arquivo") == nome_arquivo), None)
-                    if item:
-                        self._acao_escolher_condominio(item, redesenhar=False)
-                self.mostrar_resultado_protocolos(resultado)
-                lancamentos, travas = lancamentos_de_despesa(resultado,
-                                                             self.cadastro)
-
         if travas["sem_valor"] or travas["sem_id_sl"]:
             partes = []
             if travas["sem_valor"]:
@@ -3344,8 +3372,8 @@ class App(ctk.CTk):
                     + "\n  ".join(travas["sem_valor"]))
             if travas["sem_id_sl"]:
                 partes.append(
-                    'Sem o código do Superlógica — preencha o "ID SL" na aba '
-                    'de Cadastro:\n  ' + "\n  ".join(travas["sem_id_sl"]))
+                    'Sem o condomínio identificado — use "Escolher condomínio" '
+                    'na lista de pendentes:\n  ' + "\n  ".join(travas["sem_id_sl"]))
             messagebox.showwarning(
                 "Ainda não dá para gerar",
                 "A planilha de despesas não foi gerada porque estes protocolos "
