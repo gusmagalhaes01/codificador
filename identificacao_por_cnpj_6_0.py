@@ -79,6 +79,7 @@ from logica import (
     linha_planilha_protocolo, salvar_planilha_protocolo,
     extrair_texto_escaneado, COLUNAS_PROTOCOLO, resolver_protocolo_manual,
     lancamentos_de_despesa, gerar_planilha_despesas,
+    buscar_condominios,
     converter_data_digitada,
 )
 
@@ -3312,6 +3313,29 @@ class App(ctk.CTk):
 
         lancamentos, travas = lancamentos_de_despesa(resultado, self.cadastro)
 
+        #  Protocolo sem o ID do Superlógica é resolvível aqui mesmo: basta
+        #  dizer de qual condomínio ele é. Antes isso era um beco sem saída —
+        #  a mensagem mandava resolver, mas nenhum botão da tela resolvia, e
+        #  "Informar valor" não serve porque o valor esses já têm.
+        if travas["sem_id_sl"] and not travas["sem_valor"]:
+            quantos = len(travas["sem_id_sl"])
+            plural = "protocolo" if quantos == 1 else "protocolos"
+            lista = "\n  ".join(travas["sem_id_sl"])
+            if messagebox.askyesno(
+                "Falta dizer o condomínio",
+                f"{quantos} {plural} sem o condomínio identificado:\n\n  "
+                f"{lista}\n\nQuer escolher o condomínio de cada um agora?",
+                parent=self._janela_resultado,
+            ):
+                for nome_arquivo in list(travas["sem_id_sl"]):
+                    item = next((p for p in resultado.get("processados", [])
+                                 if p.get("arquivo") == nome_arquivo), None)
+                    if item:
+                        self._acao_escolher_condominio(item, redesenhar=False)
+                self.mostrar_resultado_protocolos(resultado)
+                lancamentos, travas = lancamentos_de_despesa(resultado,
+                                                             self.cadastro)
+
         if travas["sem_valor"] or travas["sem_id_sl"]:
             partes = []
             if travas["sem_valor"]:
@@ -3388,6 +3412,157 @@ class App(ctk.CTk):
                 messagebox.showerror(
                     "Erro", f"Não foi possível abrir a planilha:\n{e}",
                     parent=self._janela_resultado)
+
+    def _acao_escolher_condominio(self, dados, redesenhar=True):
+        """
+        Diz a qual condomínio um protocolo pertence, quando o programa não
+        conseguiu descobrir sozinho — código ilegível (manuscrito por cima) ou
+        fora do cadastro. Recarimba o PDF com o código na lateral, atualiza a
+        linha da planilha e destrava a geração da planilha de despesas.
+
+        Sem isso, esses protocolos ficavam num beco sem saída: entravam na
+        planilha com valor, travavam a geração por falta do ID do Superlógica,
+        e nenhum botão da tela resolvia — "Informar valor" não serve, porque o
+        valor eles já têm.
+        """
+        if not dados:
+            return
+        ctx = getattr(self, "_ctx_protocolos", None)
+        if not ctx:
+            messagebox.showerror(
+                "Erro",
+                "O contexto do processamento se perdeu. Rode o lote de novo.",
+                parent=self._janela_resultado)
+            return
+
+        escolhido = self._pedir_condominio(dados)
+        if escolhido is None:
+            return
+
+        if not escolhido.get("id_sl"):
+            messagebox.showwarning(
+                "Condomínio sem o código do Superlógica",
+                f"{escolhido['codigo']} {escolhido['nome']} está no cadastro, "
+                "mas sem o campo \"ID SL\" preenchido — sem ele o lançamento "
+                "não tem como ser importado.\n\nPreencha o ID SL na aba de "
+                "Cadastro e escolha o condomínio de novo.",
+                parent=self._janela_resultado)
+            return
+
+        dados["codigo"] = escolhido["codigo"]
+        dados["condominio"] = f"{escolhido['codigo']} {escolhido['nome']}"
+
+        #  Recarimba a partir do PDF original: o arquivo de saída foi gravado
+        #  sem o carimbo lateral, porque na hora não havia código. O papel
+        #  arquivado é o que vai para o Superlógica, então não pode ficar sem
+        #  identificação.
+        registro_dados = {"codigo": escolhido["codigo"],
+                          "condominio": dados["condominio"]}
+        try:
+            self._carimbar_protocolo(
+                dados["caminho"], dados.get("pasta_destino") or ctx["pasta_saida"],
+                dados["arquivo"], registro_dados, dados.get("unidades"),
+                ctx.get("tarifa"), ctx["config"], ctx["codigos"],
+                valor_manual=dados.get("valor"))
+        except Exception as e:
+            messagebox.showerror(
+                "Erro ao carimbar",
+                f"O condomínio foi anotado, mas o PDF não pôde ser recarimbado:"
+                f"\n{e}",
+                parent=self._janela_resultado)
+
+        #  Refaz a linha da planilha com o condomínio agora conhecido.
+        ctx["linhas"][dados["indice_linha"]] = linha_planilha_protocolo(
+            dados["arquivo"], registro_dados, self.cadastro,
+            valor_manual=dados.get("valor"))
+
+        try:
+            salvar_planilha_protocolo(ctx["destino"], ctx["linhas"])
+        except Exception as e:
+            messagebox.showwarning(
+                "Planilha não atualizada",
+                f"O condomínio foi anotado, mas a planilha não pôde ser "
+                f"regravada:\n{e}\n\nSe ela estiver aberta no Excel, feche o "
+                f"arquivo — a planilha é regravada inteira na próxima correção.",
+                parent=self._janela_resultado)
+
+        if redesenhar:
+            self.mostrar_resultado_protocolos(self._resultado_protocolos)
+
+    def _pedir_condominio(self, dados):
+        """
+        Janelinha para escolher o condomínio: campo de busca por nome ou
+        código e a lista do cadastro. Devolve o dict do condomínio escolhido,
+        ou None se o usuário cancelar.
+        """
+        tema = self.tema_atual
+        fonte = familia_fonte()
+        janela = ctk.CTkToplevel(self._janela_resultado)
+        janela.title("Escolher condomínio")
+        janela.geometry("520x520")
+        janela.configure(fg_color=tema["fundo"])
+        janela.transient(self._janela_resultado)
+        janela.grab_set()
+
+        escolha = {"condominio": None}
+
+        ctk.CTkLabel(janela, text="De qual condomínio é este protocolo?",
+                     font=(fonte, 15), text_color=tema["texto"], anchor="w").pack(
+            fill="x", padx=24, pady=(24, 4))
+        ctk.CTkLabel(janela, text=dados.get("arquivo", ""), font=(fonte, 12),
+                     text_color=tema["texto_secundario"], anchor="w").pack(
+            fill="x", padx=24)
+
+        entrada = ctk.CTkEntry(janela, corner_radius=0,
+                               placeholder_text="Buscar por nome ou código",
+                               fg_color=tema["superficie"], border_width=1,
+                               border_color=tema["borda"], text_color=tema["texto"],
+                               font=(fonte, 14))
+        entrada.pack(fill="x", padx=24, pady=(12, 8))
+        entrada.focus_set()
+
+        area = ctk.CTkScrollableFrame(janela, corner_radius=0,
+                                      fg_color=tema["fundo"])
+        area.pack(fill="both", expand=True, padx=24, pady=(0, 8))
+
+        def confirmar(condominio):
+            escolha["condominio"] = condominio
+            janela.destroy()
+
+        def redesenhar(_evento=None):
+            for widget in area.winfo_children():
+                widget.destroy()
+            achados = buscar_condominios(entrada.get(), self.cadastro, limite=60)
+            if not achados:
+                ctk.CTkLabel(area, text="Nenhum condomínio com esse nome ou código.",
+                             font=(fonte, 13), text_color=tema["texto_secundario"],
+                             anchor="w").pack(fill="x", pady=8)
+                return
+            for condominio in achados:
+                #  Sem ID SL aparece, mas marcado: escolher esse não destrava,
+                #  e a pessoa precisa saber disso antes de clicar.
+                sufixo = "" if condominio["id_sl"] else "   (sem ID do Superlógica)"
+                cor = tema["texto"] if condominio["id_sl"] else tema["texto_terciario"]
+                ctk.CTkButton(
+                    area,
+                    text=f"{condominio['codigo']}  {condominio['nome']}{sufixo}",
+                    corner_radius=0, anchor="w", height=30,
+                    fg_color="transparent", hover_color=tema["superficie"],
+                    text_color=cor, font=(fonte, 13),
+                    command=lambda c=condominio: confirmar(c),
+                ).pack(fill="x")
+
+        entrada.bind("<KeyRelease>", redesenhar)
+        redesenhar()
+
+        ctk.CTkButton(janela, text="Cancelar", corner_radius=0, width=100,
+                      fg_color="transparent", hover_color=tema["superficie"],
+                      border_width=1, border_color=tema["borda_forte"],
+                      text_color=tema["texto"], font=(fonte, 13),
+                      command=janela.destroy).pack(padx=24, pady=(0, 24), anchor="e")
+
+        self.wait_window(janela)
+        return escolha["condominio"]
 
     def _pedir_vencimento_despesas(self):
         """

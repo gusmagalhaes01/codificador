@@ -1848,3 +1848,40 @@ def lancamentos_de_despesa(resultado, cadastro):
         lancamentos.append((id_sl, item["valor"]))
 
     return lancamentos, travas
+
+
+def buscar_condominios(termo, cadastro, limite=200):
+    """
+    Procura condomínios no cadastro por pedaço do nome ou do código, para o
+    seletor do painel de resultado. Devolve lista de dicts com `codigo`,
+    `nome`, `id_sl` e `cnpj`, ordenada por nome.
+
+    Existe porque um protocolo pode chegar sem código legível (alguém escreve
+    o valor à caneta por cima) ou com um código que não está no cadastro — e
+    nesses casos não havia como destravar a geração da planilha de despesas
+    pela tela.
+
+    Quem está sem `id_sl` aparece na lista do mesmo jeito: escondê-lo faria a
+    pessoa escolher e nada acontecer, sem entender por quê. O painel avisa.
+    """
+    procurado = normalizar_texto_busca(termo or "")
+    digitos = re.sub(r"\D", "", termo or "")
+
+    achados = []
+    for cnpj_norm, dados in cadastro.items():
+        nome = dados.get("nome", "") or ""
+        codigo = str(dados.get("codigo", "") or "")
+        casa_nome = procurado and procurado in normalizar_texto_busca(nome)
+        casa_codigo = digitos and digitos in codigo
+        if procurado or digitos:
+            if not (casa_nome or casa_codigo):
+                continue
+        achados.append({
+            "codigo": codigo,
+            "nome": nome,
+            "id_sl": dados.get("id_sl", "") or "",
+            "cnpj": cnpj_norm,
+        })
+
+    achados.sort(key=lambda c: c["nome"])
+    return achados[:limite]

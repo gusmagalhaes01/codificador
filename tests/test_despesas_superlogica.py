@@ -405,3 +405,42 @@ class TestLancamentosDeDespesa(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestBuscarCondominios(unittest.TestCase):
+    """Busca do seletor de condomínio do painel: o funcionário digita parte do
+    nome ou do código e escolhe na lista. Existe porque um protocolo pode
+    chegar sem código legível (manuscrito por cima) ou com código fora do
+    cadastro — e nesses casos nada mais no painel destravava a geração."""
+
+    def test_acha_por_pedaco_do_nome(self):
+        achados = app.buscar_condominios("klost", CADASTRO_TESTE)
+        self.assertEqual([c["codigo"] for c in achados], ["10004"])
+
+    def test_busca_ignora_acento_e_caixa(self):
+        achados = app.buscar_condominios("BONFIM", CADASTRO_TESTE)
+        self.assertEqual(len(achados), 2)
+
+    def test_acha_por_codigo(self):
+        achados = app.buscar_condominios("10002", CADASTRO_TESTE)
+        self.assertEqual([c["nome"] for c in achados], ["SAN REMO"])
+
+    def test_traz_o_id_sl_junto(self):
+        """É o que o painel precisa para destravar a geração."""
+        achados = app.buscar_condominios("klost", CADASTRO_TESTE)
+        self.assertEqual(achados[0]["id_sl"], "44")
+
+    def test_termo_vazio_traz_tudo_ordenado_por_nome(self):
+        achados = app.buscar_condominios("", CADASTRO_TESTE)
+        self.assertEqual(len(achados), len(CADASTRO_TESTE))
+        nomes = [c["nome"] for c in achados]
+        self.assertEqual(nomes, sorted(nomes))
+
+    def test_sem_correspondencia_devolve_lista_vazia(self):
+        self.assertEqual(app.buscar_condominios("zzzz", CADASTRO_TESTE), [])
+
+    def test_traz_tambem_quem_esta_sem_id_sl(self):
+        """Esconder seria pior: a pessoa escolheria e nada aconteceria, sem
+        entender por quê. Melhor aparecer e o painel avisar que falta o ID."""
+        achados = app.buscar_condominios("maggiore", CADASTRO_TESTE)
+        self.assertEqual(achados[0]["id_sl"], "")
