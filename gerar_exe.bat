@@ -32,6 +32,8 @@ rem diretorio do executavel, entao e ali que o app procura o cadastro e
 rem grava config.json e os logs.
 copy /Y cadastro_condominios.xlsx "dist\Codificador\" >nul
 if errorlevel 1 goto erro
+copy /Y modelo_despesas.xlsx "dist\Codificador\" >nul
+if errorlevel 1 goto erro
 if exist "dist\CODIFICADOR.zip" del /Q "dist\CODIFICADOR.zip"
 powershell -NoProfile -Command "Compress-Archive -Path 'dist\Codificador' -DestinationPath 'dist\CODIFICADOR.zip' -Force"
 if errorlevel 1 goto erro
@@ -42,7 +44,7 @@ echo   Pronto: dist\CODIFICADOR.zip
 echo ============================================
 echo.
 echo O zip contem a pasta Codificador\ com o executavel,
-echo o _internal\ e o cadastro_condominios.xlsx.
+echo o _internal\, o cadastro_condominios.xlsx e o modelo_despesas.xlsx.
 echo Extrair a pasta INTEIRA - o exe nao roda sozinho.
 echo.
 pause

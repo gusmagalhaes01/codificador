@@ -62,6 +62,11 @@ _rapidocr_motor = None
 
 CNPJ_REGEX = re.compile(r"\d{2}\.\d{3}\.\d{3}/\d{4}-\d{2}")
 NOME_ARQUIVO_PADRAO = "cadastro_condominios.xlsx"
+#  Modelo de importação de despesas do Superlógica, distribuído junto do
+#  executável como o cadastro. Fica AO LADO do .exe de propósito: é ali que o
+#  usuário edita fornecedor, categoria e forma de pagamento quando mudarem,
+#  sem precisar de programador nem de executável novo.
+NOME_MODELO_DESPESAS = "modelo_despesas.xlsx"
 NOME_LOG_PADRAO = "processamento.log"
 NOME_CONFIG_PADRAO = "config.json"
 LIMITE_TAMANHO_LOG = 5 * 1024 * 1024  # 5 MB — acima disso, rotaciona

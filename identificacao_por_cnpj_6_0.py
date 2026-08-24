@@ -58,6 +58,7 @@ from logica import (
     CNPJ_REGEX, NOME_ARQUIVO_PADRAO, NOME_LOG_PADRAO, NOME_CONFIG_PADRAO,
     NOME_ICONE, CHAVES_PERFIL, PERFIS_PADRAO, ORDEM_PREDEFINICOES,
     DEFAULTS_CONFIG, LIMITE_TEXTO_MINIMO, DPI_ESCALONAMENTO,
+    NOME_MODELO_DESPESAS,
     CNPJS_INTERMEDIARIOS, LIMIAR_SCORE_NOME, LIMIAR_DIFERENCA_AMBIGUA,
     PALAVRAS_TIPO_DOC, OCR_DISPONIVEL, FITZ_DISPONIVEL, WINOCR_DISPONIVEL,
     TAMANHO_LOTE_PADRAO,
@@ -3341,12 +3342,17 @@ class App(ctk.CTk):
         if vencimento is None:
             return
 
-        modelo = filedialog.askopenfilename(
-            title="Escolha o modelo de despesas do Superlógica",
-            filetypes=[("Excel", "*.xlsx")],
-            parent=self._janela_resultado)
-        if not modelo:
-            return
+        #  O modelo vai junto do executável, como o cadastro: quem quiser
+        #  trocar fornecedor, categoria ou forma de pagamento edita o arquivo
+        #  ao lado do .exe. Só pede pra escolher quando ele não está lá.
+        modelo = os.path.join(pasta_base(), NOME_MODELO_DESPESAS)
+        if not os.path.isfile(modelo):
+            modelo = filedialog.askopenfilename(
+                title="Escolha o modelo de despesas do Superlógica",
+                filetypes=[("Excel", "*.xlsx")],
+                parent=self._janela_resultado)
+            if not modelo:
+                return
 
         ctx = self._ctx_protocolos or {}
         pasta_sugerida = os.path.dirname(ctx.get("destino", "")) or None
