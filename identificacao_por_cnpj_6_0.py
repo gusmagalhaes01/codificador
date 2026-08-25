@@ -245,6 +245,10 @@ class App(ctk.CTk):
         # None até o 1º processamento da sessão; sempre lido com getattr/
         # `.get()` por segurança, nunca indexado direto.
         self._ctx_protocolos = None
+        #  Painel de resultado, criado sob demanda. Nasce como None para que
+        #  `_janela_para_dialogo` possa consultá-lo antes de qualquer
+        #  processamento sem cair no __getattr__ do Tk.
+        self._janela_resultado = None
 
         self._montar_interface()
         self._atualizar_tabela_cadastro()
@@ -3343,6 +3347,23 @@ class App(ctk.CTk):
                 tabela_ign.insert("", "end", values=(
                     dados.get("arquivo", ""), dados.get("motivo", "")))
 
+    def _janela_para_dialogo(self):
+        """
+        Janela que deve ser a "mãe" de uma janelinha modal: o painel de
+        resultado quando ele está aberto, senão a janela principal.
+
+        Existe porque uma mesma pergunta pode ser feita antes de o painel
+        existir. Fixar `self._janela_resultado` como pai quebrava com
+        AttributeError quando a pergunta vinha antes do processamento.
+        """
+        janela = getattr(self, "_janela_resultado", None)
+        try:
+            if janela is not None and janela.winfo_exists():
+                return janela
+        except Exception:
+            pass
+        return self
+
     def _listas_do_painel_protocolos(self, resultado):
         """
         Divide o `resultado` do lote no que cada seção do painel mostra:
@@ -3757,11 +3778,16 @@ class App(ctk.CTk):
         """
         tema = self.tema_atual
         fonte = familia_fonte()
-        janela = ctk.CTkToplevel(self._janela_resultado)
+        #  Esta janelinha é aberta em DOIS momentos: no início do lote (junto
+        #  da tarifa, para o vencimento entrar no carimbo) e, como reserva, a
+        #  partir do painel de resultado. No primeiro, o painel ainda não
+        #  existe — daí o pai ser resolvido em vez de fixo.
+        pai = self._janela_para_dialogo()
+        janela = ctk.CTkToplevel(pai)
         janela.title("Vencimento")
         janela.configure(fg_color=tema["fundo"])
         janela.resizable(False, False)
-        janela.transient(self._janela_resultado)
+        janela.transient(pai)
         janela.grab_set()
 
         escolha = {"data": None}
