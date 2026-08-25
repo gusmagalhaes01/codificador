@@ -2761,12 +2761,21 @@ class App(ctk.CTk):
         if vencimento is None:
             return
 
+        #  A chave também é dado do lote e muda a cada importação. Perguntar
+        #  aqui evita que alguém tenha de abrir a planilha gerada no Excel só
+        #  para trocá-la — foi assim que o vencimento perdeu o formato de data
+        #  e o Superlógica gravou 01/01/1970 sem acusar erro.
+        chave = self._pedir_chave_despesas()
+        if chave is None:
+            return
+
         self.botao_protocolos.configure(state="disabled")
         self.label_status_protocolos.configure(text="Lendo os protocolos...")
 
         thread = threading.Thread(
             target=self._processar_protocolos_em_thread,
-            args=(pasta, pasta_saida, destino, tarifa, vencimento), daemon=True)
+            args=(pasta, pasta_saida, destino, tarifa, vencimento, chave),
+            daemon=True)
         thread.start()
 
     def _ler_texto_protocolo(self, caminho, dpi):
@@ -2784,7 +2793,7 @@ class App(ctk.CTk):
         return extrair_texto_escaneado(caminho, dpi=dpi), True
 
     def _processar_protocolos_em_thread(self, pasta, pasta_saida, destino, tarifa,
-                                         vencimento):
+                                         vencimento, chave):
         arquivos = sorted(f for f in os.listdir(pasta) if f.lower().endswith(".pdf"))
         total = len(arquivos)
         self.after(0, lambda: self.barra_protocolos.configure(maximum=total, value=0))
@@ -3071,6 +3080,9 @@ class App(ctk.CTk):
             #  para a coluna `vencimento` da planilha de despesas. Tem que ser
             #  o MESMO nos dois lugares, senão o Paybox não anexa o documento.
             "vencimento": vencimento,
+            #  Mesma ideia do vencimento: dado do lote, gravado direto na
+            #  planilha para ninguém precisar abrir o arquivo no Excel.
+            "chave": chave,
         }
         resultado = {
             "total": total,
@@ -3574,6 +3586,7 @@ class App(ctk.CTk):
             vencimento = self._pedir_vencimento_despesas()
             if vencimento is None:
                 return
+        chave = (self._ctx_protocolos or {}).get("chave")
 
         #  O modelo vai junto do executável, como o cadastro: quem quiser
         #  trocar fornecedor, categoria ou forma de pagamento edita o arquivo
@@ -3601,7 +3614,7 @@ class App(ctk.CTk):
 
         try:
             gerar_planilha_despesas(modelo, destino, lancamentos,
-                                    vencimento=vencimento)
+                                    vencimento=vencimento, chave=chave)
         except Exception as e:
             messagebox.showerror(
                 "Erro ao gerar",
@@ -3839,6 +3852,74 @@ class App(ctk.CTk):
         entrada.bind("<Return>", lambda _e: confirmar())
         self.wait_window(janela)
         return escolha["data"]
+
+    def _pedir_chave_despesas(self):
+        """
+        Pede a chave da importação de despesas. Devolve int, ou None se o
+        usuário cancelar.
+
+        Existe para que ninguém precise abrir a planilha gerada no Excel só
+        para trocar esse número: foi abrindo o arquivo para isso que uma vez a
+        coluna `vencimento` perdeu o formato de data e o Superlógica gravou
+        01/01/1970 nos lançamentos, sem acusar erro nenhum.
+
+        Campo vazio de propósito, sem valor padrão — pelo mesmo motivo da
+        tarifa: a chave muda a cada importação, e um padrão herdado passaria
+        batido.
+        """
+        tema = self.tema_atual
+        fonte = familia_fonte()
+        pai = self._janela_para_dialogo()
+        janela = ctk.CTkToplevel(pai)
+        janela.title("Chave da importação")
+        janela.configure(fg_color=tema["fundo"])
+        janela.resizable(False, False)
+        janela.transient(pai)
+        janela.grab_set()
+
+        escolha = {"chave": None}
+
+        ctk.CTkLabel(janela, text="Qual a chave desta importação?",
+                     font=(fonte, 15), text_color=tema["texto"]).pack(
+            padx=24, pady=(24, 4), anchor="w")
+        ctk.CTkLabel(janela, text="Só números. Ex.: 46",
+                     font=(fonte, 12), text_color=tema["texto_terciario"]).pack(
+            padx=24, anchor="w")
+
+        entrada = ctk.CTkEntry(janela, corner_radius=0, width=200,
+                               fg_color=tema["superficie"], border_width=1,
+                               border_color=tema["borda"], text_color=tema["texto"],
+                               font=(fonte, 14))
+        entrada.pack(padx=24, pady=(12, 4), anchor="w")
+        entrada.focus_set()
+
+        aviso = ctk.CTkLabel(janela, text="", font=(fonte, 12),
+                             text_color=tema["acento"])
+        aviso.pack(padx=24, pady=(0, 8), anchor="w")
+
+        def confirmar():
+            texto = entrada.get().strip()
+            if not texto.isdigit():
+                aviso.configure(text="Informe só números, sem pontos nem letras.")
+                return
+            escolha["chave"] = int(texto)
+            janela.destroy()
+
+        botoes = ctk.CTkFrame(janela, corner_radius=0, fg_color=tema["fundo"])
+        botoes.pack(padx=24, pady=(0, 24), anchor="e")
+        ctk.CTkButton(botoes, text="Cancelar", corner_radius=0, width=100,
+                      fg_color="transparent", hover_color=tema["superficie"],
+                      border_width=1, border_color=tema["borda_forte"],
+                      text_color=tema["texto"], font=(fonte, 13),
+                      command=janela.destroy).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(botoes, text="Continuar", corner_radius=0, width=120,
+                      fg_color=tema["acento"], hover_color=tema["acento_hover"],
+                      text_color=tema["sobre_acento"], border_width=0,
+                      font=(fonte, 13), command=confirmar).pack(side="left")
+
+        entrada.bind("<Return>", lambda _e: confirmar())
+        self.wait_window(janela)
+        return escolha["chave"]
 
     def _pedir_valor_protocolo(self, dados):
         """

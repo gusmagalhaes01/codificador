@@ -403,6 +403,57 @@ class TestLancamentosDeDespesa(unittest.TestCase):
         self.assertIsInstance(lancamentos[0][1], Decimal)
 
 
+class TestChaveDaImportacao(unittest.TestCase):
+    """A chave é dado do LOTE e muda a cada importação. Passa como parâmetro
+    para ninguém precisar abrir a planilha gerada no Excel só para trocá-la —
+    foi abrindo o arquivo para isso que a coluna vencimento perdeu o formato
+    de data e o Superlógica gravou 01/01/1970 nos lançamentos."""
+
+    def setUp(self):
+        self.pasta = tempfile.mkdtemp()
+        self.saida = os.path.join(self.pasta, "d.xlsx")
+        self.modelo = os.path.join(_RAIZ, "modelo_despesas.xlsx")
+
+    def tearDown(self):
+        shutil.rmtree(self.pasta, ignore_errors=True)
+
+    def _coluna(self, sheet, nome):
+        return {app._normalizar_cabecalho(c.value): c.column
+                for c in sheet[1] if c.value}[nome]
+
+    def test_chave_vai_para_todas_as_linhas(self):
+        venc, _ = app.converter_data_digitada("10/09/2026")
+        app.gerar_planilha_despesas(self.modelo, self.saida,
+                                     [("45", 7.70), ("496", 138.60)],
+                                     vencimento=venc, chave=101)
+        sheet = load_workbook(self.saida).active
+        coluna = self._coluna(sheet, "chave")
+        self.assertEqual([sheet.cell(row=l, column=coluna).value for l in (2, 3)],
+                         [101, 101])
+
+    def test_sem_chave_mantem_a_do_modelo(self):
+        venc, _ = app.converter_data_digitada("10/09/2026")
+        modelo_sheet = load_workbook(self.modelo).active
+        do_modelo = modelo_sheet.cell(
+            row=2, column=self._coluna(modelo_sheet, "chave")).value
+        app.gerar_planilha_despesas(self.modelo, self.saida, [("45", 7.70)],
+                                     vencimento=venc)
+        sheet = load_workbook(self.saida).active
+        self.assertEqual(sheet.cell(row=2, column=self._coluna(sheet, "chave")).value,
+                         do_modelo)
+
+    def test_chave_nao_estraga_o_vencimento(self):
+        """O vencimento tem que continuar data de verdade — é ele que vira
+        01/01/1970 quando sai como número cru."""
+        venc, _ = app.converter_data_digitada("10/09/2026")
+        app.gerar_planilha_despesas(self.modelo, self.saida, [("45", 7.70)],
+                                     vencimento=venc, chave=101)
+        sheet = load_workbook(self.saida).active
+        celula = sheet.cell(row=2, column=self._coluna(sheet, "vencimento"))
+        self.assertTrue(celula.is_date)
+        self.assertEqual(celula.number_format, app.FORMATO_DATA_DESPESAS)
+
+
 if __name__ == "__main__":
     unittest.main()
 

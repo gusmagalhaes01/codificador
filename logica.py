@@ -1775,6 +1775,7 @@ def salvar_planilha_protocolo(caminho, linhas):
 COLUNA_DESPESA_CONDOMINIO = "condominio"
 COLUNA_DESPESA_VALOR = "valor"
 COLUNA_DESPESA_VENCIMENTO = "vencimento"
+COLUNA_DESPESA_CHAVE = "chave"
 LINHA_MOLDE_DESPESAS = 2
 
 #  Colunas do modelo que o Superlógica lê como data. O Excel guarda data como
@@ -1849,7 +1850,7 @@ def converter_data_digitada(texto):
 
 
 def gerar_planilha_despesas(caminho_modelo, caminho_saida, lancamentos,
-                            vencimento=None):
+                            vencimento=None, chave=None):
     """
     Gera a planilha de importação de despesas do Superlógica a partir do
     modelo do usuário. `lancamentos` é [(id_sl, valor), ...] na ordem de saída.
@@ -1869,6 +1870,13 @@ def gerar_planilha_despesas(caminho_modelo, caminho_saida, lancamentos,
     as linhas. Fica fora do modelo de propósito — ela muda a cada geração, e
     era editando o modelo à mão que a data virava número e o Superlógica
     recusava os lançamentos.
+
+    `chave` segue a mesma ideia: é dado do LOTE e muda a cada importação.
+    Existe como parâmetro para que ninguém precise abrir a planilha gerada no
+    Excel só para trocá-la — foi abrindo o arquivo para isso que uma vez a
+    coluna `vencimento` perdeu o formato de data e voltou a ser número cru,
+    fazendo o Superlógica gravar 01/01/1970 outra vez. `None` mantém o que
+    estiver no modelo.
     """
     if not lancamentos:
         raise ValueError(
@@ -1886,6 +1894,8 @@ def gerar_planilha_despesas(caminho_modelo, caminho_saida, lancamentos,
     obrigatorias = [COLUNA_DESPESA_CONDOMINIO, COLUNA_DESPESA_VALOR]
     if vencimento is not None:
         obrigatorias.append(COLUNA_DESPESA_VENCIMENTO)
+    if chave is not None:
+        obrigatorias.append(COLUNA_DESPESA_CHAVE)
     faltando = [nome for nome in obrigatorias if nome not in colunas]
     if faltando:
         raise ValueError(
@@ -1925,6 +1935,9 @@ def gerar_planilha_despesas(caminho_modelo, caminho_saida, lancamentos,
                                      column=colunas[COLUNA_DESPESA_VENCIMENTO])
             celula_venc.value = vencimento
             celula_venc.number_format = FORMATO_DATA_DESPESAS
+        if chave is not None:
+            sheet.cell(row=numero_linha,
+                       column=colunas[COLUNA_DESPESA_CHAVE]).value = chave
 
     #  Modelo salvo com mais de uma linha de exemplo não pode deixar resto
     #  depois do último lançamento — seria despesa fantasma na importação.

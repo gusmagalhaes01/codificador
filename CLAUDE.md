@@ -739,6 +739,14 @@ os lançamentos** — de três, um entrava, e mesmo esse com a data errada.
 de propósito, porque misturar as duas convenções é como uma data tipo `03/04`
 acaba lançada com o mês trocado.
 
+**A `chave` também é perguntada no início do lote (v6.17.0), pelo mesmo
+motivo.** Ela muda a cada importação, e antes era editada à mão na planilha já
+gerada. Abrir o arquivo no Excel só para isso é o que fez a coluna
+`vencimento` perder o formato de data e voltar a ser número cru — o
+Superlógica gravou 01/01/1970 outra vez, **sem acusar erro nenhum**. Com a
+chave vindo do programa, não há mais razão para abrir a planilha antes de
+importar. `chave=None` mantém o que estiver no modelo.
+
 **Guarda das colunas de data, como rede.** `_data_do_molde` converte para data
 de verdade o número que aparecer em `vencimento`, `competência` ou `liquidação`
 quando estiver na faixa 2000–2099; qualquer outra coisa levanta erro com o nome
