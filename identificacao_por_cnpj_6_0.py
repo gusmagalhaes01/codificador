@@ -119,7 +119,14 @@ MARGEM_VALOR_PROTOCOLO = 28
 #  menores que A4. O corpo 10 é o maior que faz a linha do fornecedor (a mais
 #  larga, ~265pt) caber sem alcançar o carimbo lateral.
 MARGEM_DIREITA_BLOCO_PAYBOX = 30
-Y_BLOCO_PAYBOX = 150
+#  `Y` é a linha de CIMA do bloco; as outras três descem a partir dela. O
+#  valor foi medido, não estimado: num protocolo de página cheia a tabela de
+#  unidades desce até ~81 e o rodapé da Imodata começa logo abaixo, então a
+#  janela livre é estreita. Varrendo as 3 páginas de um protocolo cheio
+#  (10380 ROXY) e um curto (10005 VILLARS), a posição livre mais baixa ficou
+#  em 74–77. Descer mais encosta no rodapé e no "1 de N"; subir encosta nas
+#  linhas de assinatura.
+Y_BLOCO_PAYBOX = 77
 TAMANHO_BLOCO_PAYBOX = 10
 
 #  Qualidade de leitura dos protocolos dos Correios: fixa na melhor, de

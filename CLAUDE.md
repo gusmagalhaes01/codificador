@@ -679,7 +679,14 @@ faixa abaixo da tabela de unidades foi descartada porque alguns protocolos
 trazem um recibo dos Correios colado ali no meio da folha.
 
 `MARGEM_DIREITA_BLOCO_PAYBOX`/`Y_BLOCO_PAYBOX`/`TAMANHO_BLOCO_PAYBOX`
-(`identificacao_por_cnpj_6_0.py`) controlam isso. A margem é medida da **borda
+(`identificacao_por_cnpj_6_0.py`) controlam isso. **A janela vertical é
+estreita e o `Y` foi medido, não estimado:** num protocolo de página cheia a
+tabela de unidades desce até ~81 e o rodapé da Imodata começa logo abaixo.
+Varrendo as 3 páginas de um protocolo cheio (10380 ROXY) e um curto (10005
+VILLARS), a posição livre mais baixa ficou em 74–77, e o valor usado é 77.
+Descer mais encosta no rodapé e no "1 de N"; subir encosta nas linhas de
+assinatura. Só as linhas estreitas (CNPJ/vencimento/valor) descem à altura do
+rodapé — elas ficam à direita dele porque o bloco é alinhado à direita. A margem é medida da **borda
 direita**, com o texto alinhado à direita, pelo mesmo motivo do carimbo de
 valor: x fixo cairia fora da folha em página menor que A4. O corpo é **10**, e
 não 11, porque a linha do fornecedor (~265pt, a mais larga) precisa caber sem
