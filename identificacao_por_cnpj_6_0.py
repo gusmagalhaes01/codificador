@@ -110,14 +110,17 @@ TEMA_ESCURO = {
 #  não teriam esse canto disponível se x/y ficassem fixos em 567/814.
 MARGEM_VALOR_PROTOCOLO = 28
 
-#  Bloco do Paybox (fornecedor / vencimento / valor) nos protocolos. Fica na
-#  faixa em branco logo abaixo da tabela de unidades — foi ali que a leitura
-#  foi validada contra o Superlógica. Se algum modelo de protocolo trouxer
-#  conteúdo nessa área (ex: recibo dos Correios colado no meio da folha),
-#  é aqui que se ajusta a posição, sem mexer em mais nada.
-X_BLOCO_PAYBOX = 60
-Y_BLOCO_PAYBOX = 560
-TAMANHO_BLOCO_PAYBOX = 11
+#  Bloco do Paybox (fornecedor / vencimento / valor) nos protocolos: canto
+#  INFERIOR DIREITO, escolhido pelo usuário sobre um protocolo real. Fica
+#  acima do rodapé da Imodata e à esquerda do carimbo lateral rotacionado.
+#
+#  A margem é medida da borda direita (e o texto é alinhado à direita) pelo
+#  mesmo motivo do carimbo de valor: x fixo cairia fora da folha em páginas
+#  menores que A4. O corpo 10 é o maior que faz a linha do fornecedor (a mais
+#  larga, ~265pt) caber sem alcançar o carimbo lateral.
+MARGEM_DIREITA_BLOCO_PAYBOX = 30
+Y_BLOCO_PAYBOX = 150
+TAMANHO_BLOCO_PAYBOX = 10
 
 #  Qualidade de leitura dos protocolos dos Correios: fixa na melhor, de
 #  propósito, ignorando a que estiver escolhida na predefinição ativa.
@@ -3142,11 +3145,11 @@ class App(ctk.CTk):
                 "fonte": "Helvetica-Bold",
                 "tamanho": TAMANHO_BLOCO_PAYBOX,
                 "cor": config["cor"],
-                "x": X_BLOCO_PAYBOX,
+                "x": largura_pagina - MARGEM_DIREITA_BLOCO_PAYBOX,
                 "y": Y_BLOCO_PAYBOX,
                 "centralizado": False,
                 "angulo": 0,
-                "alinhamento": "esquerda",
+                "alinhamento": "direita",
             })
 
         caminho_saida = os.path.join(pasta_saida, nome)

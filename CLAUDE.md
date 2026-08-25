@@ -672,11 +672,18 @@ PDFs depois.
 alterar o programa e gerar executável novo. As alternativas descartadas foram
 uma coluna no `modelo_despesas.xlsx` e um campo em Configurações.
 
-**A posição do bloco** (`X_BLOCO_PAYBOX`/`Y_BLOCO_PAYBOX`,
-`identificacao_por_cnpj_6_0.py`) fica na faixa em branco abaixo da tabela de
-unidades, que foi onde a leitura foi validada. Protocolo que traga conteúdo
-nessa área — por exemplo o recibo dos Correios colado no meio da folha, que
-aparece em alguns — precisa de ajuste dessas constantes.
+**A posição do bloco** é o **canto inferior direito**, escolhido pelo usuário
+sobre um protocolo real: acima do rodapé da Imodata e do "1 de 1", e livre do
+carimbo lateral (que é centralizado verticalmente e não chega ao rodapé). A
+faixa abaixo da tabela de unidades foi descartada porque alguns protocolos
+trazem um recibo dos Correios colado ali no meio da folha.
+
+`MARGEM_DIREITA_BLOCO_PAYBOX`/`Y_BLOCO_PAYBOX`/`TAMANHO_BLOCO_PAYBOX`
+(`identificacao_por_cnpj_6_0.py`) controlam isso. A margem é medida da **borda
+direita**, com o texto alinhado à direita, pelo mesmo motivo do carimbo de
+valor: x fixo cairia fora da folha em página menor que A4. O corpo é **10**, e
+não 11, porque a linha do fornecedor (~265pt, a mais larga) precisa caber sem
+alcançar o carimbo lateral.
 
 **As regras ficam em `Despesas > Paybox > Configurações gerais > ASSISTENTE
 PARA ANEXOS AUTOMÁTICOS`**, exigem o perfil "Paybox - Alteração (1572)" e valem
