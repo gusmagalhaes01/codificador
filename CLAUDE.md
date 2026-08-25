@@ -129,6 +129,17 @@ similaridade de nome sozinha.
 
 ## Histórico de decisões
 
+- **v6.17.0 — tarifa, vencimento e chave perguntados no início do lote**: a
+  `chave` da importação passou a ser perguntada junto da tarifa e do
+  vencimento, e vai direto para a planilha (`gerar_planilha_despesas`,
+  parâmetro `chave`). Motivo concreto: ela muda a cada importação e era
+  editada à mão na planilha já gerada — e foi abrindo o arquivo no Excel só
+  para isso que a coluna `vencimento` perdeu o formato de data e voltou a ser
+  número cru, fazendo o Superlógica gravar 01/01/1970 nos lançamentos **sem
+  acusar erro nenhum**. Com os três dados vindo do programa, não há mais razão
+  para abrir a planilha antes de importar. `chave=None` mantém o que estiver
+  no modelo.
+
 - **v6.16.0 — anexo automático no Paybox (bloco carimbado)**: os protocolos
   dos Correios passam a sair com um bloco de texto — fornecedor, CNPJ do
   fornecedor, vencimento e valor (`montar_bloco_paybox`, `logica.py`) — que faz
