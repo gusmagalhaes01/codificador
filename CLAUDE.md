@@ -129,7 +129,7 @@ similaridade de nome sozinha.
 
 ## Histórico de decisões
 
-- **Correção — resolver o valor e depois escolher o condomínio**: o registro
+- **v6.17.1 — correção: resolver o valor e depois escolher o condomínio**: o registro
   criado por `_acao_informar_valor` não carregava `caminho` nem
   `indice_linha`, e o item voltava para a tabela de pendentes (por desenho:
   `_listas_do_painel_protocolos` mostra junto dos pendentes todo processado
