@@ -1718,6 +1718,177 @@ def resolver_protocolo_manual(ctx, dados, valor, cadastro, carimbar):
     return linha_atualizada, motivo_painel, pasta_destino
 
 
+#  Colunas da grade editável do painel (aba 3), por índice em
+#  COLUNAS_PROTOCOLO. As que NÃO estão aqui são somente leitura:
+#  - "Arquivo" é a identidade da linha;
+#  - "Condomínio" é derivada do código (muda junto, não sozinha);
+#  - "Tarifa" é do lote inteiro, não de uma linha.
+COL_CODIGO, COL_UNIDADES, COL_VALOR, COL_OBSERVACAO = 2, 3, 5, 6
+COLUNAS_EDITAVEIS = (COL_CODIGO, COL_UNIDADES, COL_VALOR, COL_OBSERVACAO)
+
+#  Editar estas colunas muda o que está IMPRESSO no papel (carimbo lateral e
+#  bloco do Paybox), então obriga recarimbo. "Observação" só vai pra planilha.
+COLUNAS_QUE_RECARIMBAM = (COL_CODIGO, COL_UNIDADES, COL_VALOR)
+
+
+def validar_edicao_protocolo(coluna, texto, cadastro, tarifa=None):
+    """
+    Valida uma célula editada na grade do painel dos protocolos.
+
+    Devolve `(valor, erro)`: `erro` vazio significa aceito, e `valor` é o dado
+    já convertido (str para código/observação, int para unidades, Decimal para
+    valor). Recusa com frase em português, sem jargão — a mensagem vai direto
+    pra tela.
+
+    O código é conferido contra o CADASTRO na hora, e não só na geração das
+    despesas: aceitar um código inexistente aqui produziria um PDF carimbado
+    com identificação que não existe, e o erro só apareceria muito depois.
+    """
+    if coluna not in COLUNAS_EDITAVEIS:
+        return None, "Esta coluna não pode ser editada."
+
+    texto = (texto or "").strip()
+
+    if coluna == COL_OBSERVACAO:
+        return texto, ""
+
+    if coluna == COL_CODIGO:
+        if not texto:
+            return None, "Informe o código do condomínio."
+        if not texto.isdigit():
+            return None, "O código do condomínio é só números."
+        if texto not in _codigos_do_cadastro(cadastro):
+            return None, (f"O código {texto} não está no cadastro. "
+                          "Cadastre o condomínio antes de usá-lo aqui.")
+        return texto, ""
+
+    if coluna == COL_UNIDADES:
+        if not texto:
+            return None, "Informe a quantidade de unidades."
+        if not texto.isdigit():
+            return None, "A quantidade de unidades é um número inteiro."
+        unidades = int(texto)
+        if unidades <= 0:
+            #  0 não é "entregou zero": é a ausência de contagem, e a planilha
+            #  representa isso com a célula VAZIA, não com zero.
+            return None, "A quantidade tem que ser maior que zero."
+        if tarifa is None:
+            return None, ("Este lote não tem tarifa, então não dá para "
+                          "calcular pelo número de unidades. Edite o valor.")
+        return unidades, ""
+
+    valor, aviso = converter_valor_digitado(texto)
+    if valor is None:
+        return None, aviso
+    if valor <= 0:
+        return None, "O valor tem que ser maior que zero."
+    return valor, ""
+
+
+def aplicar_edicao_na_linha(linha, coluna, valor, cadastro, tarifa=None):
+    """
+    Devolve uma NOVA linha da planilha com a edição aplicada, sem tocar na
+    original — quem chama só substitui depois que o recarimbo deu certo.
+
+    Editar as unidades recalcula o valor pela tarifa do lote; editar o valor
+    direto zera unidades e tarifa, porque a conta deixou de valer (é a mesma
+    representação que `linha_planilha_protocolo` usa para valor informado à
+    mão: sem contagem por trás, as duas células ficam vazias).
+    """
+    nova = list(linha)
+
+    if coluna == COL_OBSERVACAO:
+        nova[COL_OBSERVACAO] = valor
+        return nova
+
+    if coluna == COL_CODIGO:
+        nova[COL_CODIGO] = valor
+        cnpj = _codigos_do_cadastro(cadastro).get(valor)
+        registro = cadastro.get(cnpj) if cnpj else None
+        nova[1] = (registro or {}).get("nome", "")
+        return nova
+
+    if coluna == COL_UNIDADES:
+        nova[COL_UNIDADES] = valor
+        nova[COL_VALOR] = float(valor_protocolo(valor, tarifa))
+        nova[4] = float(tarifa)
+        return nova
+
+    #  Valor digitado direto: sem contagem por trás.
+    nova[COL_VALOR] = float(valor)
+    nova[COL_UNIDADES] = None
+    nova[4] = None
+    return nova
+
+
+#  Largura da prévia do documento no painel de resultado. 150 DPI numa A4
+#  dá ~1240 px de largura; a prévia é reduzida para caber ao lado da grade
+#  sem que o cabeçalho do protocolo — que é o dado que se precisa LER — fique
+#  ilegível.
+LARGURA_PREVIA = 520
+DPI_PREVIA = 110
+
+
+def renderizar_previa_pdf(caminho, pagina=0, largura=LARGURA_PREVIA, dpi=DPI_PREVIA):
+    """
+    Renderiza uma página do PDF como imagem PIL para a prévia do painel.
+
+    Devolve `(imagem, None)` quando dá certo e `(None, motivo)` quando não —
+    arquivo de 0 byte, PDF corrompido, página inexistente. Nunca levanta: a
+    prévia é conveniência, e um documento ilegível já é justamente o caso que
+    o funcionário mais precisa ver descrito (foi assim que apareceu o
+    `doc16004020260821153930.pdf` vazio no lote real).
+
+    A largura final é fixa para a coluna da prévia não "pular" de tamanho a
+    cada linha selecionada; a altura acompanha a proporção da página.
+    """
+    if not FITZ_DISPONIVEL:
+        return None, "Visualização indisponível (PyMuPDF não instalado)"
+    if not os.path.isfile(caminho):
+        return None, "Arquivo não encontrado"
+    if os.path.getsize(caminho) == 0:
+        return None, "Arquivo vazio (0 byte) — baixe o documento de novo"
+
+    doc = None
+    try:
+        doc = fitz.open(caminho)
+        if doc.page_count == 0:
+            return None, "PDF sem páginas"
+        indice = max(0, min(pagina, doc.page_count - 1))
+        pix = doc[indice].get_pixmap(dpi=dpi)
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+    except Exception as e:
+        return None, f"Não foi possível abrir o documento: {e}"
+    finally:
+        if doc is not None:
+            try:
+                doc.close()
+            except Exception:
+                pass
+
+    if img.width != largura:
+        altura = max(1, round(img.height * largura / img.width))
+        img = img.resize((largura, altura), Image.LANCZOS)
+    return img, None
+
+
+def paginas_do_pdf(caminho):
+    """Quantidade de páginas, ou 0 se o arquivo não puder ser aberto."""
+    if not FITZ_DISPONIVEL or not os.path.isfile(caminho):
+        return 0
+    try:
+        doc = fitz.open(caminho)
+    except Exception:
+        return 0
+    try:
+        return doc.page_count
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+
+
 def registro_painel_resolvido(dados, valor, motivo_painel, pasta_destino):
     """
     Monta o registro que vai para `resultado["processados"]` depois de uma
