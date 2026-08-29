@@ -1718,6 +1718,49 @@ def resolver_protocolo_manual(ctx, dados, valor, cadastro, carimbar):
     return linha_atualizada, motivo_painel, pasta_destino
 
 
+def registro_painel_resolvido(dados, valor, motivo_painel, pasta_destino):
+    """
+    Monta o registro que vai para `resultado["processados"]` depois de uma
+    resolução manual na aba 3 (informar o valor de um protocolo pendente).
+
+    Carrega adiante `caminho`, `indice_linha` e `pasta_destino` de propósito:
+    um item resolvido pode VOLTAR a aparecer entre os pendentes do painel —
+    `_listas_do_painel_protocolos` mostra junto dos pendentes todo processado
+    que ainda esteja sem ID SL — e as ações de lá (Escolher condomínio, Abrir
+    PDF) precisam justamente desses campos. Sem eles, informar o valor e
+    depois escolher o condomínio estourava `KeyError('caminho')` no recarimbo
+    e `KeyError('indice_linha')` logo em seguida, este último fora do
+    try/except e portanto derrubando no handler global.
+
+    `pasta_destino` guarda a subpasta "Lote NN" onde o PDF acabou de ser
+    gravado, para que um recarimbo posterior caia no MESMO lote em vez de
+    abrir um novo.
+    """
+    registro = {
+        "arquivo": dados["arquivo"],
+        "condominio": dados.get("condominio", ""),
+        #  O código é o que liga este protocolo ao ID SL do cadastro na hora
+        #  de gerar a planilha de despesas — sem ele, um protocolo resolvido
+        #  à mão travaria a geração por "sem ID SL", que é justamente o caso
+        #  que mais precisa entrar na cobrança.
+        "codigo": dados.get("codigo"),
+        "unidades": None,
+        #  Decimal, igual ao resto do painel — só a planilha converte para
+        #  float na hora de gravar.
+        "valor": valor,
+        "caminho": dados.get("caminho"),
+        "indice_linha": dados.get("indice_linha"),
+        "pasta_destino": pasta_destino,
+        #  Semente da observação para uma 2ª resolução manual desta mesma
+        #  linha, pelo mesmo motivo de `_acao_informar_valor`: repassar a
+        #  mesclada duplicaria "Código não cadastrado".
+        "motivo_original": dados.get("motivo_original", ""),
+    }
+    if motivo_painel:
+        registro["motivo"] = motivo_painel
+    return registro
+
+
 def salvar_planilha_protocolo(caminho, linhas):
     """
     Grava a planilha dos protocolos com linha de TOTAL no rodapé. Os totais

@@ -78,6 +78,7 @@ from logica import (
     converter_valor_digitado,
     linha_planilha_protocolo, salvar_planilha_protocolo,
     extrair_texto_escaneado, COLUNAS_PROTOCOLO, resolver_protocolo_manual,
+    registro_painel_resolvido,
     lancamentos_de_despesa, gerar_planilha_despesas,
     buscar_condominios,
     converter_data_digitada,
@@ -4029,21 +4030,13 @@ class App(ctk.CTk):
         #  linha do painel parecer resolvida sem ressalva nenhuma.
         resultado = self._resultado_protocolos
         resultado["pendentes"] = [p for p in resultado["pendentes"] if p is not dados]
-        registro_processado = {
-            "arquivo": dados["arquivo"],
-            "condominio": dados.get("condominio", ""),
-            #  O código é o que liga este protocolo ao ID SL do cadastro na
-            #  hora de gerar a planilha de despesas — sem ele, um protocolo
-            #  resolvido à mão travaria a geração por "sem ID SL", que é
-            #  justamente o caso que mais precisa entrar na cobrança.
-            "codigo": dados.get("codigo"),
-            "unidades": None,
-            #  Decimal, igual ao resto do painel — só a planilha converte
-            #  para float na hora de gravar.
-            "valor": valor,
-        }
-        if motivo_painel:
-            registro_processado["motivo"] = motivo_painel
+        #  O registro é montado em `logica.py` porque ele precisa carregar
+        #  adiante `caminho`/`indice_linha`/`pasta_destino`: este item pode
+        #  VOLTAR para a tabela de pendentes (todo processado sem ID SL
+        #  aparece lá, ver `_listas_do_painel_protocolos`), e "Escolher
+        #  condomínio" lê justamente esses campos.
+        registro_processado = registro_painel_resolvido(
+            dados, valor, motivo_painel, _pasta_destino)
         resultado["processados"].append(registro_processado)
         resultado["total_valor"] = resultado.get("total_valor", Decimal("0.00")) + valor
 

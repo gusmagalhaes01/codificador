@@ -129,6 +129,20 @@ similaridade de nome sozinha.
 
 ## Histórico de decisões
 
+- **Correção — resolver o valor e depois escolher o condomínio**: o registro
+  criado por `_acao_informar_valor` não carregava `caminho` nem
+  `indice_linha`, e o item voltava para a tabela de pendentes (por desenho:
+  `_listas_do_painel_protocolos` mostra junto dos pendentes todo processado
+  ainda sem ID SL). "Escolher condomínio" então estourava
+  `KeyError('caminho')` no recarimbo e, logo depois,
+  `KeyError('indice_linha')` **fora** do try/except — este último caindo no
+  handler global. A montagem do registro virou `registro_painel_resolvido`
+  (`logica.py`), que carrega adiante `caminho`, `indice_linha` e
+  `pasta_destino` — este último para o recarimbo cair no MESMO "Lote NN" em
+  vez de abrir outro. Testes em `tests/test_resolucao_manual_painel.py`.
+  A lição que fica: um dict que transita entre as duas listas do painel
+  precisa dos campos das ações das DUAS, não só das da lista onde nasceu.
+
 - **v6.17.0 — tarifa, vencimento e chave perguntados no início do lote**: a
   `chave` da importação passou a ser perguntada junto da tarifa e do
   vencimento, e vai direto para a planilha (`gerar_planilha_despesas`,
