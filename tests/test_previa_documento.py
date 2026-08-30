@@ -125,3 +125,47 @@ class TestPaginasDoPdf(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(app.FITZ_DISPONIVEL, "PyMuPDF não instalado")
+class TestRenderizarTodasAsPaginas(unittest.TestCase):
+    """
+    O protocolo dos Correios costuma ter 2 ou 3 páginas, e a lista de
+    unidades continua na segunda — mostrar só a primeira esconde justamente
+    o que se quer conferir.
+    """
+
+    def setUp(self):
+        self.pasta = tempfile.mkdtemp(prefix="paginas_previa_")
+
+    def tearDown(self):
+        shutil.rmtree(self.pasta, ignore_errors=True)
+
+    def _pdf(self, paginas):
+        caminho = os.path.join(self.pasta, f"doc{paginas}.pdf")
+        pdf_de_teste(caminho, paginas=paginas)
+        return caminho
+
+    def test_devolve_uma_imagem_por_pagina(self):
+        imagens, motivo, total = app.renderizar_paginas_pdf(self._pdf(3))
+        self.assertIsNone(motivo)
+        self.assertEqual(len(imagens), 3)
+        self.assertEqual(total, 3)
+
+    def test_todas_saem_na_mesma_largura(self):
+        imagens, _m, _t = app.renderizar_paginas_pdf(self._pdf(2), largura=300)
+        self.assertEqual([i.width for i in imagens], [300, 300])
+
+    def test_limite_corta_mas_informa_o_total_real(self):
+        # Quem chama precisa saber que existe página não mostrada.
+        imagens, _m, total = app.renderizar_paginas_pdf(self._pdf(5), limite=2)
+        self.assertEqual(len(imagens), 2)
+        self.assertEqual(total, 5)
+
+    def test_documento_ilegivel_devolve_motivo_sem_estourar(self):
+        vazio = os.path.join(self.pasta, "vazio.pdf")
+        open(vazio, "wb").close()
+        imagens, motivo, total = app.renderizar_paginas_pdf(vazio)
+        self.assertEqual(imagens, [])
+        self.assertIn("vazio", motivo.lower())
+        self.assertEqual(total, 0)

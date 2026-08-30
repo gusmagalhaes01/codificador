@@ -138,6 +138,19 @@ similaridade de nome sozinha.
   em silêncio e o Paybox deixaria de anexar o documento. "Observação" é a
   única editável que não mexe no papel. Ver o spec
   `docs/superpowers/specs/2026-08-29-planilha-embutida-previa-design.md`.
+- **A prévia mostra o documento INTEIRO, não só a 1ª página**: protocolo dos
+  Correios costuma ter 2 ou 3 páginas, e a lista de unidades continua na
+  segunda — mostrar só a primeira escondia justamente o que se quer conferir.
+  `renderizar_paginas_pdf` (`logica.py`) devolve todas as páginas até
+  `LIMITE_PAGINAS_PREVIA` (12) e informa o total real, para o cabeçalho poder
+  avisar quando há página não mostrada. As páginas ficam empilhadas no canvas,
+  com um vão entre elas.
+- **Zoom pela roda do mouse e arraste para mover**: a roda amplia direto, sem
+  tecla nenhuma, e a navegação pelo documento é por arraste
+  (`scan_mark`/`scan_dragto` com `gain=1` — o padrão, 10, faz a página
+  disparar e passar do ponto). O zoom preserva o ponto que está sob o cursor,
+  em vez de voltar ao topo. Ampliar re-renderiza do PDF, não amplia bitmap,
+  então a 400% o texto continua nítido.
 - **A prévia usa `tk.Canvas` + `ImageTk.PhotoImage`, nunca `CTkLabel` +
   `CTkImage`**: além de o canvas rolar nos dois eixos (o que permite o zoom
   até 4x), `CTkLabel.configure(image=None)` **não limpa a imagem** — o

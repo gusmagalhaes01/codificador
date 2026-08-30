@@ -1872,6 +1872,58 @@ def renderizar_previa_pdf(caminho, pagina=0, largura=LARGURA_PREVIA, dpi=DPI_PRE
     return img, None
 
 
+#  Teto de páginas renderizadas na prévia. Protocolo dos Correios tem 1 a 3
+#  páginas; o limite existe para um PDF fora do padrão não travar a interface
+#  renderizando dezenas de páginas em zoom alto.
+LIMITE_PAGINAS_PREVIA = 12
+
+
+def renderizar_paginas_pdf(caminho, largura=LARGURA_PREVIA, dpi=DPI_PREVIA,
+                           limite=LIMITE_PAGINAS_PREVIA):
+    """
+    Renderiza TODAS as páginas do PDF (até `limite`) como imagens PIL.
+
+    Devolve `(imagens, motivo, total_paginas)`: `imagens` vazio e `motivo`
+    preenchido quando não deu para ler. `total_paginas` é o número real do
+    documento, mesmo quando `limite` cortou a renderização — quem chama
+    precisa saber que existe página não mostrada.
+
+    Existe além de `renderizar_previa_pdf` porque o protocolo dos Correios
+    frequentemente tem 2 ou 3 páginas, e a lista de unidades continua na
+    segunda: mostrar só a primeira esconde justamente o que se quer conferir.
+    """
+    if not FITZ_DISPONIVEL:
+        return [], "Visualização indisponível (PyMuPDF não instalado)", 0
+    if not os.path.isfile(caminho):
+        return [], "Arquivo não encontrado", 0
+    if os.path.getsize(caminho) == 0:
+        return [], "Arquivo vazio (0 byte) — baixe o documento de novo", 0
+
+    doc = None
+    try:
+        doc = fitz.open(caminho)
+        total = doc.page_count
+        if total == 0:
+            return [], "PDF sem páginas", 0
+        imagens = []
+        for indice in range(min(total, limite)):
+            pix = doc[indice].get_pixmap(dpi=dpi)
+            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+            if img.width != largura:
+                altura = max(1, round(img.height * largura / img.width))
+                img = img.resize((largura, altura), Image.LANCZOS)
+            imagens.append(img)
+        return imagens, None, total
+    except Exception as e:
+        return [], f"Não foi possível abrir o documento: {e}", 0
+    finally:
+        if doc is not None:
+            try:
+                doc.close()
+            except Exception:
+                pass
+
+
 def paginas_do_pdf(caminho):
     """Quantidade de páginas, ou 0 se o arquivo não puder ser aberto."""
     if not FITZ_DISPONIVEL or not os.path.isfile(caminho):
