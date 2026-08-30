@@ -84,7 +84,7 @@ from logica import (
     COL_CODIGO, COL_UNIDADES, COL_VALOR, COL_OBSERVACAO,
     COLUNAS_EDITAVEIS, COLUNAS_QUE_RECARIMBAM,
     validar_edicao_protocolo, aplicar_edicao_na_linha,
-    remover_linha_do_lote,
+    remover_linha_do_lote, reclassificar_registro,
     lancamentos_de_despesa, gerar_planilha_despesas,
     buscar_condominios,
     converter_data_digitada,
@@ -96,10 +96,9 @@ from logica import (
 # ============================================================
 
 #  Prévia do documento no painel de resultado (aba 3).
-#  A largura do painel é fixa para a grade não "pular" ao trocar de linha; a
-#  página é renderizada um pouco menor que ele, sobrando espaço para a barra
-#  de rolagem vertical.
-LARGURA_PAINEL_PREVIA = 460
+#  Largura inicial da página na prévia. A partir daí ela acompanha o divisor
+#  arrastável: puxar o divisor para a esquerda estreita a grade e a página
+#  cresce junto, sem precisar mexer no zoom.
 LARGURA_PAGINA_PREVIA = 410
 #  Degraus de zoom. Começa abaixo de 1.0 porque protocolo multipágina em tela
 #  pequena pode precisar de menos; vai até 4x, onde o "Listando N unidades"
@@ -108,6 +107,13 @@ ZOOMS_PREVIA = (0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0)
 #  Cada entrada guarda uma imagem renderizada; num lote de centenas de
 #  protocolos, cache sem limite estoura a memória.
 LIMITE_CACHE_PREVIA = 12
+#  Sobra para a barra de rolagem e o respiro interno do painel da prévia.
+MARGEM_INTERNA_PREVIA = 50
+#  Abaixo disso a página fica ilegível; o divisor pode estreitar mais, mas a
+#  renderização para de encolher.
+LARGURA_MINIMA_PREVIA = 180
+#  Espera depois do último movimento do divisor antes de re-renderizar.
+ESPERA_REDESENHO_PREVIA = 180
 #  Vão entre páginas empilhadas na prévia.
 VAO_PAGINAS_PREVIA = 18
 
@@ -3313,8 +3319,20 @@ class App(ctk.CTk):
         self._filtro_protocolos.set("Tudo")
         self._filtro_protocolos.pack(side="right")
 
-        self._montar_grade_protocolos(corpo, tema, fonte)
-        self._montar_previa_protocolos(corpo, tema, fonte)
+        #  Divisor arrastável entre a planilha e o documento, como o painel
+        #  de visualização do Explorer: puxar para a esquerda estreita a
+        #  grade e o PDF cresce junto, sem precisar de botão de zoom.
+        divisor = ttk.PanedWindow(corpo, orient="horizontal")
+        divisor.grid(row=1, column=0, columnspan=2, sticky="nsew")
+        self._divisor_protocolos = divisor
+
+        painel_grade = ttk.Frame(divisor)
+        painel_previa = ttk.Frame(divisor)
+        divisor.add(painel_grade, weight=3)
+        divisor.add(painel_previa, weight=2)
+
+        self._montar_grade_protocolos(painel_grade, tema, fonte)
+        self._montar_previa_protocolos(painel_previa, tema, fonte)
 
         # --- Ações da linha selecionada ---
         acoes = ctk.CTkFrame(corpo, corner_radius=0, fg_color=tema["fundo"])
@@ -3366,7 +3384,7 @@ class App(ctk.CTk):
     def _montar_grade_protocolos(self, parent, tema, fonte):
         """A planilha como Treeview: uma linha por linha do arquivo gerado."""
         frame = ctk.CTkFrame(parent, corner_radius=0, fg_color=tema["fundo"])
-        frame.grid(row=1, column=0, sticky="nsew", padx=(0, 16))
+        frame.pack(fill="both", expand=True, padx=(0, 8))
 
         colunas = [c[0] for c in COLUNAS_PROTOCOLO]
         larguras = [180, 165, 60, 70, 70, 90, 200]
@@ -3410,12 +3428,13 @@ class App(ctk.CTk):
         cuja CTkImage já tinha sido coletada — dando
         `image "pyimage13" doesn't exist`.
         """
-        painel = ctk.CTkFrame(parent, corner_radius=0, fg_color=tema["superficie"],
-                              width=LARGURA_PAINEL_PREVIA)
-        painel.grid(row=1, column=1, sticky="nsew")
-        painel.grid_propagate(False)
+        painel = ctk.CTkFrame(parent, corner_radius=0, fg_color=tema["superficie"])
+        painel.pack(fill="both", expand=True)
         painel.rowconfigure(1, weight=1)
         painel.columnconfigure(0, weight=1)
+        #  Largura da PÁGINA renderizada. Começa no padrão e passa a
+        #  acompanhar a largura do painel conforme o divisor é arrastado.
+        self._largura_previa = LARGURA_PAGINA_PREVIA
 
         # --- barra de zoom ---
         barra = ctk.CTkFrame(painel, corner_radius=0, fg_color=tema["superficie"])
@@ -3470,15 +3489,40 @@ class App(ctk.CTk):
             font=(fonte, 11), text_color=tema["texto_terciario"], anchor="w",
         ).grid(row=2, column=0, sticky="ew", padx=12, pady=(0, 10))
 
+        #  Arrastar o divisor dispara muitos eventos seguidos; renderizar em
+        #  todos travaria a interface. Espera o movimento parar antes de
+        #  redesenhar (o canvas continua mostrando a imagem anterior nesse
+        #  meio-tempo, então não pisca).
+        painel.bind("<Configure>", self._previa_painel_redimensionado)
+
         self._canvas_previa = canvas
         self._caminho_previa = None
         self._zoom_previa = 1.0
+        self._agendado_previa = None
         #  Cache limitado: cada entrada guarda TODAS as páginas renderizadas,
         #  então num lote grande, sem limite, a memória estoura rápido.
         self._cache_previa = collections.OrderedDict()
         self._mostrar_previa(None)
 
     # --- interação com o mouse ------------------------------------------
+
+    def _previa_painel_redimensionado(self, evento):
+        """Divisor arrastado: a página passa a caber na nova largura."""
+        largura = max(LARGURA_MINIMA_PREVIA, evento.width - MARGEM_INTERNA_PREVIA)
+        if abs(largura - getattr(self, "_largura_previa", 0)) < 8:
+            return                       # variação irrelevante, não re-renderiza
+        self._largura_previa = largura
+        if getattr(self, "_agendado_previa", None) is not None:
+            try:
+                self.after_cancel(self._agendado_previa)
+            except Exception:
+                pass
+        self._agendado_previa = self.after(ESPERA_REDESENHO_PREVIA,
+                                            self._redesenhar_apos_ajuste)
+
+    def _redesenhar_apos_ajuste(self):
+        self._agendado_previa = None
+        self._desenhar_previa()
 
     def _previa_pegar(self, evento):
         """Início do arraste: marca o ponto de referência do canvas."""
@@ -3556,7 +3600,7 @@ class App(ctk.CTk):
         def aviso(texto, cor):
             canvas.configure(scrollregion=(0, 0, 0, 0))
             canvas.create_text(12, 12, anchor="nw",
-                               width=LARGURA_PAINEL_PREVIA - 60, text=texto,
+                               width=max(120, getattr(self, "_largura_previa", LARGURA_PAGINA_PREVIA) - 24), text=texto,
                                fill=cor, font=(familia_fonte(), 12))
 
         caminho = getattr(self, "_caminho_previa", None)
@@ -3566,7 +3610,8 @@ class App(ctk.CTk):
                   self.tema_atual["texto_terciario"])
             return
 
-        largura = round(LARGURA_PAGINA_PREVIA * self._zoom_previa)
+        largura = round(getattr(self, "_largura_previa", LARGURA_PAGINA_PREVIA)
+                        * self._zoom_previa)
         chave = (caminho, largura)
         if chave not in self._cache_previa:
             self._cache_previa[chave] = renderizar_paginas_pdf(caminho, largura=largura)
@@ -3956,15 +4001,11 @@ class App(ctk.CTk):
                              else Decimal(str(nova_linha[COL_VALOR])))
         registro["motivo"] = nova_linha[COL_OBSERVACAO] or ""
 
-        #  Uma linha editada pode deixar de ser "ignorada": se alguém deu
-        #  código e valor a um arquivo que o programa não reconheceu como
-        #  protocolo, ele passa a ser cobrável e precisa sair da lista de
-        #  ignorados, senão não entraria na planilha de despesas.
-        resultado = self._resultado_protocolos or {}
-        ignorados = resultado.get("ignorados") or []
-        if registro in ignorados and registro.get("valor") is not None:
-            ignorados.remove(registro)
-            resultado.setdefault("processados", []).append(registro)
+        #  Ganhar (ou perder) valor muda a lista a que o registro pertence.
+        #  Sem isso, dar o valor pela CÉLULA deixava a linha em `pendentes`
+        #  para sempre — marcada como pendente e travando a geração das
+        #  despesas —, enquanto o botão "Informar valor" fazia a coisa certa.
+        reclassificar_registro(self._resultado_protocolos or {}, registro)
 
     def _janela_para_dialogo(self):
         """

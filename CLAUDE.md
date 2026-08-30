@@ -129,6 +129,24 @@ similaridade de nome sozinha.
 
 ## Histórico de decisões
 
+- **Dar o valor pela CÉLULA não movia a linha de pendente para calculado**:
+  existiam dois caminhos para informar o valor — o botão "Informar valor", que
+  movia o registro entre as listas do `resultado`, e a edição da célula na
+  grade, que gravava o valor e deixava o registro em `pendentes`. No segundo
+  caso a linha continuava marcada como pendente e **travava a geração da
+  planilha de despesas**, sem nada na tela explicando. `reclassificar_registro`
+  (`logica.py`) passou a ser o único critério: **com valor é `processados`, sem
+  valor é `pendentes`**, venha o valor de onde vier. Testes em
+  `tests/test_reclassificar.py`.
+- **Divisor arrastável entre a planilha e o documento**: `ttk.PanedWindow`
+  horizontal, como o painel de visualização do Explorer — puxar para a
+  esquerda estreita a grade e a página cresce junto, sem mexer no zoom. A
+  largura da página deixou de ser constante e passa a acompanhar o painel
+  (`_largura_previa`). O redesenho é **adiado** (`ESPERA_REDESENHO_PREVIA`):
+  arrastar dispara muitos `<Configure>` seguidos e renderizar em todos
+  travaria a interface; enquanto espera, o canvas segue mostrando a imagem
+  anterior, então não pisca.
+
 - **Editar o código na grade exige ID SL, como o botão já exigia**: o botão
   "Escolher condomínio" recusa condomínio sem o campo, mas a edição da célula
   aceitava — a linha continuava pendente e **nada na tela explicava por quê**.

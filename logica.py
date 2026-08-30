@@ -1976,6 +1976,45 @@ def paginas_do_pdf(caminho):
             pass
 
 
+def reclassificar_registro(resultado, registro):
+    """
+    Põe o registro na lista certa do resultado conforme ele tenha valor ou
+    não: com valor vira `processados`, sem valor volta para `pendentes`.
+
+    Existe porque havia DOIS caminhos para dar valor a um protocolo — o botão
+    "Informar valor", que movia a linha, e a edição da célula na grade, que
+    gravava o valor e deixava o registro em `pendentes`. No segundo caso a
+    linha continuava marcada como pendente e **travava a geração da planilha
+    de despesas**, sem nada na tela explicando por quê.
+
+    `ignorados` também é considerado: um arquivo que o programa não
+    reconheceu como protocolo, mas que alguém completou à mão, passa a ser
+    cobrável e precisa sair de lá.
+
+    Devolve True quando o registro mudou de lista.
+    """
+    if registro is None:
+        return False
+
+    destino = "processados" if registro.get("valor") is not None else "pendentes"
+    mudou = False
+
+    for chave in ("pendentes", "processados", "ignorados"):
+        lista = resultado.get(chave)
+        if not lista:
+            continue
+        if chave != destino and registro in lista:
+            lista.remove(registro)
+            mudou = True
+
+    lista_destino = resultado.setdefault(destino, [])
+    if registro not in lista_destino:
+        lista_destino.append(registro)
+        mudou = True
+
+    return mudou
+
+
 def remover_linha_do_lote(ctx, resultado, indice):
     """
     Tira uma linha da planilha do lote e reindexa o que vem depois.
