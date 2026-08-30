@@ -84,6 +84,7 @@ from logica import (
     COL_CODIGO, COL_UNIDADES, COL_VALOR, COL_OBSERVACAO,
     COLUNAS_EDITAVEIS, COLUNAS_QUE_RECARIMBAM,
     validar_edicao_protocolo, aplicar_edicao_na_linha,
+    remover_linha_do_lote,
     lancamentos_de_despesa, gerar_planilha_despesas,
     buscar_condominios,
     converter_data_digitada,
@@ -3339,7 +3340,20 @@ class App(ctk.CTk):
             border_width=1, border_color=tema["borda_forte"],
             text_color=tema["texto"], font=(fonte, 13),
             command=lambda: self._acao_abrir_pdf_protocolo(self._linha_selecionada_protocolo()))
-        self._botao_abrir_protocolo.pack(side="left")
+        self._botao_abrir_protocolo.pack(side="left", padx=(0, 8))
+
+        #  Saída para o arquivo que não tem como ser resolvido (PDF
+        #  corrompido, 0 byte, documento que nem devia estar na pasta). Sem
+        #  ela a linha fica pendente para sempre e trava a geração das
+        #  despesas. Botão contornado, não cobalto: remover não RESOLVE a
+        #  pendência, só a tira do caminho.
+        self._botao_remover_protocolo = ctk.CTkButton(
+            acoes, text="Remover linha", corner_radius=0, state="disabled",
+            fg_color="transparent", hover_color=tema["superficie"],
+            border_width=1, border_color=tema["borda_forte"],
+            text_color=tema["texto"], font=(fonte, 13),
+            command=self._acao_remover_linha)
+        self._botao_remover_protocolo.pack(side="left")
 
         ctk.CTkLabel(
             acoes,
@@ -3715,8 +3729,66 @@ class App(ctk.CTk):
                             fg_color=tema["acento"] if ligado else tema["borda"])
         self._botao_abrir_protocolo.configure(
             state="normal" if dados and dados.get("caminho") else "disabled")
+        #  Remover vale para qualquer linha selecionada, resolvida ou não:
+        #  também serve para tirar do lote um documento que não deveria
+        #  estar ali.
+        self._botao_remover_protocolo.configure(
+            state="normal" if dados is not None else "disabled")
 
         self._mostrar_previa(dados)
+
+    def _acao_remover_linha(self):
+        """
+        Tira a linha selecionada da planilha do lote.
+
+        Existe para o arquivo que não tem como ser resolvido — PDF corrompido
+        ou de 0 byte, documento que nem devia estar na pasta — que de outro
+        modo ficaria pendente para sempre travando a geração das despesas.
+
+        **Não apaga o PDF do disco**, e isso é dito na confirmação: some da
+        planilha e do painel, o arquivo original continua onde estava.
+        """
+        tabela = getattr(self, "_grade_protocolos", None)
+        if tabela is None or not tabela.selection():
+            return
+        indice = self._linha_grade_por_iid.get(tabela.selection()[0])
+        if indice is None:
+            return
+
+        ctx = getattr(self, "_ctx_protocolos", None)
+        if not ctx:
+            messagebox.showerror(
+                "Erro", "O contexto do processamento se perdeu. Rode o lote de novo.",
+                parent=self._janela_resultado)
+            return
+
+        linha = ctx["linhas"][indice]
+        nome = linha[0]
+        valor = linha[COL_VALOR]
+        detalhe = f"\n\nEsta linha tem valor de {formatar_reais(valor)}, que sairá do total." if valor else ""
+
+        if not messagebox.askyesno(
+            "Remover da planilha",
+            f"Tirar {nome} da planilha deste lote?{detalhe}\n\n"
+            "O arquivo PDF NÃO é apagado — ele continua na pasta de origem "
+            "(e na de saída, se já tiver sido carimbado).",
+            parent=self._janela_resultado,
+        ):
+            return
+
+        remover_linha_do_lote(ctx, self._resultado_protocolos, indice)
+
+        try:
+            salvar_planilha_protocolo(ctx["destino"], ctx["linhas"])
+        except Exception as e:
+            messagebox.showwarning(
+                "Planilha não gravada",
+                f"A linha saiu do painel, mas a planilha não pôde ser "
+                f"gravada:\n{e}\n\nFeche o arquivo no Excel e use "
+                f'"Abrir planilha" para gravar de novo.',
+                parent=self._janela_resultado)
+
+        self._atualizar_painel_protocolos()
 
     def _ao_duplo_clique_grade(self, evento):
         """

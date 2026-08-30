@@ -129,6 +129,24 @@ similaridade de nome sozinha.
 
 ## Histórico de decisões
 
+- **Editar o código na grade exige ID SL, como o botão já exigia**: o botão
+  "Escolher condomínio" recusa condomínio sem o campo, mas a edição da célula
+  aceitava — a linha continuava pendente e **nada na tela explicava por quê**.
+  São 10 dos 772 condomínios, então acontecia de verdade. `validar_edicao_
+  protocolo` passou a conferir o ID SL e devolve a mesma frase do botão.
+- **Botão "Remover linha" no painel dos protocolos**: saída para o arquivo que
+  não tem como ser resolvido (PDF corrompido ou de 0 byte, documento que nem
+  devia estar na pasta) e que, sem isso, ficaria pendente para sempre travando
+  a geração das despesas. **Não apaga o PDF do disco** — some da planilha e do
+  painel, o arquivo continua onde estava, e a confirmação diz isso.
+  `remover_linha_do_lote` (`logica.py`) **reindexa** `indice_linha` de todo
+  registro depois do removido: é posição em `ctx["linhas"]`, então sem
+  reindexar o registro seguinte passaria a apontar para a linha errada e uma
+  edição posterior escreveria no vizinho. O total em reais também perde o
+  valor da linha que saiu, senão o cartão TOTAL divergiria da planilha.
+  Botão contornado, não cobalto: remover não RESOLVE a pendência, só a tira
+  do caminho. Testes em `tests/test_remover_linha.py`.
+
 - **Correção — escolher o condomínio antes de informar o valor**: o carimbo
   calculava o valor incondicionalmente, então anotar o condomínio de um
   pendente ainda sem contagem caía em `valor_protocolo(None, tarifa)` e

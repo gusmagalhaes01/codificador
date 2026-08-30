@@ -1781,9 +1781,20 @@ def validar_edicao_protocolo(coluna, texto, cadastro, tarifa=None):
             return None, "Informe o código do condomínio."
         if not texto.isdigit():
             return None, "O código do condomínio é só números."
-        if texto not in _codigos_do_cadastro(cadastro):
+        cnpj = _codigos_do_cadastro(cadastro).get(texto)
+        if not cnpj:
             return None, (f"O código {texto} não está no cadastro. "
                           "Cadastre o condomínio antes de usá-lo aqui.")
+        #  Mesma exigência do botão "Escolher condomínio": sem o ID SL o
+        #  lançamento não tem como ser importado, e a linha ficaria pendente
+        #  sem nenhuma explicação na tela — que foi exatamente o que
+        #  aconteceu antes desta checagem existir aqui.
+        if not (cadastro.get(cnpj) or {}).get("id_sl"):
+            nome = (cadastro.get(cnpj) or {}).get("nome", "")
+            return None, (f"{texto} {nome} está no cadastro, mas sem o campo "
+                          '"ID SL" preenchido — sem ele o lançamento não tem '
+                          "como ser importado. Preencha o ID SL na aba de "
+                          "Cadastro e edite de novo.")
         return texto, ""
 
     if coluna == COL_UNIDADES:
@@ -1963,6 +1974,57 @@ def paginas_do_pdf(caminho):
             doc.close()
         except Exception:
             pass
+
+
+def remover_linha_do_lote(ctx, resultado, indice):
+    """
+    Tira uma linha da planilha do lote e reindexa o que vem depois.
+
+    Serve para o arquivo que não tem como ser resolvido — PDF corrompido ou
+    de 0 byte, documento que não deveria estar na pasta — e que, sem isso,
+    ficaria pendente para sempre travando a geração das despesas.
+
+    **Não apaga o PDF do disco**: some da planilha e do painel, o arquivo
+    original continua onde estava.
+
+    O reindexar é o ponto delicado: `indice_linha` é posição em
+    `ctx["linhas"]`, então todo registro depois do removido anda uma casa
+    para trás. Sem isso, o registro seguinte passaria a apontar para a linha
+    errada e uma edição posterior escreveria no vizinho.
+
+    Devolve o registro removido do painel, ou None se não havia nenhum.
+    """
+    linhas = ctx.get("linhas") or []
+    if not 0 <= indice < len(linhas):
+        return None
+
+    del linhas[indice]
+
+    removido = None
+    for chave in ("pendentes", "processados", "ignorados"):
+        restantes = []
+        for registro in resultado.get(chave, []) or []:
+            posicao = registro.get("indice_linha")
+            if posicao == indice:
+                removido = registro
+                continue
+            if posicao is not None and posicao > indice:
+                registro["indice_linha"] = posicao - 1
+            restantes.append(registro)
+        if chave in resultado:
+            resultado[chave] = restantes
+
+    if resultado.get("total"):
+        resultado["total"] = max(0, resultado["total"] - 1)
+
+    #  O total em reais tem que perder o valor da linha que saiu, senão o
+    #  cartão TOTAL passa a divergir da soma da planilha.
+    valor = (removido or {}).get("valor")
+    if valor is not None:
+        atual = resultado.get("total_valor", Decimal("0.00"))
+        resultado["total_valor"] = atual - valor
+
+    return removido
 
 
 def registro_painel_resolvido(dados, valor, motivo_painel, pasta_destino):
