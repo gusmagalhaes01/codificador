@@ -129,6 +129,18 @@ similaridade de nome sozinha.
 
 ## Histórico de decisões
 
+- **Botão "Tela cheia" nos painéis de resultado**: os painéis são
+  `CTkToplevel` com `transient(self)`, e no Windows isso **tira os botões de
+  minimizar/maximizar da barra de título**, deixando só o fechar — não havia
+  como aproveitar a tela inteira para ver planilha e documento lado a lado. O
+  alternador vive em `_montar_barra_janela`, chamado por
+  `_montar_painel_resultado`, então as abas 1 e 3 ganham juntas. Usa
+  `state("zoomed")` (maximizar) e **não** `-fullscreen`: o fullscreen do Tk
+  esconde a barra de título junto, e sem ela não sobra nem o botão de fechar.
+  F11 alterna; Esc só restaura — Esc não pode fechar, há trabalho não salvo
+  no painel. Rótulo em texto puro, sem glifo: `⛶` (U+26F6) não é garantido
+  nas fontes usadas.
+
 - **Dar o valor pela CÉLULA não movia a linha de pendente para calculado**:
   existiam dois caminhos para informar o valor — o botão "Informar valor", que
   movia o registro entre as listas do `resultado`, e a edição da célula na

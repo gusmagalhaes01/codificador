@@ -1727,7 +1727,65 @@ class App(ctk.CTk):
         janela.resizable(True, True)
         janela.configure(fg_color=self.tema_atual["fundo"])
         janela.transient(self)
+
+        #  Barra fininha com o alternador de tela cheia. Existe porque a
+        #  janela é `transient` da principal — e no Windows isso tira os
+        #  botões de minimizar/maximizar da barra de título, deixando só o
+        #  fechar. Sem ela não havia como aproveitar a tela inteira para ver
+        #  a planilha e o documento lado a lado.
+        self._montar_barra_janela(janela)
         return janela
+
+    def _montar_barra_janela(self, janela):
+        """Alternador de tela cheia no topo do painel, alinhado à direita."""
+        tema = self.tema_atual
+        fonte = familia_fonte()
+
+        barra = ctk.CTkFrame(janela, corner_radius=0, fg_color=tema["fundo"])
+        barra.pack(side="top", fill="x", padx=24, pady=(12, 0))
+
+        botao = ctk.CTkButton(
+            barra, text="Tela cheia", width=96, corner_radius=0,
+            fg_color="transparent", hover_color=tema["superficie"],
+            border_width=1, border_color=tema["borda_forte"],
+            text_color=tema["texto"], font=(fonte, 12),
+            command=lambda: self._alternar_tela_cheia(janela))
+        botao.pack(side="right")
+        janela.botao_tela_cheia = botao
+
+        #  Atalhos que todo mundo já espera: F11 alterna, Esc só restaura
+        #  (Esc não pode fechar a janela — há trabalho não salvo no painel).
+        janela.bind("<F11>", lambda _e: self._alternar_tela_cheia(janela))
+        janela.bind("<Escape>", lambda _e: self._alternar_tela_cheia(janela, sair=True))
+
+    def _alternar_tela_cheia(self, janela, sair=False):
+        """
+        Alterna entre tamanho normal e tela cheia.
+
+        Usa `state("zoomed")` (maximizar), não `-fullscreen`: o modo
+        fullscreen do Tk esconde a barra de título junto, e aí não sobra nem
+        o botão de fechar — numa janela de trabalho isso deixa a pessoa
+        presa. Maximizar dá a mesma área útil sem esse risco.
+        """
+        try:
+            cheia = janela.state() == "zoomed"
+        except Exception:
+            cheia = False
+
+        if sair and not cheia:
+            return
+        try:
+            janela.state("normal" if cheia else "zoomed")
+        except Exception:
+            #  Alguns gerenciadores de janela não têm "zoomed"; cair para o
+            #  tamanho da tela resolve sem quebrar.
+            if not cheia:
+                janela.geometry(f"{janela.winfo_screenwidth()}x"
+                                f"{janela.winfo_screenheight()}+0+0")
+
+        botao = getattr(janela, "botao_tela_cheia", None)
+        if botao is not None:
+            botao.configure(text="Restaurar" if not cheia else "Tela cheia")
 
     def _montar_faixa_cartoes(self, parent, cartoes, fonte=None):
         """
