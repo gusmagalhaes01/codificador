@@ -887,6 +887,30 @@ def valor_protocolo(unidades, tarifa):
     return bruto.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+def valor_do_carimbo(valor_manual, unidades, tarifa):
+    """
+    Qual valor vai no carimbo do protocolo — ou `None` quando ainda não se
+    sabe.
+
+    Três situações, nesta ordem:
+      1. valor informado à mão vence sempre (foi uma pessoa que decidiu);
+      2. contagem aceita × tarifa do lote;
+      3. nenhum dos dois: valor DESCONHECIDO.
+
+    O terceiro caso é legítimo e precisa devolver None em vez de estourar:
+    anotar o condomínio de um pendente antes de informar o valor é um
+    caminho normal do painel ("Escolher condomínio" antes de "Informar
+    valor"). Calcular assim mesmo dava
+    `int() argument must be ... not 'NoneType'`, e o PDF não era recarimbado
+    — o papel ficava sem identificação nenhuma.
+    """
+    if valor_manual is not None:
+        return valor_manual
+    if unidades is not None and tarifa is not None:
+        return valor_protocolo(unidades, tarifa)
+    return None
+
+
 def formatar_reais(valor):
     """1234.5 -> "R$ 1.234,50" (formato brasileiro)."""
     texto = f"{Decimal(str(valor)):,.2f}"

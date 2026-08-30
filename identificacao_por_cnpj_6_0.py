@@ -80,7 +80,7 @@ from logica import (
     linha_planilha_protocolo, salvar_planilha_protocolo,
     extrair_texto_escaneado, COLUNAS_PROTOCOLO, resolver_protocolo_manual,
     registro_painel_resolvido,
-    renderizar_previa_pdf, renderizar_paginas_pdf,
+    renderizar_previa_pdf, renderizar_paginas_pdf, valor_do_carimbo,
     COL_CODIGO, COL_UNIDADES, COL_VALOR, COL_OBSERVACAO,
     COLUNAS_EDITAVEIS, COLUNAS_QUE_RECARIMBAM,
     validar_edicao_protocolo, aplicar_edicao_na_linha,
@@ -3141,14 +3141,21 @@ class App(ctk.CTk):
         `vencimento` ausente simplesmente omite o bloco do Paybox: o resto do
         carimbo continua igual, e o documento volta a exigir anexo manual.
         """
-        valor = valor_manual if valor_manual is not None else valor_protocolo(unidades, tarifa)
+        #  O valor pode ser DESCONHECIDO neste ponto: anotar o condomínio de
+        #  um pendente que ainda não teve a contagem aceita é um caminho
+        #  legítimo ("Escolher condomínio" antes de "Informar valor"). Nesse
+        #  caso carimba-se só a identificação lateral — o papel sai
+        #  identificado, e o valor entra quando for informado. Calcular aqui
+        #  com `unidades=None` estourava
+        #  "int() argument must be ... not 'NoneType'".
+        valor = valor_do_carimbo(valor_manual, unidades, tarifa)
 
         #  O carimbo traz SÓ o valor, nunca a conta que o gerou. O Superlógica
         #  lê esse carimbo, e uma linha como "15 un × R$ 3,85 = R$ 57,75" tem
         #  dois valores em reais: ele pode capturar a tarifa no lugar do total.
         #  Com um número só não há o que confundir. A conta continua na
         #  planilha, nas colunas Unidades e Tarifa.
-        texto_valor = formatar_reais(valor)
+        texto_valor = formatar_reais(valor) if valor is not None else ""
 
         cnpj = codigos.get(dados.get("codigo") or "")
         registro = self.cadastro.get(cnpj) if cnpj else None
@@ -3178,9 +3185,16 @@ class App(ctk.CTk):
             config_carimbo["alinhamento"] = "direita"
             config_carimbo["x"] = x_valor
             config_carimbo["y"] = y_valor
+            if not texto_lateral:
+                #  Sem cadastro e sem valor não há nada para escrever. Gravar
+                #  uma cópia sem carimbo nenhum enganaria: o arquivo de saída
+                #  pareceria processado.
+                raise ValueError(
+                    "Não há o que carimbar: o condomínio não está no cadastro "
+                    "e o valor ainda não foi informado.")
 
         extras = []
-        if registro:
+        if registro and texto_valor:
             extras.append({
                 "texto": texto_valor,
                 "fonte": config["fonte"],
@@ -3196,7 +3210,10 @@ class App(ctk.CTk):
         #  Bloco que o Paybox lê para anexar o protocolo à despesa sozinho.
         #  Negrito e corpo maior que o resto de propósito: o Superlógica faz
         #  OCR da imagem da página, e letra pequena é o que mais atrapalha.
-        if vencimento is not None:
+        #  O bloco do Paybox casa por valor + vencimento + fornecedor: sem
+        #  valor ele não teria como associar, e um bloco pela metade só
+        #  atrapalharia o OCR do Superlógica.
+        if vencimento is not None and valor is not None:
             extras.append({
                 "texto": montar_bloco_paybox(vencimento, valor),
                 "fonte": "Helvetica-Bold",

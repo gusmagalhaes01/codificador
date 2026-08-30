@@ -129,6 +129,18 @@ similaridade de nome sozinha.
 
 ## Histórico de decisões
 
+- **Correção — escolher o condomínio antes de informar o valor**: o carimbo
+  calculava o valor incondicionalmente, então anotar o condomínio de um
+  pendente ainda sem contagem caía em `valor_protocolo(None, tarifa)` e
+  estourava `int() argument must be ... not 'NoneType'`. O PDF não era
+  recarimbado e o papel ficava **sem identificação nenhuma** — o oposto do
+  que a ação pretendia. Agora `valor_do_carimbo` (`logica.py`) devolve `None`
+  quando o valor é desconhecido, e nesse caso carimba-se só a identificação
+  lateral: o valor e o bloco do Paybox entram depois, quando for informado.
+  Sem cadastro **e** sem valor não há o que escrever, e aí a gravação é
+  recusada com mensagem — gravar cópia sem carimbo nenhum faria o arquivo de
+  saída parecer processado. Testes em `tests/test_valor_do_carimbo.py`.
+
 - **Grade editável com prévia do documento (aba 3)**: o painel de resultado
   deixou de ter três tabelas (pendentes/calculados/ignorados) e passou a ser
   **uma grade que É a planilha**, com a página do documento ao lado. A
