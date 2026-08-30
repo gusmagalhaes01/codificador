@@ -3259,7 +3259,16 @@ class App(ctk.CTk):
                     "e o valor ainda não foi informado.")
 
         extras = []
-        if registro and texto_valor:
+
+        #  O valor no topo direito só entra quando o bloco do Paybox NÃO vai
+        #  ser carimbado. Com o bloco presente o valor sairia DUAS vezes na
+        #  mesma folha: redundante para quem lê, e mais uma ocorrência de
+        #  "R$" para o OCR do Superlógica poder capturar no lugar certo — a
+        #  mesma razão que já tinha tirado a conta ("12 un × R$ 3,85 = ...")
+        #  do carimbo na v6.13.1. Sem vencimento não há bloco, e aí este é o
+        #  único lugar onde o valor aparece no papel.
+        tera_bloco_paybox = vencimento is not None and valor is not None
+        if registro and texto_valor and not tera_bloco_paybox:
             extras.append({
                 "texto": texto_valor,
                 "fonte": config["fonte"],
@@ -3278,7 +3287,7 @@ class App(ctk.CTk):
         #  O bloco do Paybox casa por valor + vencimento + fornecedor: sem
         #  valor ele não teria como associar, e um bloco pela metade só
         #  atrapalharia o OCR do Superlógica.
-        if vencimento is not None and valor is not None:
+        if tera_bloco_paybox:
             extras.append({
                 "texto": montar_bloco_paybox(vencimento, valor),
                 "fonte": "Helvetica-Bold",

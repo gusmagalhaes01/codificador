@@ -129,6 +129,16 @@ similaridade de nome sozinha.
 
 ## Histórico de decisões
 
+- **O valor saiu do topo direito: com o bloco do Paybox ele aparecia duas
+  vezes**: desde a v6.16.0 o bloco do Paybox já traz `VALOR: R$ ...`, então
+  o carimbo do topo virou repetição na mesma folha. Some pelo mesmo motivo
+  que a conta ("12 un × R$ 3,85 = ...") saiu na v6.13.1 — **duas ocorrências
+  de "R$" na página dão ao OCR do Superlógica a chance de capturar a
+  errada**. Agora o carimbo do topo só entra quando o bloco do Paybox NÃO
+  vai ser gravado (lote sem vencimento informado), para o papel nunca ficar
+  sem valor nenhum. Conferido em protocolo de página única: uma única
+  ocorrência de "R$" no PDF carimbado.
+
 - **Botão "Tela cheia" nos painéis de resultado**: os painéis são
   `CTkToplevel` com `transient(self)`, e no Windows isso **tira os botões de
   minimizar/maximizar da barra de título**, deixando só o fechar — não havia
