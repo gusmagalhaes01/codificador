@@ -21,6 +21,7 @@ import re
 import sys
 import threading
 import time
+import collections
 import datetime
 import unicodedata
 from difflib import SequenceMatcher
@@ -79,7 +80,7 @@ from logica import (
     linha_planilha_protocolo, salvar_planilha_protocolo,
     extrair_texto_escaneado, COLUNAS_PROTOCOLO, resolver_protocolo_manual,
     registro_painel_resolvido,
-    renderizar_previa_pdf, LARGURA_PREVIA,
+    renderizar_previa_pdf,
     COL_CODIGO, COL_UNIDADES, COL_VALOR, COL_OBSERVACAO,
     COLUNAS_EDITAVEIS, COLUNAS_QUE_RECARIMBAM,
     validar_edicao_protocolo, aplicar_edicao_na_linha,
@@ -92,6 +93,21 @@ from logica import (
 # ============================================================
 #  TEMA VISUAL — Swiss International Style (paleta "stone")
 # ============================================================
+
+#  Prévia do documento no painel de resultado (aba 3).
+#  A largura do painel é fixa para a grade não "pular" ao trocar de linha; a
+#  página é renderizada um pouco menor que ele, sobrando espaço para a barra
+#  de rolagem vertical.
+LARGURA_PAINEL_PREVIA = 460
+LARGURA_PAGINA_PREVIA = 410
+#  Degraus de zoom. Começa abaixo de 1.0 porque protocolo multipágina em tela
+#  pequena pode precisar de menos; vai até 4x, onde o "Listando N unidades"
+#  impresso fica confortável de ler.
+ZOOMS_PREVIA = (0.5, 0.75, 1.0, 1.5, 2.0, 3.0, 4.0)
+#  Cada entrada guarda uma imagem renderizada; num lote de centenas de
+#  protocolos, cache sem limite estoura a memória.
+LIMITE_CACHE_PREVIA = 24
+
 
 TEMA_CLARO = {
     "fundo": "#FAFAF9", "superficie": "#F5F5F4", "borda": "#E7E5E4",
@@ -3346,27 +3362,157 @@ class App(ctk.CTk):
         self._linha_grade_por_iid = {}
 
     def _montar_previa_protocolos(self, parent, tema, fonte):
-        """Coluna da direita: primeira página do documento da linha selecionada."""
-        largura_painel = LARGURA_PREVIA // 2 + 48
+        """
+        Coluna da direita: a página do documento, com zoom e rolagem.
+
+        Canvas + ImageTk.PhotoImage, e não CTkLabel + CTkImage, por dois
+        motivos. O primeiro é funcional: canvas rola nos dois eixos, que é o
+        que permite ampliar além da largura do painel — mesmo padrão do
+        seletor de região (`_montar_janela_selecao_regiao`), que já faz isso
+        no projeto. O segundo é um bug real do caminho anterior:
+        `CTkLabel.configure(image=None)` NÃO limpa a imagem (o
+        `_update_image` do CustomTkinter só age quando `_image` é CTkImage ou
+        não-None), então o label interno seguia apontando para um
+        `pyimageN` cuja CTkImage já tinha sido coletada — dando
+        `image "pyimage13" doesn't exist`.
+        """
         painel = ctk.CTkFrame(parent, corner_radius=0, fg_color=tema["superficie"],
-                              width=largura_painel)
-        painel.grid(row=1, column=1, sticky="ns")
+                              width=LARGURA_PAINEL_PREVIA)
+        painel.grid(row=1, column=1, sticky="nsew")
         painel.grid_propagate(False)
+        painel.rowconfigure(1, weight=1)
+        painel.columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(
-            painel, text="DOCUMENTO", font=(fonte, 11, "bold"),
-            text_color=tema["texto_secundario"], anchor="w",
-        ).pack(fill="x", padx=12, pady=(12, 8))
+        # --- barra de zoom ---
+        barra = ctk.CTkFrame(painel, corner_radius=0, fg_color=tema["superficie"])
+        barra.grid(row=0, column=0, sticky="ew", padx=12, pady=(12, 8))
 
-        self._label_previa = ctk.CTkLabel(
-            painel, text="Selecione uma linha para ver o documento.",
-            font=(fonte, 12), text_color=tema["texto_terciario"],
-            wraplength=largura_painel - 24, justify="left", anchor="n")
-        self._label_previa.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        ctk.CTkLabel(barra, text="DOCUMENTO", font=(fonte, 11, "bold"),
+                     text_color=tema["texto_secundario"], anchor="w").pack(side="left")
 
-        #  Cache por caminho: reabrir a mesma linha não re-renderiza. Não
-        #  pré-renderiza o lote — 15 arquivos seria barato, 500 não.
-        self._cache_previa = {}
+        def botao_zoom(texto, comando, largura=32):
+            return ctk.CTkButton(
+                barra, text=texto, width=largura, corner_radius=0,
+                fg_color="transparent", hover_color=tema["borda"],
+                border_width=1, border_color=tema["borda_forte"],
+                text_color=tema["texto"], font=(fonte, 13), command=comando)
+
+        botao_zoom("Ajustar", self._previa_ajustar, largura=62).pack(side="right")
+        botao_zoom("+", lambda: self._previa_zoom(+1)).pack(side="right", padx=(4, 8))
+        self._label_zoom = ctk.CTkLabel(
+            barra, text="100%", font=(fonte, 12), width=44,
+            text_color=tema["texto_secundario"])
+        self._label_zoom.pack(side="right")
+        botao_zoom("−", lambda: self._previa_zoom(-1)).pack(side="right", padx=(0, 4))
+
+        # --- área da página, com rolagem nos dois eixos ---
+        area = ctk.CTkFrame(painel, corner_radius=0, fg_color=tema["superficie"])
+        area.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 12))
+        area.rowconfigure(0, weight=1)
+        area.columnconfigure(0, weight=1)
+
+        canvas = tk.Canvas(area, highlightthickness=0, bd=0,
+                           background=tema["superficie"])
+        canvas.grid(row=0, column=0, sticky="nsew")
+
+        barra_v = ttk.Scrollbar(area, orient="vertical", command=canvas.yview)
+        barra_h = ttk.Scrollbar(area, orient="horizontal", command=canvas.xview)
+        canvas.configure(yscrollcommand=barra_v.set, xscrollcommand=barra_h.set)
+        barra_v.grid(row=0, column=1, sticky="ns")
+        barra_h.grid(row=1, column=0, sticky="ew")
+
+        #  Roda do mouse rola; com Ctrl, amplia — como em qualquer visualizador
+        #  de PDF, para não obrigar a mirar nos botões a cada ajuste.
+        canvas.bind("<MouseWheel>",
+                    lambda e: (self._previa_zoom(1 if e.delta > 0 else -1)
+                               if e.state & 0x0004
+                               else canvas.yview_scroll(-1 if e.delta > 0 else 1, "units")))
+        canvas.bind("<Shift-MouseWheel>",
+                    lambda e: canvas.xview_scroll(-1 if e.delta > 0 else 1, "units"))
+
+        self._canvas_previa = canvas
+        self._caminho_previa = None
+        self._zoom_previa = 1.0
+        #  Cache limitado: guardar a imagem de todo arquivo já visto estouraria
+        #  a memória num lote de centenas de protocolos.
+        self._cache_previa = collections.OrderedDict()
+        self._mostrar_previa(None)
+
+    def _previa_zoom(self, passo):
+        """Um degrau de zoom para cima (+1) ou para baixo (-1)."""
+        if not getattr(self, "_caminho_previa", None):
+            return
+        atual = getattr(self, "_zoom_previa", 1.0)
+        try:
+            indice = ZOOMS_PREVIA.index(min(ZOOMS_PREVIA, key=lambda z: abs(z - atual)))
+        except ValueError:
+            indice = ZOOMS_PREVIA.index(1.0)
+        novo = max(0, min(len(ZOOMS_PREVIA) - 1, indice + passo))
+        if ZOOMS_PREVIA[novo] == atual:
+            return
+        self._zoom_previa = ZOOMS_PREVIA[novo]
+        self._desenhar_previa()
+
+    def _previa_ajustar(self):
+        """Volta ao tamanho que cabe na largura do painel."""
+        self._zoom_previa = 1.0
+        self._desenhar_previa()
+
+    def _mostrar_previa(self, dados):
+        """Troca o documento exibido (zoom volta ao ajuste padrão)."""
+        caminho = (dados or {}).get("caminho")
+        if caminho == getattr(self, "_caminho_previa", None):
+            return
+        self._caminho_previa = caminho
+        self._zoom_previa = 1.0
+        self._desenhar_previa()
+
+    def _desenhar_previa(self):
+        """Renderiza o documento atual no zoom atual e redesenha o canvas."""
+        canvas = getattr(self, "_canvas_previa", None)
+        if canvas is None:
+            return
+
+        canvas.delete("all")
+        #  Solta a imagem anterior só DEPOIS de limpar o canvas: enquanto o
+        #  Tk ainda referencia o nome da imagem, coletá-la dá
+        #  'image "pyimageN" doesn\'t exist'.
+        self._foto_previa = None
+
+        if hasattr(self, "_label_zoom"):
+            self._label_zoom.configure(text=f"{round(self._zoom_previa * 100)}%")
+
+        caminho = getattr(self, "_caminho_previa", None)
+        if not caminho:
+            canvas.configure(scrollregion=(0, 0, 0, 0))
+            canvas.create_text(
+                12, 12, anchor="nw", width=LARGURA_PAINEL_PREVIA - 60,
+                text="Selecione uma linha para ver o documento.",
+                fill=self.tema_atual["texto_terciario"], font=(familia_fonte(), 12))
+            return
+
+        largura = round(LARGURA_PAGINA_PREVIA * self._zoom_previa)
+        chave = (caminho, largura)
+        if chave not in self._cache_previa:
+            self._cache_previa[chave] = renderizar_previa_pdf(caminho, largura=largura)
+            while len(self._cache_previa) > LIMITE_CACHE_PREVIA:
+                self._cache_previa.popitem(last=False)
+        imagem, motivo = self._cache_previa[chave]
+
+        if imagem is None:
+            canvas.configure(scrollregion=(0, 0, 0, 0))
+            canvas.create_text(
+                12, 12, anchor="nw", width=LARGURA_PAINEL_PREVIA - 60, text=motivo,
+                fill=self.tema_atual["texto_secundario"], font=(familia_fonte(), 12))
+            return
+
+        from PIL import ImageTk
+        foto = ImageTk.PhotoImage(imagem)
+        self._foto_previa = foto          # referência viva enquanto está na tela
+        canvas.create_image(0, 0, anchor="nw", image=foto)
+        canvas.configure(scrollregion=(0, 0, imagem.width, imagem.height))
+        canvas.xview_moveto(0)
+        canvas.yview_moveto(0)
 
     def _estado_da_linha_protocolo(self, indice):
         """Devolve "pendente", "calculado" ou "ignorado" para a linha `indice`."""
@@ -3471,32 +3617,6 @@ class App(ctk.CTk):
             state="normal" if dados and dados.get("caminho") else "disabled")
 
         self._mostrar_previa(dados)
-
-    def _mostrar_previa(self, dados):
-        """Renderiza (com cache) a 1ª página do documento da linha."""
-        label = getattr(self, "_label_previa", None)
-        if label is None:
-            return
-        if not dados or not dados.get("caminho"):
-            label.configure(image=None, text="Selecione uma linha para ver o documento.")
-            return
-
-        caminho = dados["caminho"]
-        if caminho not in self._cache_previa:
-            self._cache_previa[caminho] = renderizar_previa_pdf(
-                caminho, largura=LARGURA_PREVIA // 2)
-        imagem, motivo = self._cache_previa[caminho]
-
-        if imagem is None:
-            label.configure(image=None, text=motivo)
-            return
-
-        foto = ctk.CTkImage(light_image=imagem, dark_image=imagem,
-                            size=(imagem.width, imagem.height))
-        #  Referência viva: sem isso o coletor de lixo leva a imagem e o
-        #  label aparece vazio.
-        self._foto_previa = foto
-        label.configure(image=foto, text="")
 
     def _ao_duplo_clique_grade(self, evento):
         """

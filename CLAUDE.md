@@ -129,6 +129,30 @@ similaridade de nome sozinha.
 
 ## Histórico de decisões
 
+- **Grade editável com prévia do documento (aba 3)**: o painel de resultado
+  deixou de ter três tabelas (pendentes/calculados/ignorados) e passou a ser
+  **uma grade que É a planilha**, com a página do documento ao lado. A
+  distinção virou cor da linha + filtro. Toda edição que muda o que está
+  IMPRESSO no papel (código, unidades, valor) **dispara o recarimbo**, e se
+  ele falhar a edição não é aplicada — sem isso, papel e planilha divergiriam
+  em silêncio e o Paybox deixaria de anexar o documento. "Observação" é a
+  única editável que não mexe no papel. Ver o spec
+  `docs/superpowers/specs/2026-08-29-planilha-embutida-previa-design.md`.
+- **A prévia usa `tk.Canvas` + `ImageTk.PhotoImage`, nunca `CTkLabel` +
+  `CTkImage`**: além de o canvas rolar nos dois eixos (o que permite o zoom
+  até 4x), `CTkLabel.configure(image=None)` **não limpa a imagem** — o
+  `_update_image` do CustomTkinter só age quando `_image` é `CTkImage` ou
+  não-`None`, então o label interno seguia apontando para um `pyimageN` cuja
+  `CTkImage` já tinha sido coletada, dando `image "pyimage13" doesn't exist`.
+  A ordem em `_desenhar_previa` também importa: limpar o canvas ANTES de
+  soltar a referência da imagem anterior.
+- **Dois campos que faltavam no contexto do lote**: `_ctx_protocolos` nunca
+  guardou a `tarifa` (embora `_acao_escolher_condominio` já lesse
+  `ctx.get("tarifa")`, sempre recebendo `None`), e os `ignorados` do painel
+  só tinham `arquivo` e `motivo`. Sem a tarifa não há como recalcular o valor
+  ao editar as unidades; sem `caminho`/`indice_linha` nos ignorados a prévia
+  não funcionaria naquelas linhas.
+
 - **v6.17.1 — correção: resolver o valor e depois escolher o condomínio**: o registro
   criado por `_acao_informar_valor` não carregava `caminho` nem
   `indice_linha`, e o item voltava para a tabela de pendentes (por desenho:
