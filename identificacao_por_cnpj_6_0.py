@@ -79,6 +79,10 @@ from logica import (
     linha_planilha_protocolo, salvar_planilha_protocolo,
     extrair_texto_escaneado, COLUNAS_PROTOCOLO, resolver_protocolo_manual,
     registro_painel_resolvido,
+    renderizar_previa_pdf, LARGURA_PREVIA,
+    COL_CODIGO, COL_UNIDADES, COL_VALOR, COL_OBSERVACAO,
+    COLUNAS_EDITAVEIS, COLUNAS_QUE_RECARIMBAM,
+    validar_edicao_protocolo, aplicar_edicao_na_linha,
     lancamentos_de_despesa, gerar_planilha_despesas,
     buscar_condominios,
     converter_data_digitada,
@@ -2988,7 +2992,13 @@ class App(ctk.CTk):
                 registro_painel["motivo_original"] = observacao
                 processados_painel.append(registro_painel)
             elif nao_e_protocolo:
-                ignorados_painel.append({"arquivo": nome, "motivo": observacao_planilha})
+                #  Reusa `registro_painel` (que já traz `caminho` e
+                #  `indice_linha`) em vez de um dict de dois campos: a grade
+                #  do painel mostra TODAS as linhas da planilha, ignorados
+                #  inclusive, e a prévia do documento precisa do caminho para
+                #  funcionar em qualquer linha selecionada.
+                registro_painel["motivo"] = observacao_planilha
+                ignorados_painel.append(registro_painel)
             else:
                 registro_painel["motivo"] = observacao_planilha
                 registro_painel["motivo_original"] = observacao
@@ -3077,6 +3087,11 @@ class App(ctk.CTk):
             "separar_em_lotes": separar_em_lotes,
             "tamanho_lote": tamanho_lote,
             "carimbados": carimbados,
+            #  Tarifa do lote. Necessária para recalcular o valor quando as
+            #  unidades são editadas na grade do painel. Já era lida por
+            #  `ctx.get("tarifa")` em _acao_escolher_condominio, mas nunca
+            #  chegava a ser gravada aqui — sempre vinha None.
+            "tarifa": tarifa,
             #  Perguntado no início do lote: vai carimbado no PDF e depois
             #  para a coluna `vencimento` da planilha de despesas. Tem que ser
             #  o MESMO nos dois lugares, senão o Paybox não anexa o documento.
@@ -3181,46 +3196,42 @@ class App(ctk.CTk):
 
     def mostrar_resultado_protocolos(self, resultado):
         """
-        Painel de encerramento da aba 3. Mesma linguagem do painel da aba 1:
-        cartões no topo, pendentes primeiro, ações por linha. A diferença é o
-        que resolve uma pendência aqui — informar o valor em reais.
+        Painel de encerramento da aba 3 — a PLANILHA em si, editável, com a
+        prévia do documento ao lado.
+
+        Uma grade só, em vez das três tabelas anteriores (pendentes,
+        calculados, ignorados): a planilha já contém tudo que elas mostravam,
+        e mantê-las juntas fazia a mesma linha aparecer duas vezes na tela. A
+        distinção não some — vira ESTADO da linha (cor + filtro).
+
+        Ver docs/superpowers/specs/2026-08-29-planilha-embutida-previa-design.md.
         """
         tema = self.tema_atual
         fonte = familia_fonte()
         self._resultado_protocolos = resultado
 
         processados, pendentes, total_valor = self._listas_do_painel_protocolos(resultado)
-        ignorados = resultado.get("ignorados", []) or []
 
         janela = self._montar_painel_resultado(
-            "Resultado dos protocolos", "860x680", (680, 480))
+            "Resultado dos protocolos", "1180x720", (900, 560))
 
         self._cartoes_protocolos = self._montar_faixa_cartoes(janela, [
             (str(len(processados)), "PROTOCOLOS", False),
             (str(len(pendentes)), "PENDENTES", True),
             (formatar_reais(total_valor), "TOTAL", False),
         ], fonte=fonte)
-        #  Referências para `_atualizar_painel_protocolos` mexer só no que
-        #  muda. Ficam None quando a seção saiu como texto ("Nenhum
-        #  pendente..."), que é o que sinaliza mudança de estrutura.
-        self._tabela_pend_protocolos = None
-        self._tabela_ok_protocolos = None
 
         ctk.CTkFrame(janela, height=1, corner_radius=0,
                      fg_color=tema["borda"]).pack(fill="x", padx=24, pady=(24, 0))
 
-        #  Rodapé: contagem total à esquerda + botão neutro pra abrir a
-        #  planilha (o entregável final do fluxo) à direita. Antes do painel,
-        #  era um messagebox "Abrir a planilha agora?" ao final do
-        #  processamento — o painel novo precisa manter esse caminho, só que
-        #  como botão em vez de pergunta automática.
+        # --- RODAPÉ (fixo embaixo, montado antes para não ser empurrado) ---
         rodape = ctk.CTkFrame(janela, corner_radius=0, fg_color=tema["fundo"])
         rodape.pack(side="bottom", fill="x", padx=24, pady=16)
 
-        ctk.CTkLabel(
+        self._label_total_protocolos = ctk.CTkLabel(
             rodape, text=f"{resultado.get('total', 0)} arquivo(s) no total.",
-            font=(fonte, 12), text_color=tema["texto_terciario"], anchor="w",
-        ).pack(side="left", fill="x", expand=True)
+            font=(fonte, 12), text_color=tema["texto_terciario"], anchor="w")
+        self._label_total_protocolos.pack(side="left", fill="x", expand=True)
 
         ctk.CTkButton(
             rodape, text="Gerar planilha do Superlógica", corner_radius=0,
@@ -3238,134 +3249,430 @@ class App(ctk.CTk):
             command=self._acao_abrir_planilha_protocolos,
         ).pack(side="right")
 
-        area = ctk.CTkScrollableFrame(janela, corner_radius=0, fg_color=tema["fundo"])
-        area.pack(side="top", fill="both", expand=True, padx=24, pady=(16, 0))
+        # --- CORPO: grade à esquerda, prévia à direita ---
+        corpo = ctk.CTkFrame(janela, corner_radius=0, fg_color=tema["fundo"])
+        corpo.pack(side="top", fill="both", expand=True, padx=24, pady=(16, 0))
+        corpo.columnconfigure(0, weight=1)
+        corpo.rowconfigure(1, weight=1)
 
-        # --- PENDENTES ---
+        cabecalho = ctk.CTkFrame(corpo, corner_radius=0, fg_color=tema["fundo"])
+        cabecalho.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+
         ctk.CTkLabel(
-            area, text="PENDENTES — PRECISAM DE AÇÃO", font=(fonte, 11, "bold"),
-            text_color=tema["acento"], anchor="w",
-        ).pack(fill="x", pady=(0, 8))
-
-        self._pend_protocolo_por_iid = {}
-        if not pendentes:
-            ctk.CTkLabel(
-                area, text="Nenhum pendente — todos os protocolos foram calculados.",
-                font=(fonte, 13), text_color=tema["texto_secundario"], anchor="w",
-            ).pack(fill="x", pady=(0, 16))
-        else:
-            tabela = self._montar_tabela_resultado(
-                area,
-                [("arquivo", "Arquivo"), ("condominio", "Condomínio"), ("motivo", "Motivo")],
-                [240, 200, 320],
-            )
-            self._tabela_pend_protocolos = tabela
-            self._preencher_pendentes_protocolos(pendentes)
-
-            acoes = ctk.CTkFrame(area, corner_radius=0, fg_color=tema["fundo"])
-            acoes.pack(fill="x", pady=(0, 16))
-
-            botao_valor = ctk.CTkButton(
-                acoes, text="Informar valor", corner_radius=0, state="disabled",
-                fg_color=tema["borda"], hover_color=tema["acento_hover"],
-                text_color=tema["sobre_acento"], border_width=0, font=(fonte, 13),
-                command=lambda: self._acao_informar_valor(
-                    self._protocolo_selecionado(tabela)),
-            )
-            botao_valor.pack(side="left", padx=(0, 8))
-
-            botao_condominio = ctk.CTkButton(
-                acoes, text="Escolher condomínio", corner_radius=0,
-                state="disabled", fg_color=tema["borda"],
-                hover_color=tema["acento_hover"],
-                text_color=tema["sobre_acento"], border_width=0, font=(fonte, 13),
-                command=lambda: self._acao_escolher_condominio(
-                    self._protocolo_selecionado(tabela)),
-            )
-            botao_condominio.pack(side="left", padx=(0, 8))
-
-            botao_abrir = ctk.CTkButton(
-                acoes, text="Abrir PDF", corner_radius=0, state="disabled",
-                fg_color="transparent", hover_color=tema["superficie"],
-                border_width=1, border_color=tema["borda_forte"],
-                text_color=tema["texto"], font=(fonte, 13),
-                command=lambda: self._acao_abrir_pdf_protocolo(
-                    self._protocolo_selecionado(tabela)),
-            )
-            botao_abrir.pack(side="left", padx=(0, 8))
-
-            def ao_selecionar(_evento=None):
-                #  Cada botão liga só para o que falta NAQUELA linha: sem
-                #  valor pede valor, sem condomínio pede condomínio. Oferecer
-                #  os dois sempre faria a pessoa tentar o que não resolve —
-                #  foi exatamente assim que "Informar valor" virou beco sem
-                #  saída para um protocolo a que só faltava o condomínio.
-                #  Botão cobalto desabilitado precisa apagar o fg_color, senão
-                #  fica azul e parece clicável.
-                dados = self._protocolo_selecionado(tabela)
-                falta_valor = dados is not None and dados.get("valor") is None
-                falta_cond = dados is not None and self._falta_id_sl(dados)
-                botao_valor.configure(
-                    state="normal" if falta_valor else "disabled",
-                    fg_color=tema["acento"] if falta_valor else tema["borda"])
-                botao_condominio.configure(
-                    state="normal" if falta_cond else "disabled",
-                    fg_color=tema["acento"] if falta_cond else tema["borda"])
-                botao_abrir.configure(
-                    state="normal" if dados and dados.get("caminho") else "disabled")
-
-            def ao_duplo_clique(_evento=None):
-                #  Duplo clique faz o que aquela linha precisa.
-                dados = self._protocolo_selecionado(tabela)
-                if dados is None:
-                    return
-                if dados.get("valor") is None:
-                    self._acao_informar_valor(dados)
-                elif self._falta_id_sl(dados):
-                    self._acao_escolher_condominio(dados)
-
-            tabela.bind("<<TreeviewSelect>>", ao_selecionar)
-            tabela.bind("<Double-1>", ao_duplo_clique)
-
-        # --- CALCULADOS ---
-        ctk.CTkLabel(
-            area, text="CALCULADOS", font=(fonte, 11, "bold"),
+            cabecalho, text="PLANILHA DO LOTE", font=(fonte, 11, "bold"),
             text_color=tema["texto_secundario"], anchor="w",
-        ).pack(fill="x", pady=(8, 8))
+        ).pack(side="left")
 
-        if processados:
-            #  Coluna "Motivo" mostra "Erro ao carimbar: ..." quando
-            #  `_carimbar_protocolo` levantou exceção — o arquivo continua
-            #  cobrado (a linha permanece em CALCULADOS, soma no TOTAL), mas
-            #  o painel precisa contar a mesma história que a planilha: quem
-            #  não recebeu o carimbo aparece aqui com o motivo visível, em
-            #  vez de parecer que tudo correu bem.
-            tabela_ok = self._montar_tabela_resultado(
-                area,
-                [("arquivo", "Arquivo"), ("condominio", "Condomínio"),
-                 ("unidades", "Unidades"), ("valor", "Valor"), ("motivo", "Motivo")],
-                [200, 160, 80, 100, 220],
-            )
-            self._tabela_ok_protocolos = tabela_ok
-            self._preencher_calculados_protocolos(processados)
-        else:
-            ctk.CTkLabel(
-                area, text="Nenhum protocolo calculado neste lote.",
-                font=(fonte, 13), text_color=tema["texto_secundario"], anchor="w",
-            ).pack(fill="x", pady=(0, 16))
+        #  Filtro por estado. Substitui a separação em três tabelas: quem quer
+        #  ver só o que precisa de ação clica em "Pendentes".
+        self._filtro_protocolos = ctk.CTkSegmentedButton(
+            cabecalho, values=["Tudo", "Pendentes", "Calculados", "Ignorados"],
+            corner_radius=0, font=(fonte, 12),
+            fg_color=tema["superficie"], selected_color=tema["acento"],
+            selected_hover_color=tema["acento_hover"],
+            unselected_color=tema["superficie"],
+            unselected_hover_color=tema["borda"],
+            text_color=tema["texto"],
+            command=lambda _v: self._preencher_grade_protocolos())
+        self._filtro_protocolos.set("Tudo")
+        self._filtro_protocolos.pack(side="right")
 
-        # --- IGNORADOS (sem ação: não são protocolos) ---
-        if ignorados:
-            ctk.CTkLabel(
-                area, text="IGNORADOS — NÃO SÃO PROTOCOLOS", font=(fonte, 11, "bold"),
-                text_color=tema["texto_secundario"], anchor="w",
-            ).pack(fill="x", pady=(16, 8))
-            tabela_ign = self._montar_tabela_resultado(
-                area, [("arquivo", "Arquivo"), ("motivo", "Motivo")],
-                [300, 360], altura=3)
-            for dados in ignorados:
-                tabela_ign.insert("", "end", values=(
-                    dados.get("arquivo", ""), dados.get("motivo", "")))
+        self._montar_grade_protocolos(corpo, tema, fonte)
+        self._montar_previa_protocolos(corpo, tema, fonte)
+
+        # --- Ações da linha selecionada ---
+        acoes = ctk.CTkFrame(corpo, corner_radius=0, fg_color=tema["fundo"])
+        acoes.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+
+        self._botao_valor_protocolo = ctk.CTkButton(
+            acoes, text="Informar valor", corner_radius=0, state="disabled",
+            fg_color=tema["borda"], hover_color=tema["acento_hover"],
+            text_color=tema["sobre_acento"], border_width=0, font=(fonte, 13),
+            command=lambda: self._acao_informar_valor(self._linha_selecionada_protocolo()))
+        self._botao_valor_protocolo.pack(side="left", padx=(0, 8))
+
+        self._botao_cond_protocolo = ctk.CTkButton(
+            acoes, text="Escolher condomínio", corner_radius=0, state="disabled",
+            fg_color=tema["borda"], hover_color=tema["acento_hover"],
+            text_color=tema["sobre_acento"], border_width=0, font=(fonte, 13),
+            command=lambda: self._acao_escolher_condominio(self._linha_selecionada_protocolo()))
+        self._botao_cond_protocolo.pack(side="left", padx=(0, 8))
+
+        self._botao_abrir_protocolo = ctk.CTkButton(
+            acoes, text="Abrir PDF", corner_radius=0, state="disabled",
+            fg_color="transparent", hover_color=tema["superficie"],
+            border_width=1, border_color=tema["borda_forte"],
+            text_color=tema["texto"], font=(fonte, 13),
+            command=lambda: self._acao_abrir_pdf_protocolo(self._linha_selecionada_protocolo()))
+        self._botao_abrir_protocolo.pack(side="left")
+
+        ctk.CTkLabel(
+            acoes,
+            text="Duplo clique numa célula para editar: código, unidades, valor, observação.",
+            font=(fonte, 12), text_color=tema["texto_terciario"], anchor="e",
+        ).pack(side="right")
+
+        self._preencher_grade_protocolos()
+
+    def _montar_grade_protocolos(self, parent, tema, fonte):
+        """A planilha como Treeview: uma linha por linha do arquivo gerado."""
+        frame = ctk.CTkFrame(parent, corner_radius=0, fg_color=tema["fundo"])
+        frame.grid(row=1, column=0, sticky="nsew", padx=(0, 16))
+
+        colunas = [c[0] for c in COLUNAS_PROTOCOLO]
+        larguras = [180, 165, 60, 70, 70, 90, 200]
+        ancoras = ["w", "w", "center", "center", "e", "e", "w"]
+
+        tabela = ttk.Treeview(frame, columns=colunas, show="headings", height=16)
+        for chave, largura, ancora in zip(colunas, larguras, ancoras):
+            tabela.heading(chave, text=chave)
+            tabela.column(chave, width=largura, anchor=ancora)
+        tabela.pack(side="left", fill="both", expand=True)
+
+        scroll = ttk.Scrollbar(frame, orient="vertical", command=tabela.yview)
+        tabela.configure(yscrollcommand=scroll.set)
+        scroll.pack(side="left", fill="y")
+
+        #  Estado da linha por cor — o que antes eram três tabelas. Cobalto
+        #  para o que precisa de ação, tom apagado para o ignorado (não é
+        #  protocolo, não vira cobrança).
+        tabela.tag_configure("pendente", background=tema["superficie"],
+                             foreground=tema["acento"])
+        tabela.tag_configure("ignorado", foreground=tema["texto_terciario"])
+
+        tabela.bind("<<TreeviewSelect>>", self._ao_selecionar_linha_protocolo)
+        tabela.bind("<Double-1>", self._ao_duplo_clique_grade)
+        self._grade_protocolos = tabela
+        self._linha_grade_por_iid = {}
+
+    def _montar_previa_protocolos(self, parent, tema, fonte):
+        """Coluna da direita: primeira página do documento da linha selecionada."""
+        largura_painel = LARGURA_PREVIA // 2 + 48
+        painel = ctk.CTkFrame(parent, corner_radius=0, fg_color=tema["superficie"],
+                              width=largura_painel)
+        painel.grid(row=1, column=1, sticky="ns")
+        painel.grid_propagate(False)
+
+        ctk.CTkLabel(
+            painel, text="DOCUMENTO", font=(fonte, 11, "bold"),
+            text_color=tema["texto_secundario"], anchor="w",
+        ).pack(fill="x", padx=12, pady=(12, 8))
+
+        self._label_previa = ctk.CTkLabel(
+            painel, text="Selecione uma linha para ver o documento.",
+            font=(fonte, 12), text_color=tema["texto_terciario"],
+            wraplength=largura_painel - 24, justify="left", anchor="n")
+        self._label_previa.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+
+        #  Cache por caminho: reabrir a mesma linha não re-renderiza. Não
+        #  pré-renderiza o lote — 15 arquivos seria barato, 500 não.
+        self._cache_previa = {}
+
+    def _estado_da_linha_protocolo(self, indice):
+        """Devolve "pendente", "calculado" ou "ignorado" para a linha `indice`."""
+        resultado = self._resultado_protocolos or {}
+        for chave, estado in (("pendentes", "pendente"),
+                              ("ignorados", "ignorado"),
+                              ("processados", "calculado")):
+            for registro in resultado.get(chave, []) or []:
+                if registro.get("indice_linha") == indice:
+                    #  Processado sem ID SL ainda precisa de ação: conta como
+                    #  pendente, mesma regra de _listas_do_painel_protocolos.
+                    if estado == "calculado" and self._falta_id_sl(registro):
+                        return "pendente"
+                    return estado
+        return "calculado"
+
+    def _registro_da_linha_protocolo(self, indice):
+        """Registro do painel (com `caminho`) correspondente à linha `indice`."""
+        resultado = self._resultado_protocolos or {}
+        for chave in ("pendentes", "processados", "ignorados"):
+            for registro in resultado.get(chave, []) or []:
+                if registro.get("indice_linha") == indice:
+                    return registro
+        return None
+
+    def _preencher_grade_protocolos(self):
+        """Reescreve a grade a partir de `ctx["linhas"]`, aplicando o filtro."""
+        tabela = getattr(self, "_grade_protocolos", None)
+        if tabela is None:
+            return
+        ctx = getattr(self, "_ctx_protocolos", None) or {}
+        linhas = ctx.get("linhas", []) or []
+        filtro = "Tudo"
+        if getattr(self, "_filtro_protocolos", None) is not None:
+            filtro = self._filtro_protocolos.get() or "Tudo"
+
+        selecionado_antes = None
+        if tabela.selection():
+            selecionado_antes = tabela.selection()[0]
+
+        tabela.delete(*tabela.get_children())
+        self._linha_grade_por_iid = {}
+
+        for indice, linha in enumerate(linhas):
+            estado = self._estado_da_linha_protocolo(indice)
+            if filtro == "Pendentes" and estado != "pendente":
+                continue
+            if filtro == "Calculados" and estado != "calculado":
+                continue
+            if filtro == "Ignorados" and estado != "ignorado":
+                continue
+
+            iid = f"lin{indice}"
+            self._linha_grade_por_iid[iid] = indice
+            tabela.insert("", "end", iid=iid,
+                          tags=(estado,) if estado != "calculado" else (),
+                          values=self._valores_visiveis_da_linha(linha))
+
+        #  Mantém a linha selecionada depois de regravar (edição não deve
+        #  jogar o foco pro topo da grade).
+        if selecionado_antes and tabela.exists(selecionado_antes):
+            tabela.selection_set(selecionado_antes)
+        self._ao_selecionar_linha_protocolo()
+
+    def _valores_visiveis_da_linha(self, linha):
+        """Formata a linha da planilha para exibição (dinheiro em reais)."""
+        valores = list(linha)
+        for coluna in (4, COL_VALOR):
+            valores[coluna] = ("" if valores[coluna] in (None, "")
+                               else formatar_reais(valores[coluna]))
+        if valores[COL_UNIDADES] in (None, ""):
+            valores[COL_UNIDADES] = ""
+        return valores
+
+    def _linha_selecionada_protocolo(self):
+        """Registro do painel da linha selecionada na grade, ou None."""
+        tabela = getattr(self, "_grade_protocolos", None)
+        if tabela is None:
+            return None
+        selecao = tabela.selection()
+        if not selecao:
+            return None
+        indice = self._linha_grade_por_iid.get(selecao[0])
+        return None if indice is None else self._registro_da_linha_protocolo(indice)
+
+    def _ao_selecionar_linha_protocolo(self, _evento=None):
+        """Atualiza os botões de ação e a prévia do documento."""
+        dados = self._linha_selecionada_protocolo()
+        tema = self.tema_atual
+
+        #  Cada botão liga só para o que falta NAQUELA linha (regra herdada do
+        #  painel anterior: oferecer os dois sempre fazia a pessoa tentar o
+        #  que não resolve). Botão cobalto desabilitado precisa apagar o
+        #  fg_color, senão fica azul e parece clicável.
+        falta_valor = dados is not None and dados.get("valor") is None
+        falta_cond = dados is not None and self._falta_id_sl(dados)
+        for botao, ligado in ((self._botao_valor_protocolo, falta_valor),
+                              (self._botao_cond_protocolo, falta_cond)):
+            botao.configure(state="normal" if ligado else "disabled",
+                            fg_color=tema["acento"] if ligado else tema["borda"])
+        self._botao_abrir_protocolo.configure(
+            state="normal" if dados and dados.get("caminho") else "disabled")
+
+        self._mostrar_previa(dados)
+
+    def _mostrar_previa(self, dados):
+        """Renderiza (com cache) a 1ª página do documento da linha."""
+        label = getattr(self, "_label_previa", None)
+        if label is None:
+            return
+        if not dados or not dados.get("caminho"):
+            label.configure(image=None, text="Selecione uma linha para ver o documento.")
+            return
+
+        caminho = dados["caminho"]
+        if caminho not in self._cache_previa:
+            self._cache_previa[caminho] = renderizar_previa_pdf(
+                caminho, largura=LARGURA_PREVIA // 2)
+        imagem, motivo = self._cache_previa[caminho]
+
+        if imagem is None:
+            label.configure(image=None, text=motivo)
+            return
+
+        foto = ctk.CTkImage(light_image=imagem, dark_image=imagem,
+                            size=(imagem.width, imagem.height))
+        #  Referência viva: sem isso o coletor de lixo leva a imagem e o
+        #  label aparece vazio.
+        self._foto_previa = foto
+        label.configure(image=foto, text="")
+
+    def _ao_duplo_clique_grade(self, evento):
+        """
+        Duplo clique numa célula editável abre um campo por cima dela.
+
+        Colunas somente leitura não abrem editor nenhum: "Arquivo" é a
+        identidade da linha, "Condomínio" muda junto com o código (não
+        sozinha) e "Tarifa" é do lote inteiro. Clicar nelas apenas seleciona
+        a linha, como antes.
+        """
+        tabela = self._grade_protocolos
+        iid = tabela.identify_row(evento.y)
+        coluna_id = tabela.identify_column(evento.x)
+        if not iid or not coluna_id:
+            return
+        coluna = int(coluna_id[1:]) - 1          # "#3" -> 2
+        if coluna not in COLUNAS_EDITAVEIS:
+            return
+        self._abrir_editor_celula(iid, coluna)
+
+    def _abrir_editor_celula(self, iid, coluna):
+        """Entry sobreposto à célula, confirmando com Enter e cancelando com Esc."""
+        tabela = self._grade_protocolos
+        caixa = tabela.bbox(iid, f"#{coluna + 1}")
+        if not caixa:                            # linha fora da área visível
+            return
+        x, y, largura, altura = caixa
+
+        indice = self._linha_grade_por_iid.get(iid)
+        if indice is None:
+            return
+        ctx = getattr(self, "_ctx_protocolos", None) or {}
+        linha = (ctx.get("linhas") or [])[indice]
+
+        #  O editor recebe o valor CRU (não o formatado em reais): quem edita
+        #  digita "46,20", não "R$ 46,20" — e converter_valor_digitado aceita
+        #  as duas formas de qualquer jeito.
+        bruto = linha[coluna]
+        texto_inicial = "" if bruto in (None, "") else str(bruto)
+
+        editor = tk.Entry(tabela, borderwidth=1, relief="solid")
+        editor.place(x=x, y=y, width=largura, height=altura)
+        editor.insert(0, texto_inicial)
+        editor.select_range(0, "end")
+        editor.focus_set()
+
+        def fechar():
+            try:
+                editor.destroy()
+            except Exception:
+                pass
+
+        def confirmar(_evento=None):
+            texto = editor.get()
+            fechar()
+            self._aplicar_edicao_grade(indice, coluna, texto)
+
+        editor.bind("<Return>", confirmar)
+        editor.bind("<Escape>", lambda _e: fechar())
+        #  Perder o foco confirma, como numa planilha de verdade: clicar fora
+        #  depois de digitar não pode descartar o que foi escrito em silêncio.
+        editor.bind("<FocusOut>", confirmar)
+
+    def _aplicar_edicao_grade(self, indice, coluna, texto):
+        """
+        Valida a edição, recarimba o PDF quando ela muda o papel, e só então
+        grava a linha e a planilha.
+
+        A ordem importa: código, unidades e valor estão IMPRESSOS no
+        documento (carimbo lateral e bloco do Paybox), e o Superlógica lê o
+        papel por OCR. Aplicar na planilha sem recarimbar criaria divergência
+        silenciosa — o Paybox não acharia o lançamento e o arquivo cairia na
+        fila manual sem erro nenhum.
+        """
+        ctx = getattr(self, "_ctx_protocolos", None)
+        if not ctx:
+            messagebox.showerror(
+                "Erro", "O contexto do processamento se perdeu. Rode o lote de novo.",
+                parent=self._janela_resultado)
+            return
+
+        linha = ctx["linhas"][indice]
+        if str(linha[coluna] if linha[coluna] is not None else "") == texto.strip():
+            return                                # nada mudou
+
+        tarifa = ctx.get("tarifa")
+        valor, erro = validar_edicao_protocolo(coluna, texto, self.cadastro, tarifa)
+        if erro:
+            messagebox.showwarning("Edição recusada", erro,
+                                    parent=self._janela_resultado)
+            return
+
+        nova_linha = aplicar_edicao_na_linha(linha, coluna, valor, self.cadastro, tarifa)
+        registro = self._registro_da_linha_protocolo(indice)
+
+        if coluna in COLUNAS_QUE_RECARIMBAM:
+            if registro is None or not registro.get("caminho"):
+                messagebox.showwarning(
+                    "Sem o documento",
+                    "Não dá para recarimbar: o arquivo desta linha não está "
+                    "mais acessível. A edição não foi aplicada.",
+                    parent=self._janela_resultado)
+                return
+            if not self._recarimbar_linha(registro, nova_linha, ctx):
+                return                            # falhou: edição não se aplica
+
+        ctx["linhas"][indice] = nova_linha
+        self._sincronizar_registro_com_linha(registro, nova_linha)
+
+        try:
+            salvar_planilha_protocolo(ctx["destino"], ctx["linhas"])
+        except Exception as e:
+            messagebox.showwarning(
+                "Planilha não gravada",
+                f"A edição foi aplicada e o PDF recarimbado, mas a planilha "
+                f"não pôde ser gravada:\n{e}\n\nFeche o arquivo no Excel e "
+                f'use "Abrir planilha" para gravar de novo.',
+                parent=self._janela_resultado)
+
+        self._atualizar_painel_protocolos()
+
+    def _recarimbar_linha(self, registro, nova_linha, ctx):
+        """
+        Regrava o PDF com os dados da linha editada. Devolve True se deu
+        certo; em caso de falha avisa e devolve False, para o chamador
+        descartar a edição (mesma regra de `resolver_protocolo_manual`: não
+        faz sentido dar por resolvido um arquivo que não saiu carimbado).
+        """
+        registro_dados = {"codigo": nova_linha[COL_CODIGO],
+                          "condominio": f"{nova_linha[COL_CODIGO]} {nova_linha[1]}".strip()}
+        unidades = nova_linha[COL_UNIDADES]
+        valor = nova_linha[COL_VALOR]
+        try:
+            self._carimbar_protocolo(
+                registro["caminho"],
+                registro.get("pasta_destino") or ctx["pasta_saida"],
+                registro["arquivo"], registro_dados, unidades,
+                ctx.get("tarifa") if unidades else None,
+                ctx["config"], ctx["codigos"],
+                valor_manual=None if unidades else Decimal(str(valor)),
+                vencimento=ctx.get("vencimento"))
+            return True
+        except Exception as e:
+            messagebox.showerror(
+                "Erro ao recarimbar",
+                f"A edição NÃO foi aplicada, porque o PDF não pôde ser "
+                f"recarimbado:\n{e}\n\nPapel e planilha precisam continuar "
+                f"iguais — por isso nada foi alterado.",
+                parent=self._janela_resultado)
+            return False
+
+    def _sincronizar_registro_com_linha(self, registro, nova_linha):
+        """
+        Reflete a edição no registro do painel, para os botões de ação e a
+        classificação pendente/calculado enxergarem o novo estado sem
+        reprocessar o lote.
+        """
+        if registro is None:
+            return
+        registro["codigo"] = nova_linha[COL_CODIGO] or None
+        registro["condominio"] = (f"{nova_linha[COL_CODIGO]} {nova_linha[1]}".strip()
+                                   if nova_linha[COL_CODIGO] else nova_linha[1] or "")
+        registro["unidades"] = nova_linha[COL_UNIDADES]
+        registro["valor"] = (None if nova_linha[COL_VALOR] in (None, "")
+                             else Decimal(str(nova_linha[COL_VALOR])))
+        registro["motivo"] = nova_linha[COL_OBSERVACAO] or ""
+
+        #  Uma linha editada pode deixar de ser "ignorada": se alguém deu
+        #  código e valor a um arquivo que o programa não reconheceu como
+        #  protocolo, ele passa a ser cobrável e precisa sair da lista de
+        #  ignorados, senão não entraria na planilha de despesas.
+        resultado = self._resultado_protocolos or {}
+        ignorados = resultado.get("ignorados") or []
+        if registro in ignorados and registro.get("valor") is not None:
+            ignorados.remove(registro)
+            resultado.setdefault("processados", []).append(registro)
 
     def _janela_para_dialogo(self):
         """
@@ -3402,50 +3709,19 @@ class App(ctk.CTk):
         processados = [p for p in processados if not self._falta_id_sl(p)]
         return processados, pendentes, resultado.get("total_valor", Decimal("0.00"))
 
-    def _preencher_pendentes_protocolos(self, pendentes):
-        """Reescreve as linhas da tabela de pendentes e o mapa iid -> dados."""
-        tabela = self._tabela_pend_protocolos
-        tabela.delete(*tabela.get_children())
-        self._pend_protocolo_por_iid = {}
-        for i, dados in enumerate(pendentes):
-            iid = f"prot{i}"
-            self._pend_protocolo_por_iid[iid] = dados
-            tabela.insert("", "end", iid=iid, values=(
-                dados.get("arquivo", ""), dados.get("condominio", ""),
-                dados.get("motivo", "")))
-
-    def _preencher_calculados_protocolos(self, processados):
-        """Reescreve as linhas da tabela de calculados."""
-        tabela = self._tabela_ok_protocolos
-        tabela.delete(*tabela.get_children())
-        for dados in processados:
-            unidades = dados.get("unidades")
-            tabela.insert("", "end", values=(
-                dados.get("arquivo", ""), dados.get("condominio", ""),
-                "" if unidades is None else unidades,
-                formatar_reais(dados.get("valor", 0)),
-                dados.get("motivo", "")))
-
     def _atualizar_painel_protocolos(self):
         """
-        Atualiza o painel depois de resolver uma pendência, SEM remontá-lo.
+        Atualiza o painel depois de resolver ou editar uma linha, SEM
+        remontá-lo.
 
-        O que resolve a piscada não é a velocidade — é NÃO destruir widget
-        nenhum. Remontar destrói e recria todos os widgets CustomTkinter do
-        painel, e a janela fica visivelmente vazia nesse intervalo: quem
-        informa um valor vê o painel sumir e voltar. Aqui os mesmos widgets
-        permanecem e só mudam os três números dos cartões e as linhas das duas
-        tabelas, que são Treeview e repintam sem esvaziar a janela.
+        O que evita a piscada não é a velocidade — é NÃO destruir widget
+        nenhum. Remontar recria todos os widgets CustomTkinter e a janela
+        fica visivelmente vazia nesse intervalo.
 
-        Medido no painel real, com 5 calculados e 5 pendentes: atualizar leva
-        de 13 a 43 ms contra 78 a 90 ms para remontar — só umas 2x, bem menos
-        do que a diferença aparente sugere. O ganho visual vem do widget que
-        continua lá, não do tempo.
-
-        A remontagem continua sendo o caminho quando a ESTRUTURA muda: uma
-        seção que estava vazia (texto "Nenhum pendente...") passa a ter tabela,
-        ou o contrário. Nesse caso não há tabela para preencher, e tentar
-        atualizar em vez de remontar deixaria o painel mentindo.
+        Com a grade única não existe mais "mudança de estrutura" (antes, uma
+        seção que passava de texto para tabela obrigava a remontagem): a
+        grade está sempre lá, mesmo vazia. Só volta a remontar se a janela
+        tiver sido fechada.
         """
         resultado = self._resultado_protocolos
         janela = getattr(self, "_janela_resultado", None)
@@ -3455,24 +3731,13 @@ class App(ctk.CTk):
 
         processados, pendentes, total_valor = self._listas_do_painel_protocolos(resultado)
 
-        mudou_estrutura = (
-            bool(pendentes) != (self._tabela_pend_protocolos is not None)
-            or bool(processados) != (self._tabela_ok_protocolos is not None)
-        )
-        if mudou_estrutura:
-            self.mostrar_resultado_protocolos(resultado)
-            return
-
         cartoes = getattr(self, "_cartoes_protocolos", None)
         for label, texto in zip(getattr(cartoes, "labels_valor", []),
                                  (str(len(processados)), str(len(pendentes)),
                                   formatar_reais(total_valor))):
             label.configure(text=texto)
 
-        if self._tabela_pend_protocolos is not None:
-            self._preencher_pendentes_protocolos(pendentes)
-        if self._tabela_ok_protocolos is not None:
-            self._preencher_calculados_protocolos(processados)
+        self._preencher_grade_protocolos()
 
     def _falta_id_sl(self, item):
         """Se este protocolo ainda não tem como virar lançamento de despesa:
@@ -3484,13 +3749,6 @@ class App(ctk.CTk):
         cnpj = _codigos_do_cadastro(self.cadastro).get(codigo)
         registro = self.cadastro.get(cnpj) if cnpj else None
         return not (registro or {}).get("id_sl")
-
-    def _protocolo_selecionado(self, tabela):
-        """Dict do pendente na linha selecionada, ou None."""
-        selecao = tabela.selection()
-        if not selecao:
-            return None
-        return self._pend_protocolo_por_iid.get(selecao[0])
 
     def _acao_abrir_pdf_protocolo(self, dados):
         if not dados:
