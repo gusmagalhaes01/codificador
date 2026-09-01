@@ -17,6 +17,9 @@ FONTES = {
     # nfse_ff.txt acima é o caso sem retenção ("-" nos dois campos).
     "nfse_ff_retido.txt": r"C:\Users\Dell\Documents\NOTAS FF\07 Julho\EXAMES\EXAME 11222 Solar.pdf",
     "nfse_imodata.txt": r"C:\Users\Dell\Downloads\nfses_pdfs_2026-05-04\NFSE_284726_11194.pdf",
+    # DANFSe v2.0 em que "NFS-e" quebra a linha entre o hífen e o "e" nos
+    # rótulos do cabeçalho ("NÚMERO DA NFS-\ne"). Ver test_extracao_nfse.
+    "nfse_v2_rotulo_quebrado.txt": r"C:\Users\User1\Documents\NOTAS FF\08 Agosto\ESOCIAL\ESOCIAL 10002 San Remo.pdf",
     "nfse_avulsa.txt": r"C:\Users\Dell\Documents\EXEMPLO NF.pdf",
     "boleto_avulso.txt": r"C:\Users\Dell\Documents\EXEMPLO BOLETO.pdf",
     "cnpj_checksum_invalido.txt": r"C:\Users\Dell\Downloads\BENEFICIO 07-2026 BOLETO\NF-927.pdf",

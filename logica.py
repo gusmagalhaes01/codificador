@@ -1408,6 +1408,28 @@ def bloco_secao(texto, titulo):
     return texto[inicio:fim]
 
 
+def padrao_rotulo(rotulo):
+    """Rótulo escapado para regex, tolerando a quebra de linha DENTRO de
+    "NFS-e" no fim do texto.
+
+    Quando o rótulo cai na borda da coluna, o DANFSe quebra a linha entre o
+    hífen e o "e": "NÚMERO DA NFS-" e "e" saem como dois blocos de texto em
+    alturas diferentes, e o extrator devolve "NÚMERO DA NFS-\\ne". Isso fazia
+    `campo_danfse` não achar o número da nota e `extrair_dados_nfse` devolver
+    None — a nota inteira era descartada como "não é DANFSe".
+
+    É a mesma ideia do prefixo "EMITENTE DA NFS-" em SECOES_DANFSE, com uma
+    diferença: lá basta parar antes da letra que varia, aqui o "e" precisa ser
+    CONSUMIDO, porque o valor do campo vem depois dele. Aceita no máximo uma
+    quebra (`\\n?`, não `\\s*`) pelo mesmo motivo que `campo_danfse` recusa
+    `\\s*` solto: com quebras livres, um rótulo seguido de campo vazio casaria
+    com a palavra iniciada em "e" da linha de baixo (ex: "emissão").
+    """
+    if rotulo.upper().endswith("NFS-E"):
+        return re.escape(rotulo[:-1]) + r"[ \t]*\n?[ \t]*" + re.escape(rotulo[-1])
+    return re.escape(rotulo)
+
+
 def campo_danfse(bloco, rotulo):
     """
     Valor que vem logo abaixo de um rótulo. O DANFSe usa "Rótulo\n \nValor";
@@ -1419,7 +1441,7 @@ def campo_danfse(bloco, rotulo):
 
     Sem diferenciar maiúsculas/minúsculas — mesmo motivo do bloco_secao.
     """
-    m = re.search(re.escape(rotulo) + r"[ \t]*\n[ \t]*\n?[ \t]*(.+)", bloco, re.IGNORECASE)
+    m = re.search(padrao_rotulo(rotulo) + r"[ \t]*\n[ \t]*\n?[ \t]*(.+)", bloco, re.IGNORECASE)
     if not m:
         return None
     return m.group(1).strip() or None

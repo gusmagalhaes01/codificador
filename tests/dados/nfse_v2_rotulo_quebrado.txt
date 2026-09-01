@@ -1,0 +1,227 @@
+DANFSe v2.0
+ 
+Documento Auxiliar da NFS-e
+Município: Rio de Janeiro / RJ
+Ambiente Gerador: 2
+Tipo de Ambiente: 1
+CHAVE DE ACESSO DA NFS-
+e
+ 
+33045572213736666000154000000001281526080320771309
+NÚMERO DA NFS-
+e
+ 
+12815
+COMPETÊNCIA DA NFS-
+e
+ 
+24/08/2026
+DATA E HORA DA EMISSÃO DA NFS-
+e
+ 
+24/08/2026 23:05:08
+NÚMERO DA DPS
+ 
+20751
+SÉRIE DA DPS
+ 
+7000
+DATA E HORA DA EMISSÃO DA DPS
+ 
+24/08/2026 23:05:03
+EMITENTE DA NFS-
+e
+ 
+Prestador
+SITUAÇÃO DA NFS-
+e
+ 
+NFS-e Gerada
+FINALIDADE
+ 
+-
+ 
+A autenticidade desta NFS-e pode ser verificada
+ 
+pela leitura deste código QR ou pela consulta da
+ 
+chave de acesso no portal nacional da NFS-e
+PRESTADOR / FORNECEDOR
+ 
+ 
+CNPJ / CPF / NIF
+ 
+13.736.666/0001-54
+Indicador Municipal (Inscrição)
+ 
+-
+Telefone
+ 
+(21) 3592-3596
+Nome / Nome Empresarial
+ 
+F & F CONSULTORIA E SERVICOS MEDICOS LTDA
+Município / Sigla UF
+ 
+Rio De Janeiro / RJ
+Código IBGE / CEP
+ 
+33.04557 / 22.631-004
+Endereço
+ 
+AVENIDA DAS AMERICAS, 4801, BARRA DA TIJUCA
+E-mail
+ 
+camserrat@yahoo.com.br
+Simples Nacional na Data de Competência
+ 
+Não optante
+Regime de Apuração Tributária pelo SN
+ 
+-
+TOMADOR / ADQUIRENTE
+ 
+ 
+CNPJ / CPF / NIF
+ 
+08.578.541/0001-03
+Indicador Municipal (Inscrição)
+ 
+-
+Telefone
+ 
+-
+Nome / Nome Empresarial
+ 
+SAN REMO
+Município / Sigla UF
+ 
+Rio De Janeiro / RJ
+Código IBGE / CEP
+ 
+33.04557 / 20.271-065
+Endereço
+ 
+R PROFESSOR GABIZO 301, S/N, TIJUCA
+E-mail
+ 
+contato@fefconsultoria.com.br
+DESTINATÁRIO DA OPERAÇÃO NÃO IDENTIFICADO NA NFS-e
+INTERMEDIÁRIO DA OPERAÇÃO NÃO IDENTIFICADO NA NFS-e
+SERVIÇO PRESTADO
+ 
+ 
+Código de Tributação Nacional / Municipal
+ 
+17.09.01 / 004
+Código da NBS
+ 
+1.2301.99.00
+Local da Prestação / Sigla UF / País
+ 
+Rio De Janeiro / RJ / -
+Análise técnica.
+Descrição do Serviço
+ 
+Serviços de Segurança e Medicina do Trabalho. Ref. 01/08/2026 a 24/08/2026. Fatura no. 359758.
+Valor aprox. dos tributos, federais R$2.87, estaduais R$0.00, municipais R$0.48
+TRIBUTAÇÃO MUNICIPAL (ISSQN)
+ 
+ 
+BC ISSQN
+ 
+R$ 21,31
+Alíquota Aplicada
+ 
+5,00 %
+Retenção do ISSQN
+ 
+Não Retido
+ISSQN Apurado
+ 
+R$ 1,07
+TRIBUTAÇÃO FEDERAL (EXCETO CBS)
+ 
+ 
+IRRF
+-
+Contribuição Previdenciária - Retida
+-
+Contribuições Sociais - Retidas
+-
+PIS - Débito Apuração Própria
+R$ 0,14
+COFINS - Débito Apuração Própria
+R$ 0,64
+Descrição Contrib. Sociais - Retidas
+0 - PIS/COFINS/CSLL Não Retidos
+TRIBUTAÇÃO IBS / CBS
+ 
+ 
+CST / cClassTrib
+- / -
+Indicador de Operação / Código IBGE Incidência / Município Incidência / Sigla UF
+- / - / - / -
+Exclusões e Reduções da Base de Cálculo
+R$ 1,85
+Base de Cálculo Após Exclusões e Reduções
+-
+Red. Alíquota IBS / Red. Alíquota CBS
+- / - / -
+Alíquota - IBS UF / IBS Mun
+- / -
+Alíq. Efetiva Municipal - IBS
+-
+Valor Apurado Municipal - IBS
+-
+Alíq. Efetiva Estadual - IBS
+-
+Valor Apurado Estadual - IBS
+-
+Valor Total Apurado - IBS
+-
+Alíquota - CBS
+-
+Alíquota Efetiva - CBS
+-
+Valor Total Apurado - CBS
+-
+VALOR TOTAL DA NFS-
+e
+ 
+ 
+VALOR DA OPERAÇÃO / SERVIÇO
+ 
+R$ 21,31
+Desconto Incondicionado
+ 
+-
+Desconto Condicionado
+ 
+-
+Total das Retenções (ISSQN / Federais)
+ 
+-
+VALOR LÍQUIDO DA NFS-e
+ 
+R$ 21,31
+Total do IBS/CBS
+ 
+R$ 0,00
+VALOR LÍQUIDO DA NFS-e + IBS/CBS
+ 
+R$ 0,00
+INFORMAÇÕES COMPLEMENTARES
+ 
+Totais aproximados dos Tributos cfe. Lei nº 12.741/2012: Federais: R$ 0,00; Estaduais: R$ 0,00; Municipais: R$ 0,00;
+Tipo de Tributação do ISSQN
+ 
+Operação Tributável
+Município / Sigla UF / País de Incidência do ISSQN
+ 
+Rio de Janeiro / RJ / -
+DATA CIENTIFICAÇÃO:
+IDENTIFICAÇÃO E ASSINATURA
+Nº NFS-e / CHAVE NFS-e
+ 
+12815 / 33045572213736666000154000000001281526080320771309

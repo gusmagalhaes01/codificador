@@ -129,6 +129,41 @@ similaridade de nome sozinha.
 
 ## Histórico de decisões
 
+- **v6.18.1 — a nota inteira era descartada porque "NFS-e" quebrava a linha
+  no meio do rótulo**: nas notas da F&F de agosto/2026 (DANFSe v2.0), o
+  rótulo do cabeçalho cai na borda da coluna e o hífen fica numa linha e o
+  "e" na seguinte — `NÚMERO DA NFS-\ne\n \n12815`. São dois blocos de texto
+  em alturas diferentes dentro do PDF, então **qualquer** extrator quebra ali;
+  não é falha do `pypdf` nem nota escaneada, o texto nativo está íntegro.
+  `campo_danfse` montava `re.escape(rotulo)` e exigia o rótulo inteiro numa
+  linha, então `numero` vinha `None` e `extrair_dados_nfse` desistia na
+  primeira checagem (linha `if not numero: return None`). O estrago era
+  desproporcional à causa: a nota era descartada pelo **mesmo caminho** do
+  "Detalhamento do Faturamento" — documento que de fato não deve ser lido —,
+  e nada na tela distinguia os dois. `padrao_rotulo` (`logica.py`) passou a
+  gerar o padrão do rótulo aceitando **uma** quebra dentro de "NFS-e" no fim
+  do texto. Mesma ideia do prefixo `"EMITENTE DA NFS-"` em `SECOES_DANFSE`,
+  com uma diferença: lá basta parar antes da letra que varia, aqui o "e"
+  precisa ser **consumido**, porque o valor do campo vem depois dele. A folga
+  é `[ \t]*\n?[ \t]*`, nunca `\s*` — com quebras livres, um rótulo de campo
+  vazio casaria com a palavra iniciada em "e" da linha de baixo (ex:
+  "emissão") e devolveria o valor errado, exatamente o motivo pelo qual
+  `campo_danfse` já recusava `\s*` solto.
+  **Por que os 668/668 da v6.11.0 não pegaram isto:** nas notas de julho, a
+  mesma DANFSe v2.0 trazia `NÚMERO DA NFS-E` numa linha só (ver a fixture
+  `nfse_v2_ibs.txt`). A quebra depende da largura da coluna no lote, não da
+  versão do DANFSe — então validar contra um lote grande de uma competência
+  só não cobre este eixo de variação.
+  Três rótulos eram afetados, todos os que terminam em "NFS-e" no cabeçalho:
+  Número (descartava a nota), Competência e Data de emissão (célula vazia).
+  Validado contra os 2.220 PDFs reais de agosto/2026: 1.994 notas lidas sem
+  nenhum campo vazio, 226 recusadas — **todas** "Detalhamento do Faturamento",
+  que é o comportamento correto. Em 1.994 notas o código deduzido do CNPJ do
+  tomador bateu com o código no nome do arquivo em 100% dos casos.
+  Fixture `tests/dados/nfse_v2_rotulo_quebrado.txt`, testes em
+  `tests/test_extracao_nfse.py` (`TestRotuloQuebradoNoHifen`,
+  `TestPadraoRotulo`).
+
 - **O valor saiu do topo direito: com o bloco do Paybox ele aparecia duas
   vezes**: desde a v6.16.0 o bloco do Paybox já traz `VALOR: R$ ...`, então
   o carimbo do topo virou repetição na mesma folha. Some pelo mesmo motivo

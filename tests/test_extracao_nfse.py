@@ -1,5 +1,6 @@
 import datetime
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -109,6 +110,78 @@ class TestDanfseV2(unittest.TestCase):
         self.assertEqual(self.dados["bc_issqn"], 133.32)
         self.assertEqual(self.dados["aliquota"], 5.0)
         self.assertEqual(self.dados["issqn"], 6.67)
+
+
+class TestRotuloQuebradoNoHifen(unittest.TestCase):
+    """
+    DANFSe v2.0 em que "NFS-e" QUEBRA A LINHA entre o hífen e o "e" (fixture
+    nfse_v2_rotulo_quebrado.txt, ESOCIAL 10002 San Remo, agosto/2026). O
+    rótulo cai na borda da coluna e sai do extrator como dois blocos em
+    linhas diferentes:
+
+        NÚMERO DA NFS-
+        e
+
+        12815
+
+    As notas de julho, mesma v2.0, traziam "NÚMERO DA NFS-E" numa linha só —
+    por isso os 668/668 da validação da v6.11.0 não pegaram este caso.
+
+    O estrago era desproporcional: `campo_danfse` exigia o rótulo inteiro
+    numa linha, então "numero" vinha None e `extrair_dados_nfse` devolvia
+    None logo na primeira checagem. A nota inteira era descartada como "não é
+    DANFSe" — o MESMO desfecho de um "Detalhamento do Faturamento", que é
+    documento que de fato não deve ser lido. Nada na tela distinguia os dois.
+    """
+
+    def setUp(self):
+        self.dados = app.extrair_dados_nfse(ler("nfse_v2_rotulo_quebrado.txt"))
+
+    def test_nota_com_rotulo_quebrado_e_reconhecida(self):
+        # A regressão que motivou o fix: antes dele, isto era None.
+        self.assertIsNotNone(self.dados)
+
+    def test_identificacao_atravessa_a_quebra(self):
+        # Os três rótulos afetados são justamente os do cabeçalho — os
+        # únicos que terminam em "NFS-e" e caem na borda da coluna.
+        self.assertEqual(self.dados["numero"], "12815")
+        self.assertEqual(self.dados["competencia"], datetime.date(2026, 8, 24))
+        self.assertEqual(self.dados["emissao"], datetime.datetime(2026, 8, 24, 23, 5, 8))
+
+    def test_tomador(self):
+        self.assertEqual(self.dados["cnpj_tomador"], "08578541000103")
+        self.assertEqual(self.dados["nome_tomador"], "SAN REMO")
+
+    def test_valores(self):
+        self.assertEqual(self.dados["valor_servico"], 21.31)
+        self.assertEqual(self.dados["valor_liquido"], 21.31)
+        self.assertEqual(self.dados["bc_issqn"], 21.31)
+        self.assertEqual(self.dados["aliquota"], 5.0)
+        self.assertEqual(self.dados["issqn"], 1.07)
+
+
+class TestPadraoRotulo(unittest.TestCase):
+    """
+    `padrao_rotulo` tolera UMA quebra dentro de "NFS-e", nunca mais que isso.
+    A folga tinha que ser estreita: com `\\s*` no lugar de `\\n?`, um rótulo
+    seguido de campo vazio casaria com a palavra iniciada em "e" da linha
+    seguinte (ex: "emissão") e devolveria o valor do campo errado — o mesmo
+    risco que já fez `campo_danfse` recusar `\\s*` solto.
+    """
+
+    def test_rotulo_sem_nfse_fica_intacto(self):
+        self.assertEqual(app.padrao_rotulo("BC ISSQN"), re.escape("BC ISSQN"))
+
+    def test_le_rotulo_quebrado_e_inteiro_do_mesmo_jeito(self):
+        for bloco in ("Número da NFS-\ne\n \n12815", "NÚMERO DA NFS-E\n \n12815"):
+            with self.subTest(bloco=bloco):
+                self.assertEqual(app.campo_danfse(bloco, "Número da NFS-e"), "12815")
+
+    def test_nao_atravessa_duas_quebras(self):
+        # Campo vazio: o valor NÃO é o rótulo de baixo. Sem o limite de uma
+        # quebra, "emissão..." seria engolido como se fosse o "e" do rótulo.
+        bloco = "Número da NFS-\n\n\nemissão da nota\n \n24/08/2026"
+        self.assertIsNone(app.campo_danfse(bloco, "Número da NFS-e"))
 
 
 class TestRetencaoFederal(unittest.TestCase):
