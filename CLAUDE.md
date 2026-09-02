@@ -864,6 +864,84 @@ PARA ANEXOS AUTOMÁTICOS`**, exigem o perfil "Paybox - Alteração (1572)" e val
 para a licença inteira, não por condomínio. O protocolo é classificado pelo
 Superlógica como `"outro"`, grupo que exige o mínimo de uma regra marcada.
 
+## Por que a NFS-e NÃO anexa sozinha no Paybox — e por que carimbar não resolve
+
+Investigado em 2026-09-01, a propósito de replicar nas notas da F&F o carimbo
+que funciona nos Correios. **A conclusão é que não dá, e o motivo é
+estrutural** — não é ajuste de posição, tamanho ou conteúdo do carimbo.
+
+**A classificação do documento decide como o Superlógica o lê**, e isso muda
+tudo:
+
+| | Protocolo dos Correios | NFS-e da F&F |
+|---|---|---|
+| Classificação | `outro` | `nfse` |
+| De onde vêm os campos | **OCR da folha** | **esquema canônico da NFS-e**, via QR Code |
+| Carimbar texto novo adianta? | **sim** — é a única fonte que ele tem | **não** — o que não está no esquema é descartado |
+
+O protocolo funciona justamente por ser um documento que o Superlógica **não
+sabe classificar**: sem esquema, ele cai no OCR da página, que é onde o
+carimbo está. Numa NFS-e ele lê o QR (aparece em "Códigos detectados", com o
+link da consulta pública da `nfse.gov.br`), preenche um esquema fixo
+(`access-key`, `invoice-number`, `invoice-value`, `net-value`, `emission-date`,
+`iss-value`, `Documento do pagador`, `Documento do destinatário`) e **não olha
+a folha**.
+
+**O assistente exige o campo Vencimento preenchido no arquivo**, e o layout da
+NFS-e não tem esse campo. Como a extração é por esquema, ele nunca é
+preenchido — então **nenhuma NFS-e associa sozinha**. Não é intermitente: é
+por construção. Isso combina com o achado já registrado acima, de que o Pix
+válido não bastou e a associação só começou quando o vencimento entrou na
+página.
+
+### A prova
+
+Nota do `10048 ALVORADA` (NFS-e 12367, R$ 21,31) contra a despesa `54927`:
+
+| Critério marcado no grupo NOTA FISCAL | No documento | No lançamento |
+|---|---|---|
+| CNPJ do condomínio | `01183801000100` | `id_condominio_cond: 64` |
+| CNPJ do fornecedor | `13736666000154` | `st_cpf_con: 13736666000154` |
+| Número da nota fiscal | `12367` | `st_documento_des: "12367"` |
+| Valor igual ao do documento | `21.31` | `vl_valor_pdes: "21.31"` |
+
+Os quatro batem, o lançamento estava aberto (`fl_liquidado_pdes: "0"`), o tipo
+era fiscal (`id_tipo_doc: "1"`, "Nota Fiscal") e o PDF foi enviado **depois** de
+a despesa existir. Mesmo assim `arquivos: []`. **Preenchendo o Vencimento do
+arquivo à mão, associou na hora** — é esse teste que isola a causa.
+
+### Quatro hipóteses foram testadas e descartadas antes desta
+
+Vale a pena registrá-las, porque todas eram plausíveis e custaram experimento:
+
+1. **Carimbar o vencimento na nota** — feito, com carimbo grande e legível
+   (`Vencimento: 05/09/2026`). Ignorado, pelo motivo acima.
+2. **A regra casaria por vencimento** — não: "Data do documento" está
+   **desmarcada**, e esse campo é a data de emissão, outra coisa.
+3. **`numero_documento` vazio no lançamento** — não: vai preenchido com o
+   número da nota, e confere.
+4. **Grupo de regras separado para `nfse`** — não existe. Os tipos de
+   documento do Superlógica são 9 (`1 Nota Fiscal`, `2 Imposto`, `3 Fatura`,
+   `4 Recibo`, `5 Cupom Fiscal`, `6 Outros`, `7 Folha de pagamento`,
+   `8 Apólice`, `9 DANFE`), e o grupo "NOTA FISCAL" é mesmo o que se aplica.
+
+### Consequências
+
+- **Não implementar o bloco do Paybox nas notas da F&F.** Seria carimbar numa
+  folha que, para essa classe de documento, não é lida.
+- **O carimbo do código continua útil** (ex: `10048 ALVORADA - E-Social`) —
+  esse serve para a identificação humana, não para o Paybox.
+- **Não esconder nem remover o QR Code** para forçar a classificação `outro`.
+  Funcionaria pelo mesmo mecanismo dos Correios, mas seria degradar de
+  propósito a verificabilidade de um documento fiscal para enganar um
+  classificador.
+- **O caminho que resta é o suporte do Superlógica** (que a associação de
+  `nfse` não dependa do vencimento, ou que ele seja herdado da despesa
+  candidata) ou, se o endpoint de upload aceitar metadados, **enviar as notas
+  já com o vencimento preenchido pela API** — a licença tem API (foi de lá que
+  saiu o JSON da despesa `54927`). Essa é a única pergunta que ainda pode
+  reabrir a automação.
+
 ## Planilha de Despesas do Superlógica (aba 3, v6.14.0)
 
 Terceiro passo do fluxo dos Correios, depois de contar e carimbar: o botão
