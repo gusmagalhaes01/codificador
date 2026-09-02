@@ -910,6 +910,27 @@ era fiscal (`id_tipo_doc: "1"`, "Nota Fiscal") e o PDF foi enviado **depois** de
 a despesa existir. Mesmo assim `arquivos: []`. **Preenchendo o Vencimento do
 arquivo à mão, associou na hora** — é esse teste que isola a causa.
 
+### O bloco completo dos Correios também foi testado, e também foi ignorado
+
+Depois da conclusão acima, o bloco **no formato exato dos Correios** (negrito,
+corpo 10, alinhado à direita, com fornecedor, CNPJ, `VENCIMENTO:` e `VALOR:`)
+foi carimbado em duas notas — `10500 WALQUIRIA` (NFS-e 12934) e
+`10049 PIRATININGA` (NFS-e 12739) — usando `processar_pdf`/`criar_overlay` do
+próprio programa, para que um resultado negativo não pudesse ser atribuído a
+um render improvisado. A posição foi **medida** na nota (`y=94`), não
+reaproveitada dos Correios (`y=77`), porque o rodapé da NFS-e é outro.
+
+| Teste | Bloco na folha | Vencimento preenchido à mão | Associou |
+|---|---|---|---|
+| ALVORADA | não (só uma linha `Vencimento: ...`) | não | **não** |
+| ALVORADA | não | **sim** | **sim** |
+| Walquiria / Piratininga | **sim, formato dos Correios** | não | **não** |
+| Walquiria / Piratininga | sim | **sim** | **sim** |
+
+**A variável que decide é sempre o campo Vencimento do arquivo, e nunca o
+carimbo.** Não tente de novo com outro formato, outra posição ou outro corpo
+de letra: o que falha não é a legibilidade, é o fato de a folha não ser lida.
+
 ### Quatro hipóteses foram testadas e descartadas antes desta
 
 Vale a pena registrá-las, porque todas eram plausíveis e custaram experimento:
@@ -929,8 +950,14 @@ Vale a pena registrá-las, porque todas eram plausíveis e custaram experimento:
 
 - **Não implementar o bloco do Paybox nas notas da F&F.** Seria carimbar numa
   folha que, para essa classe de documento, não é lida.
-- **O carimbo do código continua útil** (ex: `10048 ALVORADA - E-Social`) —
-  esse serve para a identificação humana, não para o Paybox.
+- **O carimbo do código + tipo de serviço CONTINUA, e não tem nada a ver com
+  o Paybox** (ex: `10049 PIRATININGA - E-Social`). Ele existe porque **a nota
+  da F&F não diz a que serviço se refere** — eSocial, PCMSO, PGR, exame e
+  treinamento saem com a mesma descrição —, e é o síndico, no condomínio, que
+  precisa saber o que está pagando ao olhar o papel. É por isso que a
+  predefinição da F&F tem o tipo de serviço editável por lote. Quem for
+  desligar o carimbo por causa do Paybox está mexendo na coisa errada: são
+  dois propósitos independentes que por acaso moram no mesmo lugar.
 - **Não esconder nem remover o QR Code** para forçar a classificação `outro`.
   Funcionaria pelo mesmo mecanismo dos Correios, mas seria degradar de
   propósito a verificabilidade de um documento fiscal para enganar um
