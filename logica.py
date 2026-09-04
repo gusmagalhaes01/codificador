@@ -721,6 +721,15 @@ LIMITE_RUIDO_ANTES_DO_MARCADOR = 40
 JANELA_CODIGO_PROTOCOLO = LIMITE_RUIDO_ANTES_DO_MARCADOR + 12
 RE_MARCADOR_PROTOCOLO = re.compile(
     re.escape(MARCADOR_PROTOCOLO_CORREIO), re.IGNORECASE)
+
+#  --- Protocolo do sistema antigo da Imodata ("telnet") ---
+#  Cabeçalho: "*** IMODATA * PROTOCOLO CORRESPONDENCIA CORREIO NORMAL".
+#  O OCR estraga bastante coisa nessa linha (sai "IMODÀTÀ", sai um "c"
+#  solto no meio), mas essas duas palavras juntas não falharam em nenhuma
+#  das 21 leituras medidas. O acento de CORRESPONDÊNCIA é opcional porque
+#  ora o OCR o come, ora não.
+RE_MARCADOR_TELNET = re.compile(r"PROTOCOLO\s+CORRESPOND[EÊ]NCIA", re.IGNORECASE)
+
 RE_CODIGO_ENTRE_PARENTESES = re.compile(r"\((\d+)\)")
 
 
@@ -758,6 +767,32 @@ def extrair_codigo_protocolo_correio(texto):
     codigos = RE_CODIGO_ENTRE_PARENTESES.findall(
         texto[inicio:marcador.start()])
     return codigos[-1] if codigos else None
+
+
+def formato_do_protocolo(texto):
+    """
+    Qual dos dois formatos de protocolo dos Correios é este documento:
+    "telnet" (sistema antigo da Imodata), "novo" (o do Superlógica, que a
+    aba 3 já lê) ou None.
+
+    Os dois chegam MISTURADOS na mesma pasta, então a decisão é tomada
+    arquivo a arquivo.
+
+    Com os dois marcadores presentes devolve None de propósito. É o pior
+    caso possível: aplicar a extração errada produziria um resultado
+    plausível pelo motivo errado, e não há nada visivelmente estranho para
+    a conferência humana pegar na tela. Ambíguo tem que virar pendente.
+    """
+    texto = texto or ""
+    e_telnet = bool(RE_MARCADOR_TELNET.search(texto))
+    e_novo = bool(RE_MARCADOR_PROTOCOLO.search(texto))
+    if e_telnet and e_novo:
+        return None
+    if e_telnet:
+        return "telnet"
+    if e_novo:
+        return "novo"
+    return None
 
 
 #  Fornecedor das postagens, carimbado no bloco que o Paybox lê. Fixo no
