@@ -67,6 +67,38 @@ class TestFormatoDoProtocolo(unittest.TestCase):
         self.assertIsNone(app.formato_do_protocolo(TELNET_OK + " " + PROTOCOLO_NOVO))
 
 
+class TestClassificarFormatoProtocolo(unittest.TestCase):
+    """
+    `classificar_formato_protocolo` é a versão que NÃO funde "nenhum
+    marcador" com "os dois juntos" — a interface precisa dessa distinção
+    para tratar o ambíguo como pendente com observação própria, em vez de
+    deixá-lo cair no caminho do protocolo novo (achado I1 da revisão).
+    """
+
+    def test_telnet(self):
+        self.assertEqual(app.classificar_formato_protocolo(TELNET_OK), "telnet")
+
+    def test_novo(self):
+        self.assertEqual(app.classificar_formato_protocolo(PROTOCOLO_NOVO), "novo")
+
+    def test_nenhum_marcador_e_none_nao_ambiguo(self):
+        self.assertIsNone(app.classificar_formato_protocolo(MEUS_CORREIOS))
+        self.assertIsNone(app.classificar_formato_protocolo(""))
+        self.assertIsNone(app.classificar_formato_protocolo(None))
+
+    def test_os_dois_marcadores_juntos_sao_ambiguo_nao_none(self):
+        #  É exatamente esta distinção que `formato_do_protocolo` esconde.
+        self.assertEqual(
+            app.classificar_formato_protocolo(TELNET_OK + " " + PROTOCOLO_NOVO),
+            "ambiguo")
+
+    def test_consistente_com_formato_do_protocolo_nos_casos_nao_ambiguos(self):
+        for texto in (TELNET_OK, PROTOCOLO_NOVO, MEUS_CORREIOS, "", None):
+            resultado_detalhado = app.classificar_formato_protocolo(texto)
+            esperado = None if resultado_detalhado == "ambiguo" else resultado_detalhado
+            self.assertEqual(app.formato_do_protocolo(texto), esperado)
+
+
 class TestExtracaoDeUmaLeitura(unittest.TestCase):
     def test_codigo_sai_pelo_formato_mesmo_com_o_rotulo_corrompido(self):
         #  "D ÀS" é o que o OCR devolveu no lugar de "COD." num arquivo
@@ -228,6 +260,29 @@ class TestAceiteTelnet(unittest.TestCase):
         aceito, observacao = app.conferir_contagem_telnet(dados)
         self.assertFalse(aceito)
         self.assertIn("Código", observacao)
+
+    def test_mensagem_de_codigo_ausente_e_neutra_e_nao_contradiz_a_planilha(self):
+        #  M1 da revisão: a frase antiga ("não encontrado no cadastro")
+        #  afirmava uma causa específica (código lido, mas fora do
+        #  cadastro) que não é a única que cai neste `if` — sem código
+        #  algum lido e empate entre dois códigos caem aqui também, e
+        #  `linha_planilha_protocolo` acrescenta a PRÓPRIA "Código não
+        #  identificado no documento" logo depois. As duas juntas não podem
+        #  se contradizer na mesma célula.
+        dados = {"codigo": None, "total_impresso": 3, "nome_confere": False}
+        _, observacao = app.conferir_contagem_telnet(dados)
+        self.assertNotIn("cadastro", observacao.lower())
+        #  `dados` com `codigo=None` (não `None` puro) é o que
+        #  `apurar_protocolo_telnet` de fato devolve nos três casos que
+        #  caem neste `if` — é esse dict que segue até
+        #  `linha_planilha_protocolo`, que então acrescenta a própria
+        #  observação de código ausente.
+        linha = app.linha_planilha_protocolo(
+            "arquivo.pdf", {"codigo": None, "condominio": ""}, CADASTRO,
+            tarifa=None, unidades=None, observacao=observacao)
+        observacao_final = linha[-1]
+        self.assertNotIn("encontrado no cadastro", observacao_final)
+        self.assertIn("Código não identificado no documento", observacao_final)
 
     def test_dados_none_nao_estoura(self):
         aceito, observacao = app.conferir_contagem_telnet(None)

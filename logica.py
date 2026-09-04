@@ -737,6 +737,13 @@ RE_MARCADOR_TELNET = re.compile(r"PROTOCOLO\s+CORRESPOND[EÊ]NCIA", re.IGNORECAS
 #  7 de 7. Todos os 772 códigos do cadastro têm 5 dígitos e começam em 1
 #  (faixa 10002-11242), então "1.DDDD" é distintivo sozinho. O que vier
 #  depois (".8)", ".7)") é descartado, por instrução do usuário.
+#  O "\b" INICIAL é LOAD-BEARING, não decoração nem redundante com o final:
+#  sem ele, o "1" do padrão pode casar no MEIO de uma sequência de dígitos
+#  mais longa, como o número de controle do lote impresso na mesma folha
+#  ("CTR: PB608111.121") — é ele que exige que o "1" comece uma sequência
+#  nova, não seja um dígito qualquer dentro de outra. Quem "simplificar"
+#  este regex removendo o "\b" inicial por achar que o final já basta quebra
+#  a extração do código em silêncio. Ver "I4" em CLAUDE.md, seção do telnet.
 RE_CODIGO_TELNET = re.compile(r"\b(1)\s*[.,]\s*(\d{4})\b")
 
 #  Âncora em "PELO CORREIO", NUNCA em "ENVIADO" — o OCR devolve "EWIADO" e
@@ -794,6 +801,30 @@ def extrair_codigo_protocolo_correio(texto):
     return codigos[-1] if codigos else None
 
 
+def classificar_formato_protocolo(texto):
+    """
+    Como `formato_do_protocolo`, mas SEM fundir "nenhum marcador achado" e
+    "os dois marcadores juntos" no mesmo `None` — devolve "telnet", "novo",
+    "ambiguo" ou None (nenhum dos dois marcadores).
+
+    Existe porque quem chama (a aba 3) precisa tratar o ambíguo como
+    pendente com observação própria, e não simplesmente "não decidiu,
+    segue tentando" — as duas coisas eram indistinguíveis quando só
+    `formato_do_protocolo` existia, e isso deixava o ambíguo escorregar
+    pelo caminho do protocolo novo (ver I1 na revisão da branch telnet).
+    """
+    texto = texto or ""
+    e_telnet = bool(RE_MARCADOR_TELNET.search(texto))
+    e_novo = bool(RE_MARCADOR_PROTOCOLO.search(texto))
+    if e_telnet and e_novo:
+        return "ambiguo"
+    if e_telnet:
+        return "telnet"
+    if e_novo:
+        return "novo"
+    return None
+
+
 def formato_do_protocolo(texto):
     """
     Qual dos dois formatos de protocolo dos Correios é este documento:
@@ -807,17 +838,14 @@ def formato_do_protocolo(texto):
     caso possível: aplicar a extração errada produziria um resultado
     plausível pelo motivo errado, e não há nada visivelmente estranho para
     a conferência humana pegar na tela. Ambíguo tem que virar pendente.
+
+    Wrapper fino sobre `classificar_formato_protocolo`, mantido com este
+    contrato (ambíguo funde com "nenhum marcador" em None) porque é o que
+    os testes e o restante do código já esperam dele. Quem precisa
+    distinguir os dois usa `classificar_formato_protocolo` diretamente.
     """
-    texto = texto or ""
-    e_telnet = bool(RE_MARCADOR_TELNET.search(texto))
-    e_novo = bool(RE_MARCADOR_PROTOCOLO.search(texto))
-    if e_telnet and e_novo:
-        return None
-    if e_telnet:
-        return "telnet"
-    if e_novo:
-        return "novo"
-    return None
+    resultado = classificar_formato_protocolo(texto)
+    return None if resultado == "ambiguo" else resultado
 
 
 def extrair_dados_protocolo_telnet(texto):
@@ -954,7 +982,16 @@ def conferir_contagem_telnet(dados):
     """
     dados = dados or {}
     if not dados.get("codigo"):
-        return False, "Código do condomínio não encontrado no cadastro"
+        #  Frase deliberadamente neutra: este `if` cobre três causas bem
+        #  diferentes que `apurar_protocolo_telnet` já funde no mesmo
+        #  `codigo=None` — nenhum código lido, código lido mas fora do
+        #  cadastro, e empate entre dois códigos (ver `_mais_votado`). Uma
+        #  frase que afirme qualquer uma delas especificamente (ex.: "não
+        #  encontrado no cadastro") contradiz `linha_planilha_protocolo`
+        #  quando a causa real é outra — ela acrescenta a própria "Código
+        #  não identificado no documento" logo em seguida, e as duas juntas
+        #  não podem se contradizer na mesma célula da planilha.
+        return False, "Código do condomínio não confirmado no protocolo"
     if dados.get("total_impresso") is None:
         return False, 'Não foi possível ler o total ("TOTAL ENVIADO PELO CORREIO")'
     if not dados.get("nome_confere"):

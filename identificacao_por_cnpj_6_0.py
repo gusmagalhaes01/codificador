@@ -75,7 +75,7 @@ from logica import (
     criar_overlay, processar_pdf, carregar_cadastro, salvar_cadastro,
     extrair_dados_nfse, linha_planilha_nfse, salvar_planilha_nfse,
     extrair_dados_protocolo_correio, conferir_contagem_protocolo,
-    formato_do_protocolo, apurar_protocolo_telnet, conferir_contagem_telnet,
+    classificar_formato_protocolo, apurar_protocolo_telnet, conferir_contagem_telnet,
     valor_protocolo, formatar_reais,
     converter_valor_digitado,
     linha_planilha_protocolo, salvar_planilha_protocolo,
@@ -2892,57 +2892,80 @@ class App(ctk.CTk):
         ((0, 0, 1, 0.32), 500),   # topo, mais perto
     )
 
-    def _leituras_telnet(self, caminho, texto_inicial):
+    def _leituras_telnet(self, caminho, texto_inicial, leitura_topo_400=None):
         """
         As três leituras de OCR de um telnet, para a votação.
 
-        `texto_inicial` é a leitura que o laço já fez (e que serviu para
-        classificar o formato); ela entra como a primeira, para não pagar
-        OCR duas vezes pelo mesmo recorte.
+        `texto_inicial` é a leitura de página inteira que o laço já fez (e
+        que serviu para classificar o formato); ela entra como a primeira.
+        `leitura_topo_400` é o recorte topo@400 que
+        `_classificar_arquivo_protocolo` já pode ter lido, quando a
+        primeira leitura foi indecisa e precisou da segunda chance — nesse
+        caso ele entra pronto aqui, e o OCR daquele recorte NÃO é pago de
+        novo. Quando `leitura_topo_400` vem None (a primeira leitura já
+        decidiu "telnet" sozinha, sem segunda chance), esta função é que
+        faz essa leitura pela primeira vez.
 
         Falha de uma configuração não derruba as outras: a votação
         trabalha com o que conseguir. É por isso que cada leitura tem seu
         próprio try.
         """
         leituras = [texto_inicial] if texto_inicial else []
-        for regiao, dpi in self.LEITURAS_TELNET[1:]:
+
+        if leitura_topo_400:
+            leituras.append(leitura_topo_400)
+        else:
+            regiao, dpi = self.LEITURAS_TELNET[1]
             try:
-                if regiao is None:
-                    leituras.append(extrair_texto_escaneado(caminho, dpi=dpi))
-                else:
-                    leituras.append(extrair_texto_ocr_regiao(caminho, regiao, dpi=dpi))
+                leituras.append(extrair_texto_ocr_regiao(caminho, regiao, dpi=dpi))
             except Exception:
-                #  Uma configuração que falhou não tem o que contribuir;
-                #  as outras seguem. Nenhuma leitura é o caso tratado em
-                #  apurar_protocolo_telnet, que devolve None.
                 pass
+
+        regiao, dpi = self.LEITURAS_TELNET[2]
+        try:
+            leituras.append(extrair_texto_ocr_regiao(caminho, regiao, dpi=dpi))
+        except Exception:
+            #  Uma configuração que falhou não tem o que contribuir;
+            #  as outras seguem. Nenhuma leitura é o caso tratado em
+            #  apurar_protocolo_telnet, que devolve None.
+            pass
         return leituras
 
-    def _e_telnet(self, caminho, texto):
+    def _classificar_arquivo_protocolo(self, caminho, texto):
         """
-        Se este arquivo é um protocolo do sistema antigo.
+        Qual dos formatos de protocolo dos Correios este arquivo é:
+        "telnet", "novo", "ambiguo" (os dois marcadores no mesmo texto —
+        ver `classificar_formato_protocolo` em logica.py) ou None (nenhum
+        marcador, nem na segunda chance).
 
-        Dá uma SEGUNDA CHANCE no recorte do topo quando a primeira leitura
-        não decide. Isso foi medido: o cabeçalho de um dos sete arquivos de
-        referência não sai na leitura de página inteira a 300 DPI, mas sai
-        no recorte a 400. Sem a segunda chance ele cairia no caminho do
-        protocolo novo e viraria pendente.
+        Devolve também a leitura extra (`str` ou None): o recorte topo@400
+        já lido aqui quando a primeira leitura foi indecisa, para
+        `_leituras_telnet` reaproveitar em vez de pagar o MESMO OCR duas
+        vezes (achado M2 da revisão — antes o docstring de
+        `_leituras_telnet` prometia isso e o código fazia o oposto).
 
-        A segunda leitura só acontece quando a primeira devolve None — se
-        ela já disse "novo" com confiança, não há por que pagar outro OCR.
+        Dá essa segunda chance só quando a primeira leitura não achou
+        NENHUM marcador (`classificar_formato_protocolo` devolve None):
+        medido, o cabeçalho de um dos sete arquivos de referência não sai
+        na leitura de página inteira a 300 DPI, mas sai no recorte a 400.
+        "telnet", "novo" e "ambiguo" já são decisões com confiança na
+        primeira leitura — não há por que pagar OCR extra por elas, e é
+        isso que evita cobrar um OCR a mais de todo arquivo que não é
+        protocolo nenhum (a maioria de um lote misto).
         """
-        formato = formato_do_protocolo(texto)
+        formato = classificar_formato_protocolo(texto)
         if formato is not None:
-            return formato == "telnet"
+            return formato, None
         try:
             regiao, dpi = self.LEITURAS_TELNET[1]
-            return formato_do_protocolo(
-                extrair_texto_ocr_regiao(caminho, regiao, dpi=dpi)) == "telnet"
+            texto_extra = extrair_texto_ocr_regiao(caminho, regiao, dpi=dpi)
         except Exception:
-            #  Não deu para decidir: segue pelo caminho do protocolo novo,
-            #  que tem a própria re-tentativa e a própria mensagem de
-            #  "não foi possível ler".
-            return False
+            #  Não deu para decidir nem na segunda leitura: fica None, que
+            #  o laço trata como "segue pelo caminho do protocolo novo",
+            #  que tem a própria re-tentativa e a própria mensagem de "não
+            #  foi possível ler".
+            return None, None
+        return classificar_formato_protocolo(texto_extra), texto_extra
 
     def _processar_protocolos_em_thread(self, pasta, pasta_saida, destino, tarifa,
                                          vencimento, chave):
@@ -2984,7 +3007,9 @@ class App(ctk.CTk):
                 dpi = QUALIDADE_LEITURA_PROTOCOLO
                 texto, usou_leitor_escaneado = self._ler_texto_protocolo(caminho, dpi)
 
-                if self._e_telnet(caminho, texto):
+                formato, leitura_extra = self._classificar_arquivo_protocolo(caminho, texto)
+
+                if formato == "telnet":
                     #  O telnet tem caminho próprio: precisa de três
                     #  leituras e votação, porque nenhuma configuração de
                     #  OCR sozinha lê os sete arquivos de referência — e foi
@@ -2994,10 +3019,23 @@ class App(ctk.CTk):
                     #  `observacao`), e o dict tem `codigo` e `condominio`,
                     #  que é tudo que o carimbo e a planilha consultam.
                     dados = apurar_protocolo_telnet(
-                        self._leituras_telnet(caminho, texto), self.cadastro)
+                        self._leituras_telnet(caminho, texto, leitura_extra),
+                        self.cadastro)
                     aceito, observacao = conferir_contagem_telnet(dados)
                     if aceito:
                         unidades = dados["total_impresso"]
+                elif formato == "ambiguo":
+                    #  I1 da revisão: os dois marcadores no mesmo texto.
+                    #  `classificar_formato_protocolo` já recusa decidir de
+                    #  propósito — aplicar a extração de qualquer um dos
+                    #  dois formatos produziria um resultado plausível pelo
+                    #  motivo errado, sem nada visivelmente estranho para a
+                    #  conferência humana notar na tela. `dados` continua
+                    #  None e `unidades` continua None, então a linha cai
+                    #  no bucket de pendência normal, com a observação
+                    #  dizendo por quê.
+                    observacao = ("Documento ambíguo: parece dois protocolos "
+                                   "no mesmo arquivo")
                 else:
                     dados = extrair_dados_protocolo_correio(texto)
 
