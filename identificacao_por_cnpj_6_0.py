@@ -3579,17 +3579,38 @@ class App(ctk.CTk):
         for chave, largura, ancora in zip(colunas, larguras, ancoras):
             tabela.heading(chave, text=chave)
             tabela.column(chave, width=largura, anchor=ancora)
-        tabela.pack(side="left", fill="both", expand=True)
 
-        scroll = ttk.Scrollbar(frame, orient="vertical", command=tabela.yview)
-        tabela.configure(yscrollcommand=scroll.set)
-        scroll.pack(side="left", fill="y")
+        #  Grid, não pack: a barra HORIZONTAL entra numa linha própria
+        #  embaixo da tabela, e a vertical numa coluna própria à direita —
+        #  `pack(side="left"/"y")` não tem como acomodar as duas ao mesmo
+        #  tempo. Achado I3 da revisão: as 7 colunas somam ~835px e o
+        #  painel da grade (divisor em 3:2 de uma janela de 1180px) fica
+        #  com ~655px — o Treeview não encolhe coluna, então ~180px
+        #  ficavam fora da tela, e é exatamente ali (a coluna Observação)
+        #  que mora a marcação de "Nome não confirmado" do telnet e
+        #  qualquer outra observação de um calculado.
+        frame.rowconfigure(0, weight=1)
+        frame.columnconfigure(0, weight=1)
+        tabela.grid(row=0, column=0, sticky="nsew")
+
+        scroll_v = ttk.Scrollbar(frame, orient="vertical", command=tabela.yview)
+        scroll_v.grid(row=0, column=1, sticky="ns")
+        scroll_h = ttk.Scrollbar(frame, orient="horizontal", command=tabela.xview)
+        scroll_h.grid(row=1, column=0, sticky="ew")
+        tabela.configure(yscrollcommand=scroll_v.set, xscrollcommand=scroll_h.set)
 
         #  Estado da linha por cor — o que antes eram três tabelas. Cobalto
         #  para o que precisa de ação, tom apagado para o ignorado (não é
-        #  protocolo, não vira cobrança).
+        #  protocolo, não vira cobrança). "atencao" (calculado com
+        #  observação, ex.: "Nome não confirmado" do telnet) usa uma cor
+        #  PRÓPRIA, nunca o cobalto de "acento": cobalto é reservado ao que
+        #  RESOLVE uma pendência (ver "Regra de ouro do cobalto" no
+        #  CLAUDE.md), e uma linha em "atencao" já tem valor — não há nada
+        #  aqui para o usuário resolver, só conferir.
         tabela.tag_configure("pendente", background=tema["superficie"],
                              foreground=tema["acento"])
+        tabela.tag_configure("atencao", background=tema["superficie"],
+                             foreground=tema["texto_secundario"])
         tabela.tag_configure("ignorado", foreground=tema["texto_terciario"])
 
         tabela.bind("<<TreeviewSelect>>", self._ao_selecionar_linha_protocolo)
@@ -3858,8 +3879,35 @@ class App(ctk.CTk):
             texto = f"DOCUMENTO — {total} PÁGINAS"
         label.configure(text=texto)
 
+    def _tem_atencao_protocolo(self, registro):
+        """
+        Se um registro CALCULADO (já tem valor) ainda carrega uma
+        observação — ex.: "Nome não confirmado" do telnet (ver
+        `conferir_contagem_telnet`), ou "Erro ao carimbar: ..." de
+        qualquer um dos dois formatos.
+
+        Achado I3 da revisão: antes desses três consertos, uma linha nesse
+        estado tinha exatamente a MESMA cor que uma linha limpa — a única
+        pista de que algo precisava de uma segunda olhada era o texto na
+        coluna Observação, que também ficava fora da tela (grade sem
+        rolagem horizontal) e fora do filtro "Pendentes". O desenho do
+        telnet (preencher e marcar, não barrar — ver o spec) só sustenta
+        na prática se a marcação for vista; sem os três consertos juntos,
+        ela nunca era.
+        """
+        return bool((registro or {}).get("motivo"))
+
     def _estado_da_linha_protocolo(self, indice):
-        """Devolve "pendente", "calculado" ou "ignorado" para a linha `indice`."""
+        """Devolve "pendente", "atencao", "calculado" ou "ignorado" para a
+        linha `indice`.
+
+        "atencao" é um CALCULADO com observação (ver
+        `_tem_atencao_protocolo`) — tem valor, mas o programa ficou em
+        dúvida em algum ponto. Cor própria na grade (`_montar_grade_
+        protocolos`), nunca cobalto: cobalto é reservado ao que RESOLVE
+        uma pendência, e aqui não há nada para o usuário resolver — só
+        conferir.
+        """
         resultado = self._resultado_protocolos or {}
         for chave, estado in (("pendentes", "pendente"),
                               ("ignorados", "ignorado"),
@@ -3870,6 +3918,8 @@ class App(ctk.CTk):
                     #  pendente, mesma regra de _listas_do_painel_protocolos.
                     if estado == "calculado" and self._falta_id_sl(registro):
                         return "pendente"
+                    if estado == "calculado" and self._tem_atencao_protocolo(registro):
+                        return "atencao"
                     return estado
         return "calculado"
 
@@ -3902,7 +3952,13 @@ class App(ctk.CTk):
 
         for indice, linha in enumerate(linhas):
             estado = self._estado_da_linha_protocolo(indice)
-            if filtro == "Pendentes" and estado != "pendente":
+            #  "atencao" entra no filtro "Pendentes", não num 5º botão: é o
+            #  mesmo gesto que já existia para processado-sem-ID-SL em
+            #  _listas_do_painel_protocolos ("aparece junto dos pendentes
+            #  para que tudo que exige atenção fique num lugar só") — um
+            #  botão a mais fragmentaria esse único gesto de "o que precisa
+            #  de mim" em dois lugares diferentes para conferir.
+            if filtro == "Pendentes" and estado not in ("pendente", "atencao"):
                 continue
             if filtro == "Calculados" and estado != "calculado":
                 continue
@@ -4220,11 +4276,21 @@ class App(ctk.CTk):
         separação é de EXIBIÇÃO: no `resultado` ele continua em `processados`,
         porque `lancamentos_de_despesa` precisa distinguir "sem valor" de "sem
         condomínio" para dizer onde cada um se resolve.
+
+        Pelo mesmo motivo, um processado com observação (estado "atencao"
+        em `_estado_da_linha_protocolo` — ex.: telnet com "Nome não
+        confirmado") também soma no cartão PENDENTES, e não no de
+        PROTOCOLOS: o cartão é "quanto ainda precisa de mim olhando",
+        não só "quanto falta preencher". A distinção visual entre um
+        pendente de verdade e um calculado-com-dúvida continua existindo
+        — na cor da linha na grade, não na contagem do cartão.
         """
         processados = resultado.get("processados", []) or []
         pendentes = list(resultado.get("pendentes", []) or [])
-        pendentes += [p for p in processados if self._falta_id_sl(p)]
-        processados = [p for p in processados if not self._falta_id_sl(p)]
+        pendentes += [p for p in processados
+                      if self._falta_id_sl(p) or self._tem_atencao_protocolo(p)]
+        processados = [p for p in processados
+                       if not self._falta_id_sl(p) and not self._tem_atencao_protocolo(p)]
         return processados, pendentes, resultado.get("total_valor", Decimal("0.00"))
 
     def _atualizar_painel_protocolos(self):
