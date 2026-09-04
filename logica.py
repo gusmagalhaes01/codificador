@@ -9,6 +9,7 @@ que importa deste módulo.
 """
 
 import asyncio
+import collections
 import copy
 import datetime
 import io
@@ -746,6 +747,16 @@ RE_TOTAL_TELNET = re.compile(r"PELO\s+CORREIO\D{0,6}(\d{1,4})\b", re.IGNORECASE)
 
 RE_CODIGO_ENTRE_PARENTESES = re.compile(r"\((\d+)\)")
 
+#  Score mínimo para o nome impresso confirmar o código. Não é delicado:
+#  nos 7 arquivos medidos os confirmados deram 1.00 e o único não
+#  confirmado deu 0.79 — qualquer corte entre 0.80 e 0.99 daria o mesmo.
+LIMIAR_NOME_TELNET = 0.90
+
+#  O total só é aceito com pelo menos duas leituras concordando: é o número
+#  que vira dinheiro cobrado. O código se contenta com uma (ver
+#  apurar_protocolo_telnet).
+VOTOS_MINIMOS_TOTAL_TELNET = 2
+
 
 def extrair_codigo_protocolo_correio(texto):
     """
@@ -826,6 +837,129 @@ def extrair_dados_protocolo_telnet(texto):
         "codigos": codigos,
         "total": int(achado.group(1)) if achado else None,
     }
+
+
+def _mais_votado(valores, minimo=1):
+    """
+    Valor mais frequente da lista, ou None.
+
+    Devolve None em três casos: lista vazia, o mais votado não alcança
+    `minimo` votos, ou EMPATE no topo. O empate é o que mais importa —
+    escolher por ordem de chegada seria arbitrário, e aqui o número vira
+    dinheiro cobrado ou condomínio carimbado.
+    """
+    if not valores:
+        return None
+    contagem = collections.Counter(valores).most_common()
+    valor, votos = contagem[0]
+    if votos < minimo:
+        return None
+    if len(contagem) > 1 and contagem[1][1] == votos:
+        return None
+    return valor
+
+
+def _melhor_score_do_nome(texto_normalizado, nome_normalizado):
+    """
+    Maior similaridade do nome em qualquer posição do texto.
+
+    Varre o texto inteiro em vez de procurar depois do rótulo "EDF:" porque
+    o winocr devolve a página numa linha só e com as colunas fora de ordem:
+    o rótulo e o valor não ficam adjacentes (sai "EDF : REF; AP-104 TOTAL
+    CHATEAU FONTAINEBLEA"). Ancorado no rótulo, o nome saía em 1 dos 7
+    arquivos de referência; varrendo, em 6 de 7 com score 1.00.
+
+    Compara só contra UM nome — o do código já eleito —, então o custo é de
+    algumas centenas de comparações, não das 772 do cadastro inteiro.
+    """
+    if not texto_normalizado or not nome_normalizado:
+        return 0.0
+    janela = len(nome_normalizado)
+    melhor = 0.0
+    for inicio in range(0, max(1, len(texto_normalizado) - janela + 1)):
+        score = SequenceMatcher(
+            None, nome_normalizado,
+            texto_normalizado[inicio:inicio + janela]).ratio()
+        if score > melhor:
+            melhor = score
+    return melhor
+
+
+def apurar_protocolo_telnet(leituras, cadastro):
+    """
+    Cruza várias leituras de OCR do MESMO telnet e devolve o que a aba 3
+    consome. `None` quando não há leitura nenhuma.
+
+    O dict tem `codigo` e `condominio` porque é só isso que
+    `linha_planilha_protocolo` e `_carimbar_protocolo` consultam — assim
+    nada a jusante (carimbo, planilha, painel, bloco do Paybox) precisa
+    saber que existe um segundo formato.
+
+    A votação existe por um caso concreto: um arquivo cujas leituras deram
+    38, 3 e 3. Sem votar, "R$ 146,30" chegaria à tela num condomínio de
+    três unidades — o tipo de número que passa despercebido num lote de 100.
+    """
+    leituras = [t for t in (leituras or []) if t]
+    if not leituras:
+        return None
+
+    #  Índice montado UMA vez, fora do laço: são 772 condomínios.
+    codigos_validos = _codigos_do_cadastro(cadastro or {})
+
+    codigos, totais = [], []
+    for texto in leituras:
+        parcial = extrair_dados_protocolo_telnet(texto)
+        codigos.extend(c for c in parcial["codigos"] if c in codigos_validos)
+        if parcial["total"] is not None:
+            totais.append(parcial["total"])
+
+    #  O código se contenta com um voto: ele não vira valor sozinho, ainda
+    #  passa pela conferência do nome. O total exige dois.
+    codigo = _mais_votado(codigos)
+    total = _mais_votado(totais, minimo=VOTOS_MINIMOS_TOTAL_TELNET)
+
+    nome, confere = "", False
+    if codigo:
+        documento = codigos_validos.get(codigo)
+        registro = (cadastro or {}).get(documento) or {}
+        nome = registro.get("nome") or ""
+        confere = _melhor_score_do_nome(
+            normalizar_texto_busca(" ".join(leituras)),
+            normalizar_texto_busca(nome)) >= LIMIAR_NOME_TELNET
+
+    return {
+        "formato": "telnet",
+        "codigo": codigo,
+        "condominio": nome,
+        "total_impresso": total,
+        "nome_confere": confere,
+    }
+
+
+def conferir_contagem_telnet(dados):
+    """
+    Decide se a linha do telnet nasce preenchida. Devolve
+    (aceito, observacao).
+
+    Deliberadamente mais frouxo que `conferir_contagem_protocolo`: aqui o
+    usuário confere imagem por imagem, então o desenho é PREENCHER e MARCAR
+    a dúvida, não barrar. Uma versão anterior barrava a linha sem
+    confirmação de nome e mandava para pendente um arquivo cujo código e
+    total estavam ambos corretos.
+
+    A marcação continua valendo porque numa pilha de 100 todo mundo olha
+    com mais atenção o que está sinalizado: ela diz ONDE o programa ficou
+    em dúvida, em vez de esconder a dúvida atrás de um valor com cara de
+    certo.
+    """
+    dados = dados or {}
+    if not dados.get("codigo"):
+        return False, "Código do condomínio não encontrado no cadastro"
+    if dados.get("total_impresso") is None:
+        return False, 'Não foi possível ler o total ("TOTAL ENVIADO PELO CORREIO")'
+    if not dados.get("nome_confere"):
+        return True, "Nome não confirmado"
+    return True, ""
 
 
 #  Fornecedor das postagens, carimbado no bloco que o Paybox lê. Fixo no

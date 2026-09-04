@@ -111,5 +111,129 @@ class TestExtracaoDeUmaLeitura(unittest.TestCase):
         self.assertIsNone(dados["total"])
 
 
+from cadastro_teste import CADASTRO_TESTE as CADASTRO
+
+
+def _leitura(codigo_pontuado, total_texto, nome=""):
+    """Monta o texto de uma leitura de OCR do telnet."""
+    return (f"IMODÀTÀ * PROTOCOLO CORRESPONDENCIA CORREIO NORMAL EDF: {nome} "
+            f"AP-101 AP-102 TOTAL EWIADO PELO CORREIO {total_texto} o COD.. "
+            f"D ÀS {codigo_pontuado})")
+
+
+class TestVotacao(unittest.TestCase):
+    def test_maioria_corrige_a_leitura_ruim(self):
+        #  Caso real do arquivo 011: as três leituras deram 38, 3 e 3. Sem
+        #  votar, "R$ 146,30" chegaria à tela num condomínio de três
+        #  unidades. Este é o teste que justifica a votação existir.
+        leituras = [_leitura("1.0004.8", "38", "KLOSTERS"),
+                    _leitura("1.0004.8", "3", "KLOSTERS"),
+                    _leitura("1.0004.8", "3", "KLOSTERS")]
+        dados = app.apurar_protocolo_telnet(leituras, CADASTRO)
+        self.assertEqual(dados["total_impresso"], 3)
+        self.assertEqual(dados["codigo"], "10004")
+
+    def test_total_com_uma_leitura_so_nao_basta(self):
+        #  O total vira dinheiro; uma leitura solitária não sustenta isso.
+        leituras = [_leitura("1.0004.8", "7", "KLOSTERS"),
+                    _leitura("1.0004.8", "", "KLOSTERS"),
+                    _leitura("1.0004.8", "", "KLOSTERS")]
+        dados = app.apurar_protocolo_telnet(leituras, CADASTRO)
+        self.assertIsNone(dados["total_impresso"])
+
+    def test_tres_totais_diferentes_nao_elegem_nenhum(self):
+        leituras = [_leitura("1.0004.8", "3", "KLOSTERS"),
+                    _leitura("1.0004.8", "5", "KLOSTERS"),
+                    _leitura("1.0004.8", "9", "KLOSTERS")]
+        dados = app.apurar_protocolo_telnet(leituras, CADASTRO)
+        self.assertIsNone(dados["total_impresso"])
+
+    def test_codigo_aceita_um_voto_so(self):
+        #  Ao contrário do total, o código não vira valor sozinho — ele
+        #  ainda passa pela conferência do nome, que marca a linha.
+        leituras = [_leitura("1.0004.8", "3", "KLOSTERS"),
+                    _leitura("", "3", "KLOSTERS"),
+                    _leitura("", "3", "KLOSTERS")]
+        dados = app.apurar_protocolo_telnet(leituras, CADASTRO)
+        self.assertEqual(dados["codigo"], "10004")
+
+    def test_empate_entre_codigos_nao_escolhe_nenhum(self):
+        #  Escolher por ordem de chegada seria arbitrário, e um dígito
+        #  errado tende a dar OUTRO condomínio real.
+        leituras = [_leitura("1.0004.8", "3", ""),
+                    _leitura("1.0002.8", "3", "")]
+        dados = app.apurar_protocolo_telnet(leituras, CADASTRO)
+        self.assertIsNone(dados["codigo"])
+
+    def test_codigo_fora_do_cadastro_e_descartado(self):
+        leituras = [_leitura("1.9999.8", "3", ""),
+                    _leitura("1.9999.8", "3", "")]
+        dados = app.apurar_protocolo_telnet(leituras, CADASTRO)
+        self.assertIsNone(dados["codigo"])
+
+    def test_sem_leitura_nenhuma_devolve_none(self):
+        self.assertIsNone(app.apurar_protocolo_telnet([], CADASTRO))
+        self.assertIsNone(app.apurar_protocolo_telnet(["", None], CADASTRO))
+
+
+class TestConferenciaDoNome(unittest.TestCase):
+    def test_nome_no_texto_confirma_o_codigo(self):
+        leituras = [_leitura("1.0004.8", "3", "KLOSTERS"),
+                    _leitura("1.0004.8", "3", "KLOSTERS")]
+        dados = app.apurar_protocolo_telnet(leituras, CADASTRO)
+        self.assertTrue(dados["nome_confere"])
+        self.assertEqual(dados["condominio"], "KLOSTERS")
+
+    def test_nome_ausente_nao_confirma(self):
+        leituras = [_leitura("1.0004.8", "3", ""),
+                    _leitura("1.0004.8", "3", "")]
+        dados = app.apurar_protocolo_telnet(leituras, CADASTRO)
+        self.assertFalse(dados["nome_confere"])
+
+    def test_nome_longe_do_rotulo_ainda_confirma(self):
+        #  O winocr devolve a página numa linha só com as colunas fora de
+        #  ordem: o "EDF:" e o valor não ficam adjacentes. Ancorado no
+        #  rótulo o nome saía em 1 de 7; varrendo o texto, em 6 de 7.
+        texto = ("IMODÀTÀ * PROTOCOLO CORRESPONDENCIA EDF : REF; AP-104 "
+                 "TOTAL KLOSTERS 07/2026 PELO CORREIO 3 o COD.. 1.0004.8)")
+        dados = app.apurar_protocolo_telnet([texto, texto], CADASTRO)
+        self.assertTrue(dados["nome_confere"])
+
+
+class TestAceiteTelnet(unittest.TestCase):
+    def test_tudo_concordando_aceita_sem_observacao(self):
+        dados = {"codigo": "10004", "total_impresso": 3, "nome_confere": True}
+        aceito, observacao = app.conferir_contagem_telnet(dados)
+        self.assertTrue(aceito)
+        self.assertEqual(observacao, "")
+
+    def test_nome_nao_confirmado_PREENCHE_e_marca(self):
+        #  Deliberadamente mais frouxo que o protocolo novo: o usuário
+        #  confere imagem por imagem. Uma versão anterior barrava aqui e
+        #  mandava para pendente um arquivo cujo código e total estavam
+        #  ambos corretos.
+        dados = {"codigo": "10004", "total_impresso": 3, "nome_confere": False}
+        aceito, observacao = app.conferir_contagem_telnet(dados)
+        self.assertTrue(aceito)
+        self.assertEqual(observacao, "Nome não confirmado")
+
+    def test_sem_total_nao_aceita(self):
+        dados = {"codigo": "10004", "total_impresso": None, "nome_confere": True}
+        aceito, observacao = app.conferir_contagem_telnet(dados)
+        self.assertFalse(aceito)
+        self.assertIn("TOTAL ENVIADO PELO CORREIO", observacao)
+
+    def test_sem_codigo_nao_aceita(self):
+        dados = {"codigo": None, "total_impresso": 3, "nome_confere": False}
+        aceito, observacao = app.conferir_contagem_telnet(dados)
+        self.assertFalse(aceito)
+        self.assertIn("Código", observacao)
+
+    def test_dados_none_nao_estoura(self):
+        aceito, observacao = app.conferir_contagem_telnet(None)
+        self.assertFalse(aceito)
+        self.assertTrue(observacao)
+
+
 if __name__ == "__main__":
     unittest.main()
