@@ -730,6 +730,20 @@ RE_MARCADOR_PROTOCOLO = re.compile(
 #  ora o OCR o come, ora não.
 RE_MARCADOR_TELNET = re.compile(r"PROTOCOLO\s+CORRESPOND[EÊ]NCIA", re.IGNORECASE)
 
+#  O código sai pelo FORMATO, não pelo rótulo "COD.": o OCR estraga o
+#  rótulo (leu "DAS", leu "D ÀS") muito mais do que os dígitos. Ancorado no
+#  rótulo o código saía em 4 dos 7 arquivos de referência; pelo formato, em
+#  7 de 7. Todos os 772 códigos do cadastro têm 5 dígitos e começam em 1
+#  (faixa 10002-11242), então "1.DDDD" é distintivo sozinho. O que vier
+#  depois (".8)", ".7)") é descartado, por instrução do usuário.
+RE_CODIGO_TELNET = re.compile(r"\b(1)\s*[.,]\s*(\d{4})\b")
+
+#  Âncora em "PELO CORREIO", NUNCA em "ENVIADO" — o OCR devolve "EWIADO" e
+#  "EFvTIADO". A folga até o número é de 6 não-dígitos, e isso é essencial:
+#  com folga de 20 o regex pulava o número certo e capturava um de outro
+#  canto da folha (leu 38 no lugar de 3 num condomínio de três unidades).
+RE_TOTAL_TELNET = re.compile(r"PELO\s+CORREIO\D{0,6}(\d{1,4})\b", re.IGNORECASE)
+
 RE_CODIGO_ENTRE_PARENTESES = re.compile(r"\((\d+)\)")
 
 
@@ -793,6 +807,25 @@ def formato_do_protocolo(texto):
     if e_novo:
         return "novo"
     return None
+
+
+def extrair_dados_protocolo_telnet(texto):
+    """
+    O que UMA leitura de OCR do telnet oferece: os códigos que casam com o
+    formato e o total impresso.
+
+    Devolve TODOS os códigos encontrados, sem escolher nem validar contra o
+    cadastro. Quem decide é `apurar_protocolo_telnet`, cruzando várias
+    leituras — uma leitura sozinha não decide nada aqui, porque nenhuma
+    configuração de OCR lê sozinha os sete arquivos de referência.
+    """
+    texto = texto or ""
+    codigos = [inicio + resto for inicio, resto in RE_CODIGO_TELNET.findall(texto)]
+    achado = RE_TOTAL_TELNET.search(texto)
+    return {
+        "codigos": codigos,
+        "total": int(achado.group(1)) if achado else None,
+    }
 
 
 #  Fornecedor das postagens, carimbado no bloco que o Paybox lê. Fixo no

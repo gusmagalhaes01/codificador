@@ -67,5 +67,49 @@ class TestFormatoDoProtocolo(unittest.TestCase):
         self.assertIsNone(app.formato_do_protocolo(TELNET_OK + " " + PROTOCOLO_NOVO))
 
 
+class TestExtracaoDeUmaLeitura(unittest.TestCase):
+    def test_codigo_sai_pelo_formato_mesmo_com_o_rotulo_corrompido(self):
+        #  "D ÀS" é o que o OCR devolveu no lugar de "COD." num arquivo
+        #  real. Ancorado no rótulo o código saía em 4 de 7; pelo formato,
+        #  em 7 de 7.
+        dados = app.extrair_dados_protocolo_telnet(TELNET_OK)
+        self.assertIn("10004", dados["codigos"])
+
+    def test_total_lido_com_ENVIADO_corrompido(self):
+        #  O OCR devolve "EWIADO" e "EFvTIADO"; "PELO CORREIO" nunca falhou.
+        dados = app.extrair_dados_protocolo_telnet(TELNET_OK)
+        self.assertEqual(dados["total"], 3)
+
+    def test_total_com_ENVIADO_escrito_de_outro_jeito(self):
+        texto = "TOTAL EFvTIADO PELO CORREIO 12 o COD. . 1.0004.7)"
+        self.assertEqual(app.extrair_dados_protocolo_telnet(texto)["total"], 12)
+
+    def test_folga_curta_nao_captura_numero_distante(self):
+        #  Caso real: com folga de 20 não-dígitos o regex pulava o número
+        #  certo e capturava outro do canto da folha -- leu 38 no lugar de
+        #  3, num condomínio de três unidades (R$ 146,30 em vez de R$ 11,55).
+        texto = "TOTAL ENVIADO PELO CORREIO VALOR VAL x R EURICO 38"
+        self.assertIsNone(app.extrair_dados_protocolo_telnet(texto)["total"])
+
+    def test_o_digito_depois_do_codigo_e_ignorado(self):
+        #  "1.1122.8)" -> o ".8)" não faz parte do código.
+        dados = app.extrair_dados_protocolo_telnet("COD.: 1.1122.8)")
+        self.assertEqual(dados["codigos"], ["11122"])
+
+    def test_virgula_no_lugar_do_ponto(self):
+        dados = app.extrair_dados_protocolo_telnet("COD.: 1,1122.8)")
+        self.assertEqual(dados["codigos"], ["11122"])
+
+    def test_sem_codigo_nem_total_devolve_vazio(self):
+        dados = app.extrair_dados_protocolo_telnet("texto qualquer sem nada")
+        self.assertEqual(dados["codigos"], [])
+        self.assertIsNone(dados["total"])
+
+    def test_texto_vazio_nao_estoura(self):
+        dados = app.extrair_dados_protocolo_telnet(None)
+        self.assertEqual(dados["codigos"], [])
+        self.assertIsNone(dados["total"])
+
+
 if __name__ == "__main__":
     unittest.main()
