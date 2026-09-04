@@ -798,6 +798,20 @@ marcadores presentes devolve `None` de propósito — aplicar a extração
 errada produz resultado plausível pelo motivo errado, e a conferência
 humana não tem o que estranhar na tela.
 
+**v6.19.1 — o ambíguo escapava da própria regra que o CLAUDE.md
+prometia.** A interface (`_e_telnet`) traduzia esse `None` sempre como
+"não é telnet", então um arquivo ambíguo caía no caminho do protocolo
+novo e a extração rodava normalmente — a promessa acima nunca se
+cumpria de fato. `classificar_formato_protocolo` (`logica.py`) é a
+versão que não funde "nenhum marcador" com "os dois juntos": devolve
+`"telnet"`, `"novo"`, `"ambiguo"` ou `None`. `formato_do_protocolo`
+continua existindo, agora como wrapper fino que funde `"ambiguo"` em
+`None` — mantido assim porque é o contrato que os testes e o resto do
+código já esperavam; quem precisa da distinção usa a nova função
+diretamente. Na aba 3, o ambíguo agora vira pendente com a observação
+"Documento ambíguo: parece dois protocolos no mesmo arquivo", sem passar
+pela extração de nenhum formato.
+
 **Três decisões de extração, todas contra a tentativa óbvia**, e cada uma
 medida nos 7 arquivos de referência:
 
@@ -833,7 +847,32 @@ nome impresso é cruzado com o do cadastro (limiar 0.90; os confirmados dão
 `conferir_contagem_telnet` **preenche e marca** em vez de barrar, porque o
 usuário confere imagem por imagem. Uma versão anterior barrava a linha sem
 confirmação de nome e mandava para pendente um arquivo cujo código e total
-estavam ambos corretos. Sem total legível ou sem código, aí sim é pendente.
+estavam ambos corretos. Sem total legível ou sem código, aí sim é pendente
+— com a frase **neutra** "Código do condomínio não confirmado no
+protocolo": esse `if` cobre três causas que `apurar_protocolo_telnet` já
+funde no mesmo `codigo=None` (nenhum código lido, código lido mas fora do
+cadastro, empate entre dois códigos), e uma frase que afirmasse uma causa
+específica contradizia a que `linha_planilha_protocolo` acrescenta logo
+depois ("Código não identificado no documento") sempre que a causa real
+fosse outra — as duas ficavam lado a lado na mesma célula da planilha se
+contradizendo (v6.19.1).
+
+**A marcação só é útil se aparecer, e isso exigiu três consertos juntos
+(v6.19.1):** uma linha calculada com observação (telnet sem nome
+confirmado, ou "Erro ao carimbar" de qualquer um dos dois formatos) tinha
+a MESMA cor que uma linha limpa (nenhuma tag), ficava fora do filtro
+"Pendentes" (o único gesto de "mostre o que precisa de mim"), e — mesmo
+que alguém clicasse na linha — a coluna Observação ficava fora da tela,
+porque a grade não tinha rolagem horizontal (7 colunas somam ~835px contra
+os ~655px do painel da grade numa janela de 1180px com o divisor em 3:2).
+Sozinho, nenhum dos três resolvia: cor sem filtro esconde a linha atrás de
+"Tudo"; filtro sem cor não diferencia "precisa decidir" de "só conferir";
+e os dois sem rolagem não mostram o *texto* da marca de qualquer forma.
+`_estado_da_linha_protocolo` ganhou o estado `"atencao"` (calculado com
+observação), com cor própria na grade — nunca o cobalto de `acento`, que é
+reservado ao que *resolve* uma pendência — e alcançável pelo filtro
+"Pendentes" (mesmo gesto que processado-sem-ID-SL já usava, em vez de um
+5º botão).
 
 **Nada a jusante mudou**: o dict tem `codigo` e `condominio`, que é tudo que
 `linha_planilha_protocolo` e `_carimbar_protocolo` consultam. Valor,
@@ -844,6 +883,51 @@ carimbo lateral, bloco do Paybox, planilhas e painel são os mesmos.
 SEDEX de valor fixo, cobrados por outro critério. Ele é o formato **fácil**
 — o OCR lê o código em 6/6 e o nome vem no mesmo campo, servindo de
 conferência. Quando for a vez dele, começar daí.
+
+**A segunda leitura (topo@400) que decide o formato é reaproveitada, não
+repetida (v6.19.1).** A classificação (`_classificar_arquivo_protocolo`,
+na interface) dá uma segunda chance no recorte do topo a 400 DPI quando a
+primeira leitura não achou nenhum marcador; esse texto agora é passado
+adiante para `_leituras_telnet`, que o usa como uma das três leituras da
+votação em vez de pagar o mesmo OCR de novo. Antes disso acontecia o
+oposto do que o docstring de `_leituras_telnet` prometia — e todo arquivo
+sem marcador na primeira leitura, **incluindo documento com texto nativo
+que nem é protocolo**, pagava um OCR a 400 DPI que antes não pagava.
+
+### Dois limites conhecidos, aceitos por desenho — não "endurecer" sem reler isto
+
+**A conferência de nome é cega em dois casos.** `_melhor_score_do_nome`
+usa uma janela do tamanho do nome do cadastro, então **um nome que seja
+subcadeia do texto impresso pontua 1.00** — o score não sabe que só bateu
+por estar contido em algo maior. Medido contra os 772 nomes reais do
+cadastro: existem **8 pares de códigos que diferem em um dígito e se
+confirmam mutuamente com score ≥ 0.90** — inclusive `10490 CENTRO COM
+CONDE DE BONFIM RES` / `10491 CENTRO COM CONDE DE BONFIM`, o mesmo par que
+este CLAUDE.md já destaca em "Cuidado: condomínios com nomes parecidos", e
+`10174 JAB I` / `10175 JAB II`. Ou seja: o erro de OCR que a conferência
+existe para pegar — um dígito trocado no código — é justamente onde ela é
+cega, nesses pares. Além disso, **147 dos 772 nomes têm ≤ 6 caracteres e
+28 têm ≤ 4** (`ARCO`, `AVRO`, `BONFIM`); para esses, a janela curta casa
+com quase qualquer coisa numa folha cheia de `AP-104` e nome de rua. A
+falha é **positiva em silêncio**: confirma o nome e não marca a linha —
+não é "confirma errado e é óbvio", é "confirma errado e não avisa
+ninguém". O texto acima ("o limiar não é delicado... 1.00... 0.79") é
+verdadeiro nos 7 arquivos de referência e **irrelevante para esta falha**
+— ela não é de limiar, é de janela.
+
+**A "maioria de 2 em 3" tem só dois votantes independentes de verdade, não
+três.** Das três leituras, duas são o MESMO recorte (topo 0–35% a 400 DPI
+e topo 0–32% a 500 DPI) — só variam a qualidade, não o que é lido. Contra
+um erro sistemático do cabeçalho (reflexo no papel, inclinação, dígito
+borrado bem no campo do total), essas duas leituras tendem a concordar
+entre si e derrotar a leitura de página inteira, que é a única
+genuinamente diferente. O quórum efetivo é **um olhar independente, não
+dois**. O caso medido e citado acima (`38, 3, 3 → 3`) deu certo porque o
+valor discrepante estava justamente na leitura de página inteira; a ordem
+inversa (`3, 38, 38`) elegeria **38** com "dois votos" e a linha sairia
+limpa, sem marcação nenhuma. Quem quiser um 2-de-3 de verdade precisa
+variar **o que a terceira leitura olha** (outra região, outro ângulo), não
+só o DPI do mesmo recorte.
 
 Spec: `docs/superpowers/specs/2026-09-03-protocolo-telnet-design.md`.
 Validadores manuais: `tests/_validar_discriminador.py` e
