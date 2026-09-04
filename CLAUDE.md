@@ -788,6 +788,67 @@ confiança. Não existe conferidor automático capaz de pegar esse caso — só 
 pessoa lendo a folha física resolve, e é exatamente para isso que existe o
 "Informar valor".
 
+## Protocolo do sistema antigo — "telnet" (aba 3, v6.19.0)
+
+Segundo formato de protocolo dos Correios, do sistema antigo da Imodata.
+Chega **misturado** com o novo na mesma pasta, então `formato_do_protocolo`
+decide arquivo a arquivo pelo marcador: `PROTOCOLO CORRESPONDENCIA` (telnet)
+ou `Protocolo de Recebimento de Documento` (novo). Com os **dois**
+marcadores presentes devolve `None` de propósito — aplicar a extração
+errada produz resultado plausível pelo motivo errado, e a conferência
+humana não tem o que estranhar na tela.
+
+**Três decisões de extração, todas contra a tentativa óbvia**, e cada uma
+medida nos 7 arquivos de referência:
+
+| Ancorar em | Resultado | Por quê |
+|---|---|---|
+| rótulo `COD.` | 4/7 | o OCR leu `DAS`, `D ÀS` — estraga o rótulo, não os dígitos |
+| **formato `1.DDDD`** | **7/7** | todo código tem 5 dígitos e começa em 1 (10002–11242) |
+| `ENVIADO` | falha | sai `EWIADO`, `EFvTIADO` |
+| **`PELO CORREIO`** | **6/7** | nunca falhou nas 21 leituras |
+| rótulo `EDF:` (nome) | 1/7 | o winocr embaralha as colunas: rótulo e valor não ficam juntos |
+| **texto inteiro** | **6/7 a 1.00** | varre em vez de ancorar |
+
+**A folga do total é de 6 não-dígitos, nunca 20.** Com folga larga o regex
+pulava o número certo e capturava outro do canto da folha: leu `38` no
+lugar de `3` num condomínio de três unidades — R$ 146,30 em vez de
+R$ 11,55.
+
+**Três leituras de OCR com votação por maioria** (página inteira a 300, topo
+a 400 e a 500). Nenhuma configuração sozinha lê os sete. A votação existe
+por esse mesmo caso do `38, 3, 3 → 3`. O **total** exige 2 votos, porque
+vira dinheiro; o **código** aceita 1, porque ainda passa pela conferência do
+nome. **Empate no topo não elege ninguém** — escolher por ordem de chegada
+seria arbitrário.
+
+**O cadastro NÃO serve de dígito verificador aqui**, ao contrário do CNPJ.
+772 dos ~1.241 números da faixa 10002–11242 são condomínios reais — 62% de
+densidade —, então um dígito errado tende a produzir *outro condomínio
+existente*. "O código está no cadastro" não prova nada. É por isso que o
+nome impresso é cruzado com o do cadastro (limiar 0.90; os confirmados dão
+1.00 e o único não confirmado deu 0.79).
+
+**O aceite é deliberadamente mais frouxo que o do protocolo novo**:
+`conferir_contagem_telnet` **preenche e marca** em vez de barrar, porque o
+usuário confere imagem por imagem. Uma versão anterior barrava a linha sem
+confirmação de nome e mandava para pendente um arquivo cujo código e total
+estavam ambos corretos. Sem total legível ou sem código, aí sim é pendente.
+
+**Nada a jusante mudou**: o dict tem `codigo` e `condominio`, que é tudo que
+`linha_planilha_protocolo` e `_carimbar_protocolo` consultam. Valor,
+carimbo lateral, bloco do Paybox, planilhas e painel são os mesmos.
+
+**Um terceiro formato existe e está fora do escopo:** o "Meus Correios"
+(`Cód. Condomínio: 10852-VILLA BRANCA`, `Qtde.`, `Classificação`), que são
+SEDEX de valor fixo, cobrados por outro critério. Ele é o formato **fácil**
+— o OCR lê o código em 6/6 e o nome vem no mesmo campo, servindo de
+conferência. Quando for a vez dele, começar daí.
+
+Spec: `docs/superpowers/specs/2026-09-03-protocolo-telnet-design.md`.
+Validadores manuais: `tests/_validar_discriminador.py` e
+`tests/_validar_telnet.py` (dependem de PDFs fora do repositório).
+
 ## Anexo automático no Paybox (aba 3, v6.16.0)
 
 O Paybox anexa um documento à despesa sozinho quando casa **valor, vencimento
