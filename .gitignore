@@ -18,3 +18,7 @@ tests/__pycache__/
 cadastro_condominios_BACKUP_*.xlsx
 # Ambiente virtual local (as dependências vêm de requirements.txt).
 .venv/
+
+# Worktrees de execução de planos (Claude Code) — nunca versionados
+.claude/worktrees/
+.superpowers/
