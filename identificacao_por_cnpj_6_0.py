@@ -262,6 +262,12 @@ class App(ctk.CTk):
         self.tamanho_lote = tk.StringVar(
             value=str(self.config_app.get("tamanho_lote", TAMANHO_LOTE_PADRAO)))
 
+        #  Modo SEDEX: desliga a contagem de unidades no lote inteiro. NÃO
+        #  vem do config e NÃO é salvo lá, ao contrário de `separar_em_lotes`
+        #  — aquele é preferência do sistema de destino, este é propriedade
+        #  do lote que está na mesa agora. Nasce desligado toda sessão.
+        self.modo_sedex = tk.BooleanVar(value=False)
+
         # Variáveis - aba cadastro (formulário)
         self.form_cnpj = tk.StringVar()
         self.form_codigo = tk.StringVar()
@@ -914,6 +920,40 @@ class App(ctk.CTk):
         self.config_app["separar_em_lotes"] = bool(self.separar_em_lotes.get())
         self.config_app["tamanho_lote"] = self._tamanho_lote_valido()
         salvar_config(self.config_app)
+
+    def _montar_controle_sedex(self, parent, registrar):
+        """
+        Alternador "Modo SEDEX", para ficar logo abaixo do controle de lotes
+        na aba 3.
+
+        Só existe na aba 3: é a única que conta unidades e calcula valor.
+
+        Sem `command` de persistência de propósito — este alternador não é
+        gravado no config.json. Deixar ligado de uma sessão para a outra faria
+        um lote de cartas simples sair inteiro sem contagem.
+        """
+        tema = self.tema_atual
+        fonte = familia_fonte()
+
+        linha = registrar(
+            ctk.CTkFrame(parent, corner_radius=0, fg_color=tema["fundo"]),
+            {"fg_color": "fundo"},
+        )
+
+        chk = registrar(
+            ctk.CTkCheckBox(
+                linha,
+                text="Modo SEDEX — não contar unidades, valor digitado à mão",
+                variable=self.modo_sedex, corner_radius=0,
+                fg_color=tema["acento"], hover_color=tema["acento"],
+                border_color=tema["borda_forte"], text_color=tema["texto"],
+                font=(fonte, 13),
+            ),
+            {"fg_color": "acento", "hover_color": "acento",
+             "border_color": "borda_forte", "text_color": "texto"},
+        )
+        chk.pack(side="left")
+        return linha
 
     def _trocar_predefinicao(self, chave):
         """
@@ -2641,6 +2681,9 @@ class App(ctk.CTk):
         self._montar_controle_lotes(corpo, registrar).grid(
             row=7, column=0, sticky="w", pady=(0, 8))
 
+        self._montar_controle_sedex(corpo, registrar).grid(
+            row=8, column=0, sticky="w", pady=(0, 8))
+
         explicacao = registrar(
             ctk.CTkLabel(
                 corpo,
@@ -2654,17 +2697,17 @@ class App(ctk.CTk):
             ),
             {"text_color": "texto_terciario"},
         )
-        explicacao.grid(row=8, column=0, sticky="w", pady=(0, 16))
+        explicacao.grid(row=9, column=0, sticky="w", pady=(0, 16))
 
         self.barra_protocolos = ttk.Progressbar(corpo, mode="determinate")
-        self.barra_protocolos.grid(row=9, column=0, sticky="ew", pady=(0, 8))
+        self.barra_protocolos.grid(row=10, column=0, sticky="ew", pady=(0, 8))
 
         self.label_status_protocolos = registrar(
             ctk.CTkLabel(corpo, text="", font=(fonte, 13),
                          text_color=tema["texto_secundario"], anchor="w"),
             {"text_color": "texto_secundario"},
         )
-        self.label_status_protocolos.grid(row=10, column=0, sticky="w", pady=(0, 24))
+        self.label_status_protocolos.grid(row=11, column=0, sticky="w", pady=(0, 24))
 
         self._atualizar_botao_protocolos()
 
@@ -2836,9 +2879,18 @@ class App(ctk.CTk):
         ):
             return
 
-        tarifa = self._pedir_tarifa()
-        if tarifa is None:
-            return
+        #  Em modo SEDEX não há o que multiplicar: a tarifa não é perguntada
+        #  e segue None por todo o fluxo. Isso é seguro de ponta a ponta —
+        #  `linha_planilha_protocolo` já devolve Unidades/Tarifa/Valor vazios
+        #  quando `unidades` é None, `valor_do_carimbo` já devolve None e
+        #  carimba só a identificação lateral, e `validar_edicao_protocolo` já
+        #  recusa editar a coluna Unidades explicando que o lote não tem
+        #  tarifa. Nenhuma guarda nova é necessária.
+        tarifa = None
+        if not self.modo_sedex.get():
+            tarifa = self._pedir_tarifa()
+            if tarifa is None:
+                return
 
         #  O vencimento é perguntado AQUI, junto da tarifa, e não mais só na
         #  hora de gerar a planilha: ele vai carimbado no PDF (é um dos três
@@ -2863,7 +2915,8 @@ class App(ctk.CTk):
 
         thread = threading.Thread(
             target=self._processar_protocolos_em_thread,
-            args=(pasta, pasta_saida, destino, tarifa, vencimento, chave),
+            args=(pasta, pasta_saida, destino, tarifa, vencimento, chave,
+                  self.modo_sedex.get()),
             daemon=True)
         thread.start()
 
@@ -2968,7 +3021,7 @@ class App(ctk.CTk):
         return classificar_formato_protocolo(texto_extra), texto_extra
 
     def _processar_protocolos_em_thread(self, pasta, pasta_saida, destino, tarifa,
-                                         vencimento, chave):
+                                         vencimento, chave, modo_sedex=False):
         arquivos = sorted(f for f in os.listdir(pasta) if f.lower().endswith(".pdf"))
         total = len(arquivos)
         self.after(0, lambda: self.barra_protocolos.configure(maximum=total, value=0))
