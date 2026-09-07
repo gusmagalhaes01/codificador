@@ -768,6 +768,28 @@ RE_TOTAL_TELNET = re.compile(r"PELO\s+CORREIO\D{0,6}(\d{1,4})\b", re.IGNORECASE)
 
 RE_CODIGO_ENTRE_PARENTESES = re.compile(r"\((\d+)\)")
 
+#  "Cód. Condomínio: 10852-VILLA BRANCA" — código E nome no mesmo campo, o
+#  que dá conferência de graça: o código resolve pelo cadastro e o nome ao
+#  lado confirma. Nenhum outro formato de protocolo oferece isso.
+#
+#  O `(?:\d\s*){5}` tolera espaço no meio dos dígitos: o OCR devolve
+#  "1 0193-MONACO". O `\s*` depois do traço cobre "10520- SENADOR LEITE".
+RE_COND_MEUS_CORREIOS = re.compile(
+    r"COND[OÔ]M[IÍ]NIO\s*[:\-]?\s*((?:\d\s*){5})\s*[-–—]\s*([A-Z0-9 .'/]{2,40})",
+    re.IGNORECASE)
+
+#  A Classificação é o serviço postal (824 SEDEX, 590 CORREIO REG / AR). Vai
+#  para a observação porque é o que diz à pessoa QUANTO digitar de valor.
+RE_SERVICO_MEUS_CORREIOS = re.compile(
+    r"CLASSIFICA[CÇ][AÃ]O\s*[:\-]?\s*(\d{3}\s*-[^\n]{2,60})", re.IGNORECASE)
+
+#  Rótulos que podem vir logo DEPOIS do valor da Classificação, e onde ele
+#  precisa ser cortado. Não é sempre "Histórico": o winocr embaralha as
+#  colunas, e num dos seis arquivos de referência vem "ID 12699 Contar: 1
+#  Data ...". Sem esse corte a observação carregaria meia página junto.
+SEGUINTES_MEUS_CORREIOS = ("HISTORICO", "HISTÓRICO", "ID ", "CONTAR",
+                           "DATA", "QTDE", "TOTAL", "FUNCION", "STATUS")
+
 #  Score mínimo para o nome impresso confirmar o código. Não é delicado:
 #  nos 7 arquivos medidos os confirmados deram 1.00 e o único não
 #  confirmado deu 0.79 — qualquer corte entre 0.80 e 0.99 daria o mesmo.
@@ -1019,6 +1041,79 @@ def conferir_contagem_telnet(dados):
     if not dados.get("nome_confere"):
         return True, "Nome não confirmado"
     return True, ""
+
+
+def _cortar_servico_meus_correios(bruto):
+    """Corta o valor da Classificação no primeiro rótulo que vier depois.
+
+    O winocr devolve a página numa linha só, então o campo seguinte fica
+    colado no valor. Corta no rótulo mais à esquerda entre os conhecidos —
+    não no primeiro da lista, que daria resultado diferente conforme a
+    ordem em que os rótulos aparecerem no papel.
+    """
+    texto = (bruto or "").strip()
+    alto = texto.upper()
+    corte = len(texto)
+    for rotulo in SEGUINTES_MEUS_CORREIOS:
+        pos = alto.find(rotulo)
+        if 0 < pos < corte:
+            corte = pos
+    return texto[:corte].strip(" -–—\t")
+
+
+def extrair_dados_meus_correios(texto, cadastro):
+    """
+    Lê um protocolo do formato "Meus Correios" (sistema Agile).
+
+    Devolve sempre um dict, nunca None:
+      formato ....... "meus_correios"
+      codigo ........ str de 5 dígitos que EXISTE no cadastro, ou None
+      condominio .... nome do cadastro; na falta dele, o nome do documento
+      servico ....... "824 - EBCT - SEDEX", ou "" quando não deu para ler
+      nome_confere .. o nome impresso bate com o do cadastro
+
+    Este formato NÃO tem unidades para contar — traz `Qtde. 1`, um envio por
+    documento. Por isso não devolve contagem nem valor: o valor vem impresso
+    num comprovante escaneado, que o OCR não lê com segurança (medido na
+    investigação do telnet: `TOTAL: 27  103,95` não saiu em DPI nenhum), e é
+    digitado à mão na grade do painel.
+
+    `codigo` só é preenchido quando o código lido EXISTE no cadastro. Código
+    que não existe é o mesmo que código não lido, para quem chama: não há o
+    que carimbar nem como montar o lançamento, e a linha vira pendente.
+    """
+    texto = texto or ""
+    achado = RE_COND_MEUS_CORREIOS.search(texto)
+    nome_documento = ""
+    codigo = None
+    if achado:
+        codigo = re.sub(r"\D", "", achado.group(1))[:5]
+        nome_documento = achado.group(2).strip()
+
+    registro = None
+    if codigo:
+        cnpj = _codigos_do_cadastro(cadastro or {}).get(codigo)
+        registro = (cadastro or {}).get(cnpj) if cnpj else None
+    if registro is None:
+        codigo = None
+
+    nome_cadastro = (registro or {}).get("nome", "")
+    #  Compara só o começo: o nome do documento vem seguido do próximo campo
+    #  ("KLOSTERS Qtde. 01"), porque o OCR não separa as colunas.
+    confere = False
+    if nome_cadastro:
+        alvo = normalizar_texto_busca(nome_cadastro)
+        lido = normalizar_texto_busca(nome_documento)
+        confere = bool(alvo) and lido.startswith(alvo[:max(4, len(alvo) - 2)])
+
+    servico = RE_SERVICO_MEUS_CORREIOS.search(texto)
+    return {
+        "formato": "meus_correios",
+        "codigo": codigo,
+        "condominio": nome_cadastro or nome_documento,
+        "servico": _cortar_servico_meus_correios(servico.group(1)) if servico else "",
+        "nome_confere": confere,
+    }
 
 
 #  Fornecedor das postagens, carimbado no bloco que o Paybox lê. Fixo no
