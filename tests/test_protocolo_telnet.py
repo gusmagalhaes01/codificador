@@ -82,7 +82,7 @@ class TestClassificarFormatoProtocolo(unittest.TestCase):
         self.assertEqual(app.classificar_formato_protocolo(PROTOCOLO_NOVO), "novo")
 
     def test_nenhum_marcador_e_none_nao_ambiguo(self):
-        self.assertIsNone(app.classificar_formato_protocolo(MEUS_CORREIOS))
+        self.assertIsNone(app.classificar_formato_protocolo("boleto qualquer"))
         self.assertIsNone(app.classificar_formato_protocolo(""))
         self.assertIsNone(app.classificar_formato_protocolo(None))
 
@@ -93,10 +93,16 @@ class TestClassificarFormatoProtocolo(unittest.TestCase):
             "ambiguo")
 
     def test_consistente_com_formato_do_protocolo_nos_casos_nao_ambiguos(self):
-        for texto in (TELNET_OK, PROTOCOLO_NOVO, MEUS_CORREIOS, "", None):
+        #  formato_do_protocolo funde "ambiguo" E "meus_correios" em None
+        #  porque seu contrato é de apenas dois formatos (telnet e novo).
+        for texto in (TELNET_OK, PROTOCOLO_NOVO, "", None):
             resultado_detalhado = app.classificar_formato_protocolo(texto)
             esperado = None if resultado_detalhado == "ambiguo" else resultado_detalhado
             self.assertEqual(app.formato_do_protocolo(texto), esperado)
+        #  meus_correios é um caso especial: classificar retorna "meus_correios",
+        #  mas formato_do_protocolo funde em None.
+        self.assertEqual(app.classificar_formato_protocolo(MEUS_CORREIOS), "meus_correios")
+        self.assertIsNone(app.formato_do_protocolo(MEUS_CORREIOS))
 
 
 class TestExtracaoDeUmaLeitura(unittest.TestCase):

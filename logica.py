@@ -731,6 +731,20 @@ RE_MARCADOR_PROTOCOLO = re.compile(
 #  ora o OCR o come, ora não.
 RE_MARCADOR_TELNET = re.compile(r"PROTOCOLO\s+CORRESPOND[EÊ]NCIA", re.IGNORECASE)
 
+#  Marcador do formato "Meus Correios" (sistema Agile). Dois arranjos, mesmo
+#  sistema: tabela ("Meus Correios") e vertical ("Correios [12704]"). O
+#  terceiro marcador, "Cód. Condomínio", é o mais confiável dos três porque
+#  aparece nos dois arranjos.
+#
+#  O "COND" depois de "Cód" é LOAD-BEARING: o telnet traz "COD.: 1.1122.8)"
+#  na linha do total, e um marcador que casasse só "COD." tornaria todo
+#  telnet ambíguo — o lote inteiro cairia em pendente.
+RE_MARCADOR_MEUS_CORREIOS = re.compile(
+    r"MEUS\s+CORREIOS"
+    r"|C[OÓ]D[.\s]{0,3}COND[OÔ]M[IÍ]NIO"
+    r"|CORREIOS\s*\[\s*\d[\d\s]{2,8}\]",
+    re.IGNORECASE)
+
 #  O código sai pelo FORMATO, não pelo rótulo "COD.": o OCR estraga o
 #  rótulo (leu "DAS", leu "D ÀS") muito mais do que os dígitos. Ancorado no
 #  rótulo o código saía em 4 dos 7 arquivos de referência; pelo formato, em
@@ -805,7 +819,10 @@ def classificar_formato_protocolo(texto):
     """
     Como `formato_do_protocolo`, mas SEM fundir "nenhum marcador achado" e
     "os dois marcadores juntos" no mesmo `None` — devolve "telnet", "novo",
-    "ambiguo" ou None (nenhum dos dois marcadores).
+    "meus_correios", "ambiguo" ou None (nenhum dos marcadores).
+
+    Mais de um marcador no mesmo texto é sempre "ambiguo", qualquer que seja
+    a combinação.
 
     Existe porque quem chama (a aba 3) precisa tratar o ambíguo como
     pendente com observação própria, e não simplesmente "não decidiu,
@@ -814,15 +831,16 @@ def classificar_formato_protocolo(texto):
     pelo caminho do protocolo novo (ver I1 na revisão da branch telnet).
     """
     texto = texto or ""
-    e_telnet = bool(RE_MARCADOR_TELNET.search(texto))
-    e_novo = bool(RE_MARCADOR_PROTOCOLO.search(texto))
-    if e_telnet and e_novo:
+    achados = []
+    if RE_MARCADOR_TELNET.search(texto):
+        achados.append("telnet")
+    if RE_MARCADOR_PROTOCOLO.search(texto):
+        achados.append("novo")
+    if RE_MARCADOR_MEUS_CORREIOS.search(texto):
+        achados.append("meus_correios")
+    if len(achados) > 1:
         return "ambiguo"
-    if e_telnet:
-        return "telnet"
-    if e_novo:
-        return "novo"
-    return None
+    return achados[0] if achados else None
 
 
 def formato_do_protocolo(texto):
@@ -839,13 +857,17 @@ def formato_do_protocolo(texto):
     plausível pelo motivo errado, e não há nada visivelmente estranho para
     a conferência humana pegar na tela. Ambíguo tem que virar pendente.
 
+    Um terceiro formato, "Meus Correios" (sistema Agile), é reconhecido por
+    `classificar_formato_protocolo`, mas esta função funde-o em None porque
+    seu contrato é de apenas dois formatos — telnet e novo. Quem precisa do
+    terceiro usa `classificar_formato_protocolo` diretamente.
+
     Wrapper fino sobre `classificar_formato_protocolo`, mantido com este
-    contrato (ambíguo funde com "nenhum marcador" em None) porque é o que
-    os testes e o restante do código já esperam dele. Quem precisa
-    distinguir os dois usa `classificar_formato_protocolo` diretamente.
+    contrato (ambíguo e meus_correios fundem em None) porque é o que os
+    testes e o restante do código já esperam dele.
     """
     resultado = classificar_formato_protocolo(texto)
-    return None if resultado == "ambiguo" else resultado
+    return None if resultado in ("ambiguo", "meus_correios") else resultado
 
 
 def extrair_dados_protocolo_telnet(texto):
