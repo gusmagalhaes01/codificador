@@ -76,6 +76,7 @@ from logica import (
     extrair_dados_nfse, linha_planilha_nfse, salvar_planilha_nfse,
     extrair_dados_protocolo_correio, conferir_contagem_protocolo,
     classificar_formato_protocolo, apurar_protocolo_telnet, conferir_contagem_telnet,
+    extrair_dados_meus_correios,
     valor_protocolo, formatar_reais,
     converter_valor_digitado,
     linha_planilha_protocolo, salvar_planilha_protocolo,
@@ -2987,9 +2988,9 @@ class App(ctk.CTk):
     def _classificar_arquivo_protocolo(self, caminho, texto):
         """
         Qual dos formatos de protocolo dos Correios este arquivo é:
-        "telnet", "novo", "ambiguo" (os dois marcadores no mesmo texto —
-        ver `classificar_formato_protocolo` em logica.py) ou None (nenhum
-        marcador, nem na segunda chance).
+        "telnet", "novo", "meus_correios", "ambiguo" (mais de um marcador
+        no mesmo texto — ver `classificar_formato_protocolo` em logica.py)
+        ou None (nenhum marcador, nem na segunda chance).
 
         Devolve também a leitura extra (`str` ou None): o recorte topo@400
         já lido aqui quando a primeira leitura foi indecisa, para
@@ -3001,7 +3002,7 @@ class App(ctk.CTk):
         NENHUM marcador (`classificar_formato_protocolo` devolve None):
         medido, o cabeçalho de um dos sete arquivos de referência não sai
         na leitura de página inteira a 300 DPI, mas sai no recorte a 400.
-        "telnet", "novo" e "ambiguo" já são decisões com confiança na
+        "telnet", "novo", "meus_correios" e "ambiguo" já são decisões com confiança na
         primeira leitura — não há por que pagar OCR extra por elas, e é
         isso que evita cobrar um OCR a mais de todo arquivo que não é
         protocolo nenhum (a maioria de um lote misto).
@@ -3074,9 +3075,30 @@ class App(ctk.CTk):
                     dados = apurar_protocolo_telnet(
                         self._leituras_telnet(caminho, texto, leitura_extra),
                         self.cadastro)
-                    aceito, observacao = conferir_contagem_telnet(dados)
-                    if aceito:
-                        unidades = dados["total_impresso"]
+                    if modo_sedex:
+                        #  O modo desliga só a contagem: o código e o nome
+                        #  continuam sendo lidos e carimbados. `unidades`
+                        #  fica None e o valor é digitado na grade.
+                        pass
+                    else:
+                        aceito, observacao = conferir_contagem_telnet(dados)
+                        if aceito:
+                            unidades = dados["total_impresso"]
+                elif formato == "meus_correios":
+                    #  Formato do sistema Agile: um envio por documento, sem
+                    #  lista de unidades para contar (traz `Qtde. 1`). Sai
+                    #  daqui com `unidades` em None de propósito — o valor é
+                    #  digitado na grade, porque ele vem num comprovante
+                    #  escaneado que o OCR não lê com segurança.
+                    dados = extrair_dados_meus_correios(texto, self.cadastro)
+                    #  A Classificação (824 SEDEX / 590 CORREIO REG / AR) é o
+                    #  que diz à pessoa QUANTO digitar. Vai primeiro na
+                    #  observação: numa linha pendente, o texto que explica o
+                    #  que fazer tem de sobreviver ao corte da coluna.
+                    if dados["servico"]:
+                        observacao = dados["servico"]
+                    if not dados["codigo"]:
+                        dados = None
                 elif formato == "ambiguo":
                     #  I1 da revisão: os dois marcadores no mesmo texto.
                     #  `classificar_formato_protocolo` já recusa decidir de
@@ -3098,66 +3120,67 @@ class App(ctk.CTk):
                     #  se o marcador do protocolo já não foi achado na 1ª leitura
                     #  e a 2ª (qualidade maior) também não achar, a checagem de
                     #  contagem abaixo não tenta uma 3ª leitura.
-                    ja_tentou_de_novo = False
-                    if dados is None and usou_leitor_escaneado:
-                        #  Sem o marcador do protocolo não dá para saber se é
-                        #  porque o documento não é um protocolo dos Correios ou
-                        #  porque a leitura na qualidade "Rápida" simplesmente não
-                        #  pegou o texto — só texto nativo (não veio do leitor de
-                        #  escaneados) sustenta a conclusão "não é um protocolo"
-                        #  sem re-tentar.
-                        dpi_maior = proximo_dpi_maior(dpi)
-                        if dpi_maior and dpi_maior != dpi:
-                            ja_tentou_de_novo = True
-                            try:
-                                texto_maior = extrair_texto_escaneado(caminho, dpi=dpi_maior)
-                                dados = extrair_dados_protocolo_correio(texto_maior)
-                            except Exception:
-                                #  A re-tentativa falhou — dados continua None,
-                                #  e a observação abaixo reflete "não foi possível
-                                #  ler", não "não é um protocolo".
-                                pass
-
-                    if dados is None:
-                        if usou_leitor_escaneado:
-                            observacao = "Não foi possível ler o documento"
-                        else:
-                            observacao = "Não é um protocolo dos Correios"
-                            nao_e_protocolo = True
-                    else:
-                        aceito, motivo = conferir_contagem_protocolo(dados)
-                        if not aceito and usou_leitor_escaneado and not ja_tentou_de_novo:
-                            #  Uma re-tentativa em qualidade maior, como já se faz
-                            #  quando o CNPJ sai com checksum inválido — só faz
-                            #  sentido quando a leitura original já veio do leitor
-                            #  de escaneados; texto nativo não confere de novo por
-                            #  esse caminho, e uma falha aqui não pode apagar o
-                            #  motivo original (é a informação que o funcionário
-                            #  usa pra conferir o papel).
+                    if not modo_sedex:
+                        ja_tentou_de_novo = False
+                        if dados is None and usou_leitor_escaneado:
+                            #  Sem o marcador do protocolo não dá para saber se é
+                            #  porque o documento não é um protocolo dos Correios ou
+                            #  porque a leitura na qualidade "Rápida" simplesmente não
+                            #  pegou o texto — só texto nativo (não veio do leitor de
+                            #  escaneados) sustenta a conclusão "não é um protocolo"
+                            #  sem re-tentar.
                             dpi_maior = proximo_dpi_maior(dpi)
                             if dpi_maior and dpi_maior != dpi:
+                                ja_tentou_de_novo = True
                                 try:
                                     texto_maior = extrair_texto_escaneado(caminho, dpi=dpi_maior)
-                                    novos = extrair_dados_protocolo_correio(texto_maior)
-                                    if novos:
-                                        aceito_novo, motivo_novo = conferir_contagem_protocolo(novos)
-                                        #  Só adota a 2ª leitura quando ela ACEITA a
-                                        #  contagem — se a 2ª leitura vier pior (ex:
-                                        #  embaralhou o cabeçalho e perdeu o
-                                        #  "Listando"), manter a 1ª leitura preserva
-                                        #  o código e o motivo que o funcionário usa
-                                        #  pra conferir o papel.
-                                        if aceito_novo:
-                                            dados, aceito, motivo = novos, aceito_novo, motivo_novo
+                                    dados = extrair_dados_protocolo_correio(texto_maior)
                                 except Exception:
-                                    #  A re-tentativa falhou (ex.: leitor de
-                                    #  escaneados indisponível) — mantém o motivo
-                                    #  já apurado pela 1ª conferência.
+                                    #  A re-tentativa falhou — dados continua None,
+                                    #  e a observação abaixo reflete "não foi possível
+                                    #  ler", não "não é um protocolo".
                                     pass
-                        if aceito:
-                            unidades = dados["total_impresso"]
+
+                        if dados is None:
+                            if usou_leitor_escaneado:
+                                observacao = "Não foi possível ler o documento"
+                            else:
+                                observacao = "Não é um protocolo dos Correios"
+                                nao_e_protocolo = True
                         else:
-                            observacao = motivo
+                            aceito, motivo = conferir_contagem_protocolo(dados)
+                            if not aceito and usou_leitor_escaneado and not ja_tentou_de_novo:
+                                #  Uma re-tentativa em qualidade maior, como já se faz
+                                #  quando o CNPJ sai com checksum inválido — só faz
+                                #  sentido quando a leitura original já veio do leitor
+                                #  de escaneados; texto nativo não confere de novo por
+                                #  esse caminho, e uma falha aqui não pode apagar o
+                                #  motivo original (é a informação que o funcionário
+                                #  usa pra conferir o papel).
+                                dpi_maior = proximo_dpi_maior(dpi)
+                                if dpi_maior and dpi_maior != dpi:
+                                    try:
+                                        texto_maior = extrair_texto_escaneado(caminho, dpi=dpi_maior)
+                                        novos = extrair_dados_protocolo_correio(texto_maior)
+                                        if novos:
+                                            aceito_novo, motivo_novo = conferir_contagem_protocolo(novos)
+                                            #  Só adota a 2ª leitura quando ela ACEITA a
+                                            #  contagem — se a 2ª leitura vier pior (ex:
+                                            #  embaralhou o cabeçalho e perdeu o
+                                            #  "Listando"), manter a 1ª leitura preserva
+                                            #  o código e o motivo que o funcionário usa
+                                            #  pra conferir o papel.
+                                            if aceito_novo:
+                                                dados, aceito, motivo = novos, aceito_novo, motivo_novo
+                                    except Exception:
+                                        #  A re-tentativa falhou (ex.: leitor de
+                                        #  escaneados indisponível) — mantém o motivo
+                                        #  já apurado pela 1ª conferência.
+                                        pass
+                            if aceito:
+                                unidades = dados["total_impresso"]
+                            else:
+                                observacao = motivo
             except Exception as e:
                 if isinstance(e, RuntimeError) and "leitor de documentos escaneados" in str(e):
                     #  Mensagem técnica de logica.py, não tocada — aqui só se
