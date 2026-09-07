@@ -933,6 +933,92 @@ Spec: `docs/superpowers/specs/2026-09-03-protocolo-telnet-design.md`.
 Validadores manuais: `tests/_validar_discriminador.py` e
 `tests/_validar_telnet.py` (dependem de PDFs fora do repositório).
 
+## Modo SEDEX e o protocolo "Meus Correios" (aba 3, v6.20.0)
+
+Terceiro formato de protocolo, gerado pelo sistema **Agile**, e um modo de
+lote que desliga a contagem de unidades. São coisas independentes:
+
+```
+FORMATO (novo / telnet / meus correios) → COMO ler o condomínio → o documento diz
+MODO    (normal / SEDEX)                → SE conta unidades     → o documento NÃO diz
+```
+
+O mesmo envio SEDEX chega nos três formatos, e nada na folha distingue um
+protocolo de cartas simples de um de SEDEX — por isso o modo é um alternador
+que o usuário liga, e não algo deduzido do papel.
+
+| Formato | Modo normal | Modo SEDEX |
+|---|---|---|
+| novo (Superlógica) | conta unidades | não conta, valor à mão |
+| telnet | conta unidades | não conta, valor à mão |
+| **meus correios** | **não conta (intrínseco)** | não conta |
+
+**"Meus Correios" nunca conta unidades, em modo nenhum** — esse formato traz
+`Qtde. 1`, um envio por documento. Isso é propriedade do formato, não do
+modo, e não é esquecimento.
+
+**O valor é digitado, e isso foi medido, não presumido.** Ele vem impresso
+num comprovante escaneado, e a investigação do telnet mostrou que o valor
+desses comprovantes (`TOTAL: 27  103,95`) **não sai em DPI nenhum** (200, 300,
+400). Vale aqui o mesmo princípio já registrado na aba 2: valor e data não têm
+dígito verificador, então uma leitura errada entra na planilha sem ninguém
+perceber. Digitando na **grade do painel**, `_recarimbar_linha` regrava o PDF
+com valor e bloco do Paybox — o anexo automático volta a funcionar, o que não
+aconteceria preenchendo no Excel depois.
+
+**A leitura é a mais fácil dos três formatos:** `Cód. Condomínio:
+10852-VILLA BRANCA` traz código e nome no mesmo campo, então o código resolve
+pelo cadastro e o nome ao lado confirma. Medido: **6/6 códigos** nos arquivos
+de referência.
+
+**Dois detalhes de regex que são load-bearing:**
+
+- O marcador exige `COND` logo depois de `Cód` (`C[OÓ]D[.\s]{0,3}COND...`).
+  O telnet traz `COD.: 1.1122.8)` na linha do total; um marcador que casasse
+  só `COD.` tornaria **todo telnet ambíguo** e o lote inteiro cairia em
+  pendente.
+- O valor da Classificação é cortado no rótulo seguinte, e **não é sempre
+  "Histórico"**: o winocr embaralha as colunas, e num dos seis arquivos vem
+  `ID 12699 Contar: 1 Data ...`. Sem o corte, a observação carregaria meia
+  página junto.
+
+**A Classificação vai para a observação** (`824 - EBCT - SEDEX`), como está no
+documento, sem traduzir — é o texto que a pessoa cruza com a tabela de preços
+dos Correios para saber quanto digitar. É best-effort: não sendo legível, a
+observação sai sem ela e nada é bloqueado.
+
+**Nos 6 arquivos de referência, 5 são `590 - EBCT - CORREIO REG / AR` e só 1
+é `824 - EBCT - SEDEX`**, apesar de o lote ser chamado de "os sedex". São
+serviços diferentes, com preços possivelmente diferentes — é por isso que o
+valor é por linha e não um só para o lote.
+
+**O alternador não persiste entre sessões**, ao contrário do de lotes: aquele
+é preferência do sistema de destino, este é propriedade do lote que está na
+mesa. Deixá-lo ligado faria um lote de cartas simples sair inteiro sem
+contagem.
+
+**O que de fato torna `tarifa=None` seguro em modo SEDEX não é o código
+antigo ser robusto a tarifa ausente — é `unidades` nunca chegar preenchido**
+nos três ramos (telnet, protocolo novo, meus_correios) enquanto o modo está
+ligado. Testado: `valor_protocolo(5, None)` estoura `InvalidOperation` — ou
+seja, se algum ramo do roteamento algum dia deixasse passar `unidades`
+preenchido com `tarifa=None`, a thread de processamento cairia sem
+tratamento. `linha_planilha_protocolo`, `valor_do_carimbo` e
+`validar_edicao_protocolo` só parecem "prontos para `tarifa=None`" porque a
+entrada que recebem em modo SEDEX já chega com `unidades=None` — não porque
+foram escritos pensando nisso. Quem mexer no roteamento depois precisa
+preservar essa invariante: `unidades` sempre `None` quando o modo SEDEX
+estiver ligado, nos três ramos.
+
+**Não validado:** SEDEX nos formatos telnet e Superlógica. O usuário informou
+que existem, mas não tinha exemplos na época. O desenho cobre os três; a
+medição cobriu um. É o mesmo ponto cego que produziu a v6.18.1 — lá, validar
+contra um lote de uma competência só escondeu uma variação de layout que
+quebrava a leitura inteira.
+
+Spec: `docs/superpowers/specs/2026-09-07-modo-sedex-design.md`.
+Validador manual: `tests/_validar_meus_correios.py`.
+
 ## Anexo automático no Paybox (aba 3, v6.16.0)
 
 O Paybox anexa um documento à despesa sozinho quando casa **valor, vencimento
