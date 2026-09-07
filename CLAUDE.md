@@ -987,6 +987,55 @@ documento, sem traduzir — é o texto que a pessoa cruza com a tabela de preço
 dos Correios para saber quanto digitar. É best-effort: não sendo legível, a
 observação sai sem ela e nada é bloqueado.
 
+**A observação carrega duas coisas diferentes na mesma coluna, e só uma
+delas marca a linha.** A Classificação é informação de APOIO — está em 100%
+das linhas do "Meus Correios" —, enquanto "Nome não confirmado" ou "Código
+não cadastrado" são dúvidas do programa. Enquanto o serviço ocupava sozinho
+o canal `motivo`, `_tem_atencao_protocolo` (que era literalmente
+`bool(motivo)`) marcava **toda** linha resolvida do formato: o sinal que a
+v6.19.1 instalou para dizer "olhe ESTA linha" passava a apontar para todas,
+justo no lote em que ele mais serve. `observacao_pede_atencao` (`logica.py`)
+desconta o trecho informativo antes de decidir; o serviço viaja numa chave
+própria do registro (`servico`), inclusive através de
+`registro_painel_resolvido`, porque `_sincronizar_registro_com_linha`
+reescreve `motivo` a partir da célula da planilha a cada edição e é de lá
+que o serviço volta. A planilha continua mostrando o serviço na coluna
+Observação — é o que diz à pessoa quanto digitar.
+
+**O modo SEDEX desliga a contagem, e só ela.** Três coisas que pareciam
+contagem e não são, e que na primeira versão do modo sumiam junto:
+
+- **A conferência de nome do telnet continua valendo.** Ela não conta nada,
+  e no telnet é a única conferência que existe — o cadastro não serve de
+  dígito verificador ali (62% de densidade na faixa, ver a seção do telnet),
+  então um dígito errado tende a produzir outro condomínio existente. Sem
+  isso, o modo SEDEX carimbaria em silêncio o valor digitado sob um código
+  possivelmente trocado. Usa a mesma frase de `conferir_contagem_telnet`
+  ("Nome não confirmado"), para as duas telas contarem a mesma história.
+- **O `nome_confere` do "Meus Correios" vai para a observação.** É o único
+  formato cuja conferência de nome sai de graça (código e nome no mesmo
+  campo) e era o único que a descartava; no arquivo real `-002` (VILLA
+  BRANCA) ela dá "não", porque o leitor quebra o nome em "VILLA B RAN CA".
+- **DESCREVER o resultado vale nos dois modos.** As atribuições de "Não foi
+  possível ler o documento" / "Não é um protocolo dos Correios" e
+  `nao_e_protocolo = True` ficam FORA do `if not modo_sedex`. Enquanto
+  estiveram dentro, um arquivo sem marcador nenhum (boleto solto na pasta)
+  virava pendente mudo — observação vazia na grade — e caía em `pendentes`
+  em vez de `ignorados`, **travando a geração da planilha de despesas** por
+  causa de um documento que em modo normal seria simplesmente ignorado.
+  Dentro do `if` fica só a conferência de contagem e a re-leitura que a
+  serve.
+
+**O dict do "Meus Correios" não é anulado quando falta o código.** Anular
+fazia a linha sair muda (condomínio e observação vazios); preservado, o dict
+leva o nome lido para a coluna Condomínio e deixa `linha_planilha_protocolo`
+acrescentar "Código não identificado no documento". Não se perde segurança:
+`unidades` já é `None` nos dois casos, então nada é carimbado por esse
+caminho, e o carimbo manual (grade ou "Escolher condomínio") só aceita
+código que esteja no cadastro. O nome lido vem com o resto da linha colado
+atrás ("INEXISTENTE Qtde. 01 Classifica"), porque o leitor não separa as
+colunas — ainda assim é mais do que a célula vazia.
+
 **Nos 6 arquivos de referência, 5 são `590 - EBCT - CORREIO REG / AR` e só 1
 é `824 - EBCT - SEDEX`**, apesar de o lote ser chamado de "os sedex". São
 serviços diferentes, com preços possivelmente diferentes — é por isso que o
@@ -1003,10 +1052,13 @@ nos três ramos (telnet, protocolo novo, meus_correios) enquanto o modo está
 ligado. Testado: `valor_protocolo(5, None)` estoura `InvalidOperation` — ou
 seja, se algum ramo do roteamento algum dia deixasse passar `unidades`
 preenchido com `tarifa=None`, a thread de processamento cairia sem
-tratamento. `linha_planilha_protocolo`, `valor_do_carimbo` e
-`validar_edicao_protocolo` só parecem "prontos para `tarifa=None`" porque a
-entrada que recebem em modo SEDEX já chega com `unidades=None` — não porque
-foram escritos pensando nisso. Quem mexer no roteamento depois precisa
+tratamento. `linha_planilha_protocolo` e `valor_do_carimbo` só parecem
+"prontos para `tarifa=None`" porque a entrada que recebem em modo SEDEX já
+chega com `unidades=None` — não porque foram escritos pensando nisso.
+`validar_edicao_protocolo` é a exceção e não pertence a esse balaio: ela tem
+guarda explícita, escrita para isto e anterior a esta branch ("Este lote não
+tem tarifa, então não dá para calcular pelo número de unidades"). Quem mexer
+no roteamento depois precisa
 preservar essa invariante: `unidades` sempre `None` quando o modo SEDEX
 estiver ligado, nos três ramos.
 

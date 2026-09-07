@@ -2692,7 +2692,9 @@ class App(ctk.CTk):
                       "valor por linha que você informar e escreve o total no canto "
                       "superior direito do PDF, junto do código do condomínio. "
                       "Protocolos em que a contagem não confere ficam sem carimbo e "
-                      "aparecem na planilha com o motivo."),
+                      "aparecem na planilha com o motivo. Com o Modo SEDEX ligado "
+                      "não há contagem: o condomínio é identificado do mesmo jeito "
+                      "e você digita o valor de cada linha no resultado."),
                 font=(fonte, 13), text_color=tema["texto_terciario"],
                 justify="left", anchor="w", wraplength=640,
             ),
@@ -2881,12 +2883,22 @@ class App(ctk.CTk):
             return
 
         #  Em modo SEDEX não há o que multiplicar: a tarifa não é perguntada
-        #  e segue None por todo o fluxo. Isso é seguro de ponta a ponta —
-        #  `linha_planilha_protocolo` já devolve Unidades/Tarifa/Valor vazios
-        #  quando `unidades` é None, `valor_do_carimbo` já devolve None e
-        #  carimba só a identificação lateral, e `validar_edicao_protocolo` já
-        #  recusa editar a coluna Unidades explicando que o lote não tem
-        #  tarifa. Nenhuma guarda nova é necessária.
+        #  e segue None por todo o fluxo.
+        #
+        #  O que torna isso seguro NÃO é o código a jusante ser robusto a
+        #  tarifa ausente — `valor_protocolo(5, None)` estoura
+        #  `InvalidOperation`, e a thread de processamento cairia sem
+        #  tratamento. O que torna seguro é o ROTEAMENTO: `unidades` nunca
+        #  chega preenchido com o modo ligado, nos três ramos (telnet,
+        #  protocolo novo, meus_correios). `linha_planilha_protocolo` e
+        #  `valor_do_carimbo` só parecem prontos para `tarifa=None` porque a
+        #  entrada que recebem já vem com `unidades=None`. (A exceção é
+        #  `validar_edicao_protocolo`, que tem guarda explícita e escrita
+        #  para isto, anterior a esta versão: ela recusa editar a coluna
+        #  Unidades dizendo que o lote não tem tarifa.)
+        #
+        #  Quem mexer no roteamento acima precisa PRESERVAR essa invariante:
+        #  `unidades` sempre None enquanto o modo SEDEX estiver ligado.
         tarifa = None
         if not self.modo_sedex.get():
             tarifa = self._pedir_tarifa()
