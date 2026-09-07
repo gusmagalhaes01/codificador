@@ -2079,6 +2079,36 @@ def linha_planilha_protocolo(nome_arquivo, dados, cadastro, tarifa=None,
             float(tarifa), float(valor), observacao]
 
 
+def observacao_pede_atencao(observacao, informativo=""):
+    """
+    Diz se a Observação de uma linha JÁ CALCULADA contém alguma dúvida do
+    programa — o que a grade do painel marca com a cor de atenção e o filtro
+    "Pendentes" recolhe.
+
+    Nem toda observação é dúvida. A Classificação do "Meus Correios"
+    (`824 - EBCT - SEDEX`) vai para a mesma coluna porque é o texto que diz
+    à pessoa QUANTO digitar de valor, mas ela não pede segunda olhada
+    nenhuma: é informação de apoio, e está em 100% das linhas desse formato.
+    Sem esta separação, todo lote de SEDEX sairia inteiro marcado como
+    "atenção" — e o sinal que existe para dizer "olhe ESTA linha" deixaria de
+    apontar para lugar nenhum, justo no lote em que ele mais serve.
+
+    `informativo` é o trecho que não conta como dúvida (o serviço lido do
+    documento). Os trechos são separados por "; ", o mesmo separador que
+    `linha_planilha_protocolo` usa ao juntar a observação dela com a que já
+    veio de fora. Sobrando qualquer outro trecho — "Nome não confirmado",
+    "Código não cadastrado", "Erro ao carimbar: ..." —, a linha pede atenção.
+    """
+    texto = (observacao or "").strip()
+    if not texto:
+        return False
+    apoio = (informativo or "").strip()
+    if not apoio:
+        return True
+    return any(parte.strip() and parte.strip() != apoio
+               for parte in texto.split(";"))
+
+
 def resolver_protocolo_manual(ctx, dados, valor, cadastro, carimbar):
     """
     Resolve à mão uma pendência da aba 3 (contagem dos Correios) —
@@ -2481,6 +2511,12 @@ def registro_painel_resolvido(dados, valor, motivo_painel, pasta_destino):
         #  linha, pelo mesmo motivo de `_acao_informar_valor`: repassar a
         #  mesclada duplicaria "Código não cadastrado".
         "motivo_original": dados.get("motivo_original", ""),
+        #  O serviço lido do "Meus Correios" segue adiante porque o painel o
+        #  desconta da observação antes de marcar a linha como "atenção"
+        #  (ver `observacao_pede_atencao`). Perdê-lo aqui faria toda linha
+        #  desse formato resolvida à mão nascer marcada — que é exatamente o
+        #  estado que a marcação existe para distinguir.
+        "servico": dados.get("servico", ""),
     }
     if motivo_painel:
         registro["motivo"] = motivo_painel

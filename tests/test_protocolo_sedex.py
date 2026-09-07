@@ -72,8 +72,8 @@ class TestDiscriminadorMeusCorreios(unittest.TestCase):
         #  O telnet tem "COD.: 1.1122.8)". O marcador do Meus Correios exige
         #  "COND" logo depois de "Cód", então não pode casar aqui — se casasse,
         #  todo telnet viraria ambíguo e o lote inteiro cairia em pendente.
-        self.assertNotEqual(
-            logica.classificar_formato_protocolo(TELNET), "ambiguo")
+        self.assertEqual(
+            logica.classificar_formato_protocolo(TELNET), "telnet")
 
     def test_misturado_com_telnet_vira_ambiguo(self):
         self.assertEqual(
@@ -163,6 +163,103 @@ class TestLeitorMeusCorreios(unittest.TestCase):
         d = logica.extrair_dados_meus_correios("", CADASTRO)
         self.assertIsNone(d["codigo"])
         self.assertEqual(d["servico"], "")
+
+
+class TestObservacaoPedeAtencao(unittest.TestCase):
+    """
+    A observação carrega duas coisas na mesma coluna: a Classificação do
+    serviço (informação de apoio, presente em TODA linha do "Meus Correios")
+    e as dúvidas do programa. Só as segundas podem marcar a linha.
+    """
+
+    def test_observacao_vazia_nao_marca(self):
+        self.assertFalse(logica.observacao_pede_atencao("", ""))
+        self.assertFalse(logica.observacao_pede_atencao(None, None))
+
+    def test_so_o_servico_nao_marca(self):
+        self.assertFalse(logica.observacao_pede_atencao(
+            "824 - EBCT - SEDEX", "824 - EBCT - SEDEX"))
+
+    def test_servico_mais_duvida_marca(self):
+        self.assertTrue(logica.observacao_pede_atencao(
+            "824 - EBCT - SEDEX; Nome não confirmado", "824 - EBCT - SEDEX"))
+
+    def test_servico_mais_codigo_nao_cadastrado_marca(self):
+        #  O acréscimo de `linha_planilha_protocolo` vem depois do serviço,
+        #  com o mesmo separador.
+        self.assertTrue(logica.observacao_pede_atencao(
+            "590 - EBCT - CORREIO REG / AR; Código não cadastrado",
+            "590 - EBCT - CORREIO REG / AR"))
+
+    def test_duvida_sozinha_marca_mesmo_sem_servico(self):
+        #  Telnet e protocolo novo não têm serviço nenhum a descontar: o
+        #  comportamento antigo (qualquer observação marca) continua valendo.
+        self.assertTrue(logica.observacao_pede_atencao("Nome não confirmado", ""))
+        self.assertTrue(logica.observacao_pede_atencao("Erro ao carimbar: x", None))
+
+    def test_erro_ao_carimbar_marca_mesmo_com_servico(self):
+        self.assertTrue(logica.observacao_pede_atencao(
+            "824 - EBCT - SEDEX; Erro ao carimbar: arquivo em uso",
+            "824 - EBCT - SEDEX"))
+
+    def test_observacao_apagada_a_mao_nao_marca(self):
+        #  A coluna Observação é editável na grade; esvaziá-la limpa a marca.
+        self.assertFalse(logica.observacao_pede_atencao("", "824 - EBCT - SEDEX"))
+
+
+class TestRegistroResolvidoCarregaOServico(unittest.TestCase):
+
+    def test_o_servico_sobrevive_a_resolucao_manual(self):
+        #  Sem isto, informar o valor à mão numa linha do "Meus Correios"
+        #  devolveria um registro sem `servico`, e a observação (que carrega
+        #  a Classificação) marcaria a linha como se houvesse dúvida.
+        dados = {
+            "arquivo": "sedex.pdf",
+            "codigo": "10004",
+            "condominio": "KLOSTERS",
+            "servico": "824 - EBCT - SEDEX",
+        }
+        registro = logica.registro_painel_resolvido(
+            dados, 12, "824 - EBCT - SEDEX", "saida")
+        self.assertEqual(registro["servico"], "824 - EBCT - SEDEX")
+        self.assertFalse(logica.observacao_pede_atencao(
+            registro.get("motivo"), registro.get("servico")))
+
+    def test_sem_servico_o_campo_fica_vazio(self):
+        registro = logica.registro_painel_resolvido(
+            {"arquivo": "p.pdf", "codigo": "10004"}, 12, "", "saida")
+        self.assertEqual(registro["servico"], "")
+
+
+class TestLinhaSemCodigoNaoFicaMuda(unittest.TestCase):
+    """
+    O dict do "Meus Correios" NÃO é anulado quando falta o código: preservado,
+    ele leva o nome lido para a coluna Condomínio e deixa
+    `linha_planilha_protocolo` explicar a falta. Anulá-lo não ganhava
+    segurança nenhuma — `unidades` já é None nos dois casos.
+    """
+
+    def test_dados_preservados_explicam_a_falta_do_codigo(self):
+        texto = MC_KLOSTERS.replace("10004-KLOSTERS", "99999-INEXISTENTE")
+        dados = logica.extrair_dados_meus_correios(texto, CADASTRO)
+        linha = logica.linha_planilha_protocolo(
+            "sedex.pdf", dados, CADASTRO, observacao=dados["servico"])
+        self.assertIn("Código não identificado no documento", linha[-1])
+        self.assertIn("824 - EBCT - SEDEX", linha[-1])
+        #  O nome lido do documento não se perde — vem com o resto da linha
+        #  colado atrás, porque o leitor não separa as colunas; ainda assim é
+        #  mais do que a célula vazia que sairia com `dados=None`.
+        self.assertTrue(linha[1].startswith("INEXISTENTE"))
+        #  Nada de valor: não há o que carimbar por este caminho.
+        self.assertIsNone(linha[3])
+        self.assertIsNone(linha[5])
+
+    def test_dados_anulado_deixaria_a_linha_muda(self):
+        #  Documenta o contraste que motivou o conserto.
+        linha = logica.linha_planilha_protocolo(
+            "sedex.pdf", None, CADASTRO, observacao="")
+        self.assertEqual(linha[1], "")
+        self.assertEqual(linha[-1], "")
 
 
 if __name__ == "__main__":

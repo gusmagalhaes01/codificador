@@ -79,7 +79,7 @@ from logica import (
     extrair_dados_meus_correios,
     valor_protocolo, formatar_reais,
     converter_valor_digitado,
-    linha_planilha_protocolo, salvar_planilha_protocolo,
+    linha_planilha_protocolo, salvar_planilha_protocolo, observacao_pede_atencao,
     extrair_texto_escaneado, COLUNAS_PROTOCOLO, resolver_protocolo_manual,
     registro_painel_resolvido,
     renderizar_previa_pdf, renderizar_paginas_pdf, valor_do_carimbo,
@@ -3050,6 +3050,11 @@ class App(ctk.CTk):
             dados = None
             unidades = None
             observacao = ""
+            #  Serviço lido do "Meus Correios" (ex.: "824 - EBCT - SEDEX").
+            #  Vai junto no registro do painel porque é informação de APOIO
+            #  dentro da observação, não dúvida do programa — é o que
+            #  `observacao_pede_atencao` desconta antes de marcar a linha.
+            servico = ""
             #  Só fica True quando dá pra concluir, com segurança, que o
             #  arquivo de fato NÃO é um protocolo dos Correios (texto nativo,
             #  sem o marcador) — é o único caso que deve contar como
@@ -3076,10 +3081,28 @@ class App(ctk.CTk):
                         self._leituras_telnet(caminho, texto, leitura_extra),
                         self.cadastro)
                     if modo_sedex:
-                        #  O modo desliga só a contagem: o código e o nome
+                        #  O modo desliga só a CONTAGEM: o código e o nome
                         #  continuam sendo lidos e carimbados. `unidades`
                         #  fica None e o valor é digitado na grade.
-                        pass
+                        #
+                        #  A conferência do nome, porém, continua valendo —
+                        #  ela não conta nada. No telnet o cadastro NÃO serve
+                        #  de dígito verificador (772 dos ~1.241 números da
+                        #  faixa 10002–11242 são condomínios reais), então um
+                        #  dígito errado tende a produzir OUTRO condomínio
+                        #  existente e o cruzamento do nome impresso é a única
+                        #  conferência que existe. Sem esta marcação, o modo
+                        #  SEDEX carimbaria em silêncio o valor digitado sob um
+                        #  código possivelmente trocado. Mesma frase de
+                        #  `conferir_contagem_telnet`, para as duas telas
+                        #  contarem a mesma história.
+                        #
+                        #  Sem código não se afirma nada sobre o nome: aí a
+                        #  causa é outra, e `linha_planilha_protocolo`
+                        #  acrescenta a dela ("Código não identificado no
+                        #  documento").
+                        if (dados or {}).get("codigo") and not dados.get("nome_confere"):
+                            observacao = "Nome não confirmado"
                     else:
                         aceito, observacao = conferir_contagem_telnet(dados)
                         if aceito:
@@ -3095,10 +3118,24 @@ class App(ctk.CTk):
                     #  que diz à pessoa QUANTO digitar. Vai primeiro na
                     #  observação: numa linha pendente, o texto que explica o
                     #  que fazer tem de sobreviver ao corte da coluna.
-                    if dados["servico"]:
-                        observacao = dados["servico"]
-                    if not dados["codigo"]:
-                        dados = None
+                    servico = dados["servico"]
+                    partes_observacao = [servico] if servico else []
+                    #  Este é o único formato que traz código e nome no MESMO
+                    #  campo — a conferência sai de graça, e por isso mesmo
+                    #  seria absurdo calculá-la e jogá-la fora. Medido: no
+                    #  arquivo real -002 (VILLA BRANCA) ela dá "não", porque o
+                    #  leitor quebra o nome em "VILLA B RAN CA".
+                    if dados["codigo"] and not dados["nome_confere"]:
+                        partes_observacao.append("Nome não confirmado")
+                    observacao = "; ".join(partes_observacao)
+                    #  `dados` NÃO é anulado quando falta o código: com o dict
+                    #  preservado, `linha_planilha_protocolo` acrescenta
+                    #  "Código não identificado no documento" e leva o nome
+                    #  lido para a coluna Condomínio — com `dados=None` a
+                    #  linha sai muda. Não se perde segurança: `unidades`
+                    #  continua None nos dois casos, então nada é carimbado
+                    #  por este caminho, e o carimbo manual (grade ou
+                    #  "Escolher condomínio") só aceita código do cadastro.
                 elif formato == "ambiguo":
                     #  I1 da revisão: os dois marcadores no mesmo texto.
                     #  `classificar_formato_protocolo` já recusa decidir de
@@ -3120,8 +3157,8 @@ class App(ctk.CTk):
                     #  se o marcador do protocolo já não foi achado na 1ª leitura
                     #  e a 2ª (qualidade maior) também não achar, a checagem de
                     #  contagem abaixo não tenta uma 3ª leitura.
+                    ja_tentou_de_novo = False
                     if not modo_sedex:
-                        ja_tentou_de_novo = False
                         if dados is None and usou_leitor_escaneado:
                             #  Sem o marcador do protocolo não dá para saber se é
                             #  porque o documento não é um protocolo dos Correios ou
@@ -3141,46 +3178,56 @@ class App(ctk.CTk):
                                     #  ler", não "não é um protocolo".
                                     pass
 
-                        if dados is None:
-                            if usou_leitor_escaneado:
-                                observacao = "Não foi possível ler o documento"
-                            else:
-                                observacao = "Não é um protocolo dos Correios"
-                                nao_e_protocolo = True
+                    #  DESCREVER o resultado vale nos DOIS modos: o modo SEDEX
+                    #  desliga a contagem, não a capacidade de dizer o que
+                    #  aconteceu com o arquivo. Enquanto isto ficou dentro do
+                    #  `if not modo_sedex`, um arquivo sem marcador nenhum
+                    #  (boleto solto na pasta) virava pendente MUDO — sem uma
+                    #  palavra na coluna Observação — e, pior, `nao_e_protocolo`
+                    #  nunca virava True: ele caía em `pendentes` em vez de
+                    #  `ignorados` e TRAVAVA a geração da planilha de despesas,
+                    #  ao contrário do que acontece com o mesmo arquivo em modo
+                    #  normal. Dentro do `if` fica só o que é contagem.
+                    if dados is None:
+                        if usou_leitor_escaneado:
+                            observacao = "Não foi possível ler o documento"
                         else:
-                            aceito, motivo = conferir_contagem_protocolo(dados)
-                            if not aceito and usou_leitor_escaneado and not ja_tentou_de_novo:
-                                #  Uma re-tentativa em qualidade maior, como já se faz
-                                #  quando o CNPJ sai com checksum inválido — só faz
-                                #  sentido quando a leitura original já veio do leitor
-                                #  de escaneados; texto nativo não confere de novo por
-                                #  esse caminho, e uma falha aqui não pode apagar o
-                                #  motivo original (é a informação que o funcionário
-                                #  usa pra conferir o papel).
-                                dpi_maior = proximo_dpi_maior(dpi)
-                                if dpi_maior and dpi_maior != dpi:
-                                    try:
-                                        texto_maior = extrair_texto_escaneado(caminho, dpi=dpi_maior)
-                                        novos = extrair_dados_protocolo_correio(texto_maior)
-                                        if novos:
-                                            aceito_novo, motivo_novo = conferir_contagem_protocolo(novos)
-                                            #  Só adota a 2ª leitura quando ela ACEITA a
-                                            #  contagem — se a 2ª leitura vier pior (ex:
-                                            #  embaralhou o cabeçalho e perdeu o
-                                            #  "Listando"), manter a 1ª leitura preserva
-                                            #  o código e o motivo que o funcionário usa
-                                            #  pra conferir o papel.
-                                            if aceito_novo:
-                                                dados, aceito, motivo = novos, aceito_novo, motivo_novo
-                                    except Exception:
-                                        #  A re-tentativa falhou (ex.: leitor de
-                                        #  escaneados indisponível) — mantém o motivo
-                                        #  já apurado pela 1ª conferência.
-                                        pass
-                            if aceito:
-                                unidades = dados["total_impresso"]
-                            else:
-                                observacao = motivo
+                            observacao = "Não é um protocolo dos Correios"
+                            nao_e_protocolo = True
+                    elif not modo_sedex:
+                        aceito, motivo = conferir_contagem_protocolo(dados)
+                        if not aceito and usou_leitor_escaneado and not ja_tentou_de_novo:
+                            #  Uma re-tentativa em qualidade maior, como já se faz
+                            #  quando o CNPJ sai com checksum inválido — só faz
+                            #  sentido quando a leitura original já veio do leitor
+                            #  de escaneados; texto nativo não confere de novo por
+                            #  esse caminho, e uma falha aqui não pode apagar o
+                            #  motivo original (é a informação que o funcionário
+                            #  usa pra conferir o papel).
+                            dpi_maior = proximo_dpi_maior(dpi)
+                            if dpi_maior and dpi_maior != dpi:
+                                try:
+                                    texto_maior = extrair_texto_escaneado(caminho, dpi=dpi_maior)
+                                    novos = extrair_dados_protocolo_correio(texto_maior)
+                                    if novos:
+                                        aceito_novo, motivo_novo = conferir_contagem_protocolo(novos)
+                                        #  Só adota a 2ª leitura quando ela ACEITA a
+                                        #  contagem — se a 2ª leitura vier pior (ex:
+                                        #  embaralhou o cabeçalho e perdeu o
+                                        #  "Listando"), manter a 1ª leitura preserva
+                                        #  o código e o motivo que o funcionário usa
+                                        #  pra conferir o papel.
+                                        if aceito_novo:
+                                            dados, aceito, motivo = novos, aceito_novo, motivo_novo
+                                except Exception:
+                                    #  A re-tentativa falhou (ex.: leitor de
+                                    #  escaneados indisponível) — mantém o motivo
+                                    #  já apurado pela 1ª conferência.
+                                    pass
+                        if aceito:
+                            unidades = dados["total_impresso"]
+                        else:
+                            observacao = motivo
             except Exception as e:
                 if isinstance(e, RuntimeError) and "leitor de documentos escaneados" in str(e):
                     #  Mensagem técnica de logica.py, não tocada — aqui só se
@@ -3246,6 +3293,16 @@ class App(ctk.CTk):
                 "codigo": (dados or {}).get("codigo"),
                 "caminho": caminho,
                 "indice_linha": len(linhas) - 1,
+                #  O serviço ("824 - EBCT - SEDEX") viaja no registro para o
+                #  painel poder DESCONTÁ-LO da observação antes de decidir se
+                #  a linha pede atenção (ver `_tem_atencao_protocolo`). Sem
+                #  isso, toda linha do "Meus Correios" ficaria marcada, já que
+                #  ele está em 100% delas — e o sinal de "olhe esta linha"
+                #  deixaria de apontar para alguma. Fica à parte de `motivo`
+                #  porque `_sincronizar_registro_com_linha` reescreve `motivo`
+                #  a partir da célula da planilha a cada edição, e é de lá que
+                #  o serviço volta.
+                "servico": servico,
             }
             if unidades is not None:
                 registro_painel["unidades"] = unidades
@@ -3970,8 +4027,17 @@ class App(ctk.CTk):
         telnet (preencher e marcar, não barrar — ver o spec) só sustenta
         na prática se a marcação for vista; sem os três consertos juntos,
         ela nunca era.
+
+        Nem toda observação é dúvida, porém: a Classificação do "Meus
+        Correios" ("824 - EBCT - SEDEX") ocupa a mesma coluna por ser o
+        texto que diz QUANTO digitar, e está em todas as linhas desse
+        formato. `observacao_pede_atencao` desconta esse trecho — senão o
+        lote inteiro de SEDEX sairia marcado e o sinal deixaria de
+        distinguir coisa alguma.
         """
-        return bool((registro or {}).get("motivo"))
+        registro = registro or {}
+        return observacao_pede_atencao(registro.get("motivo"),
+                                       registro.get("servico"))
 
     def _estado_da_linha_protocolo(self, indice):
         """Devolve "pendente", "atencao", "calculado" ou "ignorado" para a
