@@ -1556,6 +1556,311 @@ def extrair_dados_nfse(texto):
     }
 
 
+# ============================================================
+#  BOLETOS — LINHA DIGITÁVEL / CÓDIGO DE BARRAS
+# ============================================================
+#
+#  Mesma aba da extração das NFS-e, mesma regra de ouro: só texto nativo,
+#  nunca OCR. Aqui, porém, o motivo de confiar no que se lê é mais forte que
+#  no resto do programa — a linha digitável carrega os PRÓPRIOS dígitos
+#  verificadores: um mod 10 em cada campo e um mod 11 geral sobre o código de
+#  barras. Valor e vencimento saem de dentro desse número já conferido, não de
+#  um campo solto na folha, então um dígito lido errado não vira valor errado
+#  na planilha: vira linha recusada.
+#
+#  A barra impressa (Interleaved 2 of 5) e a linha digitável são o MESMO dado
+#  em duas formas — por isso não é preciso decodificar imagem nenhuma para
+#  "ler o código de barras" de um boleto com texto nativo.
+
+#  Bancos que aparecem nos lotes (e os grandes, para não sair só o número).
+#  Ausente daqui não é erro: cai para o próprio número do banco.
+BANCOS = {
+    "001": "BANCO DO BRASIL", "003": "BANCO DA AMAZÔNIA", "004": "BANCO DO NORDESTE",
+    "021": "BANESTES", "033": "SANTANDER", "041": "BANRISUL", "070": "BRB",
+    "077": "BANCO INTER", "085": "AILOS", "104": "CAIXA ECONÔMICA FEDERAL",
+    "136": "UNICRED", "208": "BTG PACTUAL", "212": "BANCO ORIGINAL",
+    "218": "BS2", "237": "BRADESCO", "260": "NU PAGAMENTOS", "290": "PAGSEGURO",
+    "336": "C6 BANK", "341": "ITAÚ", "389": "BANCO MERCANTIL", "399": "HSBC",
+    "422": "BANCO SAFRA", "604": "BANCO INDUSTRIAL", "623": "BANCO PAN",
+    "633": "RENDIMENTO", "637": "SOFISA", "655": "NEON", "707": "DAYCOVAL",
+    "745": "CITIBANK", "748": "SICREDI", "756": "SICOOB",
+}
+
+#  Contas de concessionária (água, luz, gás, telefone) e tributos usam o
+#  código de arrecadação, que começa com 8 e não tem banco nem fator de
+#  vencimento — o segmento é o que dá para dizer de onde vem a conta.
+SEGMENTOS_ARRECADACAO = {
+    "1": "PREFEITURA", "2": "SANEAMENTO", "3": "ENERGIA ELÉTRICA E GÁS",
+    "4": "TELECOMUNICAÇÕES", "5": "ÓRGÃO GOVERNAMENTAL",
+    "6": "CARNÊ / ASSEMELHADO", "7": "MULTA DE TRÂNSITO",
+    "9": "USO EXCLUSIVO DO BANCO",
+}
+
+#  Candidato a linha digitável dentro do texto do PDF: dígitos separados só
+#  por ponto ou espaço, numa linha só (a classe não inclui "\n" de propósito —
+#  com quebra de linha, dois números vizinhos e sem relação virariam um
+#  candidato de 47 dígitos). Quem decide de fato é a conferência dos dígitos
+#  verificadores, logo abaixo; esta regex só junta os pedaços.
+RE_CANDIDATO_LINHA_DIGITAVEL = re.compile(r"(?<![\d.])\d[\d .]{40,70}\d(?![\d.])")
+
+#  22/02/2025: o fator de vencimento estourou os 4 dígitos (o ciclo iniciado
+#  em 07/10/1997 chegou a 9999 em 21/02/2025) e a FEBRABAN reiniciou a
+#  contagem em 1000. Ver `vencimento_do_fator`.
+REINICIO_FATOR = datetime.date(2025, 2, 22)
+
+
+def _mod10(digitos):
+    """DV módulo 10 (pesos 2 e 1 alternados, da direita para a esquerda)."""
+    soma = 0
+    for posicao, caractere in enumerate(reversed(digitos)):
+        produto = int(caractere) * (2 if posicao % 2 == 0 else 1)
+        soma += produto - 9 if produto > 9 else produto
+    return (10 - soma % 10) % 10
+
+
+def _mod11_boleto(digitos):
+    """DV geral do boleto bancário (pesos 2..9 ciclando da direita)."""
+    pesos = [2, 3, 4, 5, 6, 7, 8, 9]
+    soma = sum(int(c) * pesos[i % 8] for i, c in enumerate(reversed(digitos)))
+    resto = 11 - soma % 11
+    #  0, 1 e 10 não cabem num dígito: a regra da FEBRABAN manda usar 1.
+    return 1 if resto in (0, 1, 10, 11) else resto
+
+
+def _mod11_arrecadacao(digitos):
+    """DV módulo 11 do código de arrecadação — regra diferente da do boleto
+    bancário: resto 0 ou 1 dá DV 0, e não 1."""
+    pesos = [2, 3, 4, 5, 6, 7, 8, 9]
+    soma = sum(int(c) * pesos[i % 8] for i, c in enumerate(reversed(digitos)))
+    resto = soma % 11
+    if resto in (0, 1):
+        return 0
+    return 11 - resto
+
+
+def _dv_arrecadacao(digitos, identificador_valor):
+    """O 3º dígito do código de arrecadação diz qual módulo vale para todos os
+    DVs daquele documento: 6 e 7 usam módulo 10, 8 e 9 usam módulo 11."""
+    if identificador_valor in ("6", "7"):
+        return _mod10(digitos)
+    return _mod11_arrecadacao(digitos)
+
+
+def vencimento_do_fator(fator):
+    """Fator de vencimento (4 dígitos do código de barras) -> data.
+
+    `0000` e `9999` devolvem None: são as duas formas de dizer "sem
+    vencimento no código". O 9999 não é hipótese de manual — aparece num
+    boleto real do Itaú lido neste projeto, com vencimento impresso na folha e
+    fator 9999 na barra.
+
+    A contagem em vigor é a que reiniciou em 22/02/2025 (fator 1000): o ciclo
+    original, que começava em 07/10/1997, esgotou os 4 dígitos no dia anterior.
+    Os dois ciclos usam a mesma faixa de fatores, mas TODA data do ciclo antigo
+    é anterior a 22/02/2025 — ou seja, boleto vencido há tempo. Por isso aqui
+    só o ciclo novo é lido: um lote em processamento é sempre do ciclo atual, e
+    escolher pela data de hoje faria a mesma barra virar datas diferentes
+    conforme o dia em que a planilha fosse gerada.
+    """
+    try:
+        numero = int(fator)
+    except (TypeError, ValueError):
+        return None
+    if numero < 1000 or numero >= 9999:
+        return None
+    return REINICIO_FATOR + datetime.timedelta(days=numero - 1000)
+
+
+def linha_digitavel_para_codigo_barras(linha):
+    """Linha digitável (47 dígitos, boleto bancário; 48, arrecadação) -> o
+    código de barras de 44 dígitos que está impresso nas barras. Devolve None
+    se o comprimento não for um dos dois."""
+    digitos = re.sub(r"\D", "", linha or "")
+    if len(digitos) == 47:
+        #  Campo 1: banco(3) + moeda(1) + 5 do campo livre + DV do campo
+        #  Campos 2 e 3: mais 10 do campo livre cada + DV
+        #  Campo 4: DV geral | Campo 5: fator(4) + valor(10)
+        return (digitos[0:4] + digitos[32] + digitos[33:47]
+                + digitos[4:9] + digitos[10:20] + digitos[21:31])
+    if len(digitos) == 48:
+        #  Arrecadação: 4 blocos de 11 dígitos, cada um com seu DV logo depois.
+        return digitos[0:11] + digitos[12:23] + digitos[24:35] + digitos[36:47]
+    return None
+
+
+def codigo_barras_para_linha_digitavel(codigo):
+    """Caminho inverso: código de barras (44 dígitos) -> linha digitável, já
+    com os dígitos verificadores calculados."""
+    digitos = re.sub(r"\D", "", codigo or "")
+    if len(digitos) != 44:
+        return None
+    if digitos.startswith("8"):
+        blocos = [digitos[i:i + 11] for i in range(0, 44, 11)]
+        identificador = digitos[2]
+        return "".join(b + str(_dv_arrecadacao(b, identificador)) for b in blocos)
+    campo1 = digitos[0:4] + digitos[19:24]
+    campo2 = digitos[24:34]
+    campo3 = digitos[34:44]
+    return (campo1 + str(_mod10(campo1))
+            + campo2 + str(_mod10(campo2))
+            + campo3 + str(_mod10(campo3))
+            + digitos[4]
+            + digitos[5:19])
+
+
+def codigo_barras_valido(codigo):
+    """Confere o DV geral do código de barras de 44 dígitos."""
+    digitos = re.sub(r"\D", "", codigo or "")
+    if len(digitos) != 44 or not digitos.isdigit():
+        return False
+    if digitos.startswith("8"):
+        return int(digitos[3]) == _dv_arrecadacao(digitos[:3] + digitos[4:], digitos[2])
+    return int(digitos[4]) == _mod11_boleto(digitos[:4] + digitos[5:])
+
+
+def linha_digitavel_valida(linha):
+    """Confere TODOS os dígitos verificadores: o de cada campo da linha
+    digitável e o geral do código de barras. É esta conferência — e não a
+    aparência do número — que autoriza usar valor e vencimento lidos daqui."""
+    digitos = re.sub(r"\D", "", linha or "")
+    if not digitos.isdigit():
+        return False
+    if len(digitos) == 44:
+        return codigo_barras_valido(digitos)
+    if len(digitos) == 47:
+        if digitos.startswith("8"):
+            return False  # arrecadação tem 48 dígitos, nunca 47
+        campos_ok = (_mod10(digitos[0:9]) == int(digitos[9])
+                     and _mod10(digitos[10:20]) == int(digitos[20])
+                     and _mod10(digitos[21:31]) == int(digitos[31]))
+        return campos_ok and codigo_barras_valido(
+            linha_digitavel_para_codigo_barras(digitos))
+    if len(digitos) == 48:
+        if not digitos.startswith("8"):
+            return False
+        identificador = digitos[2]
+        for inicio in (0, 12, 24, 36):
+            bloco = digitos[inicio:inicio + 11]
+            if int(digitos[inicio + 11]) != _dv_arrecadacao(bloco, identificador):
+                return False
+        return codigo_barras_valido(linha_digitavel_para_codigo_barras(digitos))
+    return False
+
+
+def formatar_linha_digitavel(linha):
+    """Deixa a linha digitável na forma impressa no boleto, para conferir a
+    olho contra o papel."""
+    d = re.sub(r"\D", "", linha or "")
+    if len(d) == 47:
+        return f"{d[0:5]}.{d[5:10]} {d[10:15]}.{d[15:21]} {d[21:26]}.{d[26:32]} {d[32]} {d[33:47]}"
+    if len(d) == 48:
+        return f"{d[0:12]} {d[12:24]} {d[24:36]} {d[36:48]}"
+    return d
+
+
+def _janelas_de_digitos(trecho):
+    """Todas as sequências de 47, 48 e 44 dígitos dentro de um candidato, do
+    formato mais longo para o mais curto.
+
+    Não basta olhar o candidato inteiro: o extrator de texto às vezes enfia um
+    espaço no meio do último campo e cola o que vem depois ("...0000018 848
+    341-7", num boleto real do Itaú), e o trecho sai com 50 dígitos em vez de
+    47. Quem separa o número certo do lixo em volta é a conferência dos
+    dígitos verificadores, não o recorte.
+    """
+    digitos = re.sub(r"\D", "", trecho)
+    for tamanho in (47, 48, 44):
+        for inicio in range(0, len(digitos) - tamanho + 1):
+            yield digitos[inicio:inicio + tamanho]
+
+
+def extrair_linha_digitavel(texto):
+    """Procura no texto do PDF a primeira sequência que passe na conferência
+    dos dígitos verificadores. Devolve os dígitos (47 ou 48) ou None.
+
+    Boleto costuma trazer a linha digitável duas vezes (recibo do pagador e
+    ficha de compensação) — são iguais, então a primeira serve. Documento sem
+    nenhuma sequência válida simplesmente não é boleto para efeito desta aba.
+
+    A segunda passada emenda a quebra de linha DENTRO do número: pela mesma
+    razão que o rótulo da NFS-e quebrava no meio ("NÚMERO DA NFS-\ne"), a
+    linha digitável pode sair partida em dois blocos de texto. Emendar linhas
+    numéricas vizinhas produziria um número sem sentido — que é justamente o
+    que os dígitos verificadores recusam.
+    """
+    emendado = re.sub(r"(?<=[\d.])[ \t]*\n[ \t]*(?=\d)", " ", texto or "")
+    for fonte in (texto or "", emendado):
+        for trecho in RE_CANDIDATO_LINHA_DIGITAVEL.findall(fonte):
+            for janela in _janelas_de_digitos(trecho):
+                if linha_digitavel_valida(janela):
+                    if len(janela) == 44:
+                        return codigo_barras_para_linha_digitavel(janela)
+                    return janela
+    return None
+
+
+def dados_do_codigo_barras(codigo):
+    """Abre o código de barras de 44 dígitos: emissor, vencimento e valor.
+
+    Valor 0 vira None (boleto "em branco", a preencher no caixa) — 0,00 na
+    planilha seria lido como "cobrança de zero real", que é outra coisa.
+    """
+    digitos = re.sub(r"\D", "", codigo or "")
+    if len(digitos) != 44:
+        return None
+
+    if digitos.startswith("8"):
+        segmento = digitos[1]
+        centavos = int(digitos[4:15])
+        return {
+            "tipo": "Arrecadação",
+            "banco": "",
+            "emissor": "ARRECADAÇÃO — " + SEGMENTOS_ARRECADACAO.get(segmento, "SEGMENTO " + segmento),
+            "vencimento": None,   # não tem posição fixa no código de arrecadação
+            "valor": centavos / 100 if centavos else None,
+        }
+
+    banco = digitos[0:3]
+    centavos = int(digitos[9:19])
+    nome_banco = BANCOS.get(banco, "")
+    return {
+        "tipo": "Boleto bancário",
+        "banco": banco,
+        "emissor": f"{banco} - {nome_banco}" if nome_banco else banco,
+        "vencimento": vencimento_do_fator(digitos[5:9]),
+        "valor": centavos / 100 if centavos else None,
+    }
+
+
+def extrair_dados_boleto(texto, cadastro=None):
+    """
+    Lê um boleto a partir do texto nativo do PDF. Devolve None quando o
+    documento não tem nenhuma linha digitável válida — é assim que a aba de
+    extração separa boleto de nota fiscal e de "outro documento qualquer".
+
+    O documento do pagador sai por `extrair_cnpj_tomador`, o mesmo caminho da
+    codificação, e só é aceito quando está NO CADASTRO: num boleto, o CNPJ que
+    aparece sozinho costuma ser o do beneficiário (quem cobra), não o do
+    condomínio. Preferir o cadastrado é a mesma regra de
+    `desempatar_por_cadastro`; a diferença é que aqui, sem nenhum cadastrado,
+    ninguém é escolhido — não existe "chute" de pagador.
+    """
+    linha = extrair_linha_digitavel(texto)
+    if not linha:
+        return None
+
+    codigo = linha_digitavel_para_codigo_barras(linha)
+    dados = dados_do_codigo_barras(codigo)
+    dados["linha_digitavel"] = formatar_linha_digitavel(linha)
+    dados["codigo_barras"] = codigo
+
+    candidatos = extrair_cnpj_tomador(texto, None, cadastro)
+    cadastrados = [c for c in candidatos if cadastro and c in cadastro]
+    dados["documento_pagador"] = cadastrados[0] if len(cadastrados) == 1 else None
+    dados["nome_pagador"] = sugerir_nome_condominio(texto)
+    return dados
+
+
 #  (rótulo da coluna, largura, formato numérico do Excel)
 COLUNAS_NFSE = [
     ("Arquivo", 38, None),
@@ -1612,23 +1917,85 @@ def linha_planilha_nfse(nome_arquivo, dados, cadastro, observacao=""):
     ]
 
 
-def salvar_planilha_nfse(caminho, linhas):
-    """
-    Grava a planilha de extração. Valores monetários e datas vão como
-    números/datas de verdade (não texto), para poder somar e filtrar no Excel.
-    """
-    wb = Workbook()
-    sheet = wb.active
-    sheet.title = "Notas fiscais"
+#  Aba dos boletos. Linha digitável e código de barras entram como TEXTO, não
+#  número: são 47/44 dígitos, e o Excel transformaria em notação científica,
+#  perdendo os dígitos verificadores que justificam confiar no resto da linha.
+COLUNAS_BOLETO = [
+    ("Arquivo", 38, None),
+    ("Tipo", 16, None),
+    ("Banco / Emissor", 30, None),
+    ("Vencimento", 13, "DD/MM/YYYY"),
+    ("Valor", 14, "R$ #,##0.00"),
+    ("CNPJ / CPF do pagador", 21, None),
+    ("Condomínio", 34, None),
+    ("Código", 10, None),
+    ("Linha digitável", 56, "@"),
+    ("Código de barras", 48, "@"),
+    ("Observação", 44, None),
+]
 
-    sheet.append([c[0] for c in COLUNAS_NFSE])
+
+def linha_planilha_boleto(nome_arquivo, dados, cadastro, observacao=""):
+    """
+    Monta a linha da aba de boletos. O código do condomínio vem do cadastro
+    pelo documento do pagador; quando o boleto não traz o CNPJ do condomínio
+    (acontece: alguns só imprimem o nome), cai para o nome do arquivo, pelo
+    mesmo `buscar_por_nome_arquivo` da codificação — e a observação diz que
+    veio dali, porque essa origem é mais fraca que o CNPJ e quem confere a
+    planilha precisa saber quais linhas olhar.
+    """
+    if dados is None:
+        return [nome_arquivo] + [None] * (len(COLUNAS_BOLETO) - 2) + [observacao]
+
+    documento = dados.get("documento_pagador")
+    registro = cadastro.get(documento) if documento else None
+    codigo = registro["codigo"] if registro else ""
+    nome = registro["nome"] if registro else (dados.get("nome_pagador") or "")
+
+    avisos = [observacao] if observacao else []
+    if not registro:
+        cnpj_nome, _ = buscar_por_nome_arquivo(nome_arquivo, cadastro)
+        registro_nome = cadastro.get(cnpj_nome) if cnpj_nome else None
+        if registro_nome:
+            codigo = registro_nome["codigo"]
+            nome = registro_nome["nome"]
+            avisos.append("Código pelo nome do arquivo — o boleto não traz o "
+                          "CNPJ do condomínio")
+        else:
+            avisos.append("Condomínio não identificado")
+
+    #  Vencimento vazio não é falha de leitura: há emissor que não põe a data
+    #  no código de barras (fator 9999). Dizer isso evita que alguém procure
+    #  bug onde não tem.
+    if dados.get("vencimento") is None and dados.get("tipo") == "Boleto bancário":
+        avisos.append("Código de barras sem vencimento")
+
+    return [
+        nome_arquivo,
+        dados.get("tipo", ""),
+        dados.get("emissor", ""),
+        dados.get("vencimento"),
+        dados.get("valor"),
+        formatar_documento(documento) if documento else "",
+        nome,
+        codigo,
+        dados.get("linha_digitavel", ""),
+        dados.get("codigo_barras", ""),
+        " · ".join(avisos),
+    ]
+
+
+def _preencher_aba(sheet, colunas, linhas):
+    """Cabeçalho em negrito, larguras, formato numérico, painel congelado e
+    autofiltro — o mesmo tratamento nas duas abas da planilha de extração."""
+    sheet.append([c[0] for c in colunas])
     for celula in sheet[1]:
         celula.font = Font(bold=True)
 
     for linha in linhas:
         sheet.append(linha)
 
-    for indice, (_, largura, formato) in enumerate(COLUNAS_NFSE, start=1):
+    for indice, (_, largura, formato) in enumerate(colunas, start=1):
         letra = sheet.cell(row=1, column=indice).column_letter
         sheet.column_dimensions[letra].width = largura
         if formato:
@@ -1637,8 +2004,28 @@ def salvar_planilha_nfse(caminho, linhas):
 
     # Cabeçalho fixo + autofiltro, para conferência no Excel
     sheet.freeze_panes = "A2"
-    ultima_coluna = sheet.cell(row=1, column=len(COLUNAS_NFSE)).column_letter
+    ultima_coluna = sheet.cell(row=1, column=len(colunas)).column_letter
     sheet.auto_filter.ref = f"A1:{ultima_coluna}{sheet.max_row}"
+
+
+def salvar_planilha_nfse(caminho, linhas, linhas_boleto=None):
+    """
+    Grava a planilha de extração. Valores monetários e datas vão como
+    números/datas de verdade (não texto), para poder somar e filtrar no Excel.
+
+    Os boletos vão numa SEGUNDA aba, criada só quando o lote tem algum: as
+    colunas de um boleto (linha digitável, banco, vencimento) não são as de
+    uma nota, e misturar os dois numa aba só deixaria metade das células
+    vazias em cada linha. A aba "Notas fiscais" continua sendo a primeira e
+    existe sempre, com o mesmo layout de antes.
+    """
+    wb = Workbook()
+    sheet = wb.active
+    sheet.title = "Notas fiscais"
+    _preencher_aba(sheet, COLUNAS_NFSE, linhas)
+
+    if linhas_boleto:
+        _preencher_aba(wb.create_sheet("Boletos"), COLUNAS_BOLETO, linhas_boleto)
 
     wb.save(caminho)
 

@@ -129,6 +129,53 @@ similaridade de nome sozinha.
 
 ## Histórico de decisões
 
+- **v6.19.0 — boletos na aba "Extrair dados" (código de barras)**: a aba 2
+  passou a reconhecer boleto além de NFS-e e a escrever cada tipo na sua aba
+  da planilha ("Notas fiscais" e "Boletos"). O que se lê é a **linha
+  digitável** impressa no texto nativo do PDF — que é o **mesmo dado** das
+  barras (Interleaved 2 of 5), só em outra forma; por isso "ler o código de
+  barras" aqui não exige decodificar imagem nenhuma nem dependência nova.
+  De dentro dela saem banco, vencimento e valor.
+  **Por que isso não contraria a regra "sem OCR nesta aba":** a objeção
+  original é que valor e data não têm dígito verificador. A linha digitável
+  tem: um mod 10 em cada um dos três campos e um mod 11 geral sobre o código
+  de barras (`linha_digitavel_valida`, `logica.py`). Valor e vencimento saem
+  de dentro desse número já conferido, não de um campo solto da folha — um
+  dígito lido errado não vira valor errado na planilha, vira linha recusada.
+  Continua valendo que documento sem texto nativo não é lido.
+  **O pagador só é aceito se estiver no cadastro**: num boleto, o CNPJ que
+  aparece sozinho costuma ser o do beneficiário (quem cobra). Sem nenhum
+  cadastrado, ninguém é escolhido — aí tenta-se o nome do arquivo, pelo mesmo
+  `buscar_por_nome_arquivo` da codificação, e a observação diz que o código
+  veio dali (origem mais fraca que o CNPJ, quem confere precisa saber quais
+  linhas olhar). Nos dois boletos reais de referência: o da CAIXA resolveu
+  pelo CNPJ (ANGRENSE, 10760); o do Itaú **não traz o CNPJ do condomínio na
+  folha** e o nome do arquivo ("BoletoMITHRA_01092026.pdf") ficou em 0,67, sob
+  o limiar de 0,72 — sai sem código, de propósito.
+  **Fator de vencimento: só o ciclo em vigor.** O fator estourou os 4 dígitos
+  em 21/02/2025 e a contagem reiniciou em 1000 (22/02/2025). Os dois ciclos
+  usam a mesma faixa, mas toda data do ciclo antigo é anterior ao reinício —
+  boleto vencido há tempo. Ler pelo ciclo novo é determinístico; desempatar
+  "pela data de hoje" faria a mesma barra virar datas diferentes conforme o
+  dia em que a planilha fosse gerada.
+  **`0000` e `9999` são "sem vencimento no código", não erro de leitura.** O
+  9999 não é hipótese de manual: aparece no boleto real do Itaú, que tem
+  15/09/2026 impresso na folha e 9999 na barra. A célula sai vazia e a
+  observação diz o motivo, para ninguém procurar bug onde não tem.
+  **A conferência dos DVs é que sustenta o recorte do número**, e não o
+  contrário: o pypdf enfia um espaço dentro do último campo e cola o que vem
+  depois ("...0000018 848 341-7"), deixando o trecho com 50 dígitos. Por isso
+  `extrair_linha_digitavel` testa janelas de 47/48/44 dígitos dentro do
+  candidato, e também uma passada com as quebras de linha emendadas (mesma
+  quebra-no-meio que derrubava o rótulo da NFS-e na v6.18.1).
+  Contas de concessionária (água, luz, gás) entram pelo código de
+  **arrecadação** — 48 dígitos começando com 8, sem banco e sem fator de
+  vencimento, com DV em módulo 10 ou 11 conforme o 3º dígito.
+  Testes em `tests/test_extracao_boleto.py`, sobre as fixtures
+  `boleto_caixa.txt` e `boleto_sem_vencimento.txt`. As duas linhas digitáveis
+  usadas nos testes são de boletos reais, inteiras: número inventado à mão
+  passaria ou falharia por construção e não provaria nada.
+
 - **v6.18.1 — a nota inteira era descartada porque "NFS-e" quebrava a linha
   no meio do rótulo**: nas notas da F&F de agosto/2026 (DANFSe v2.0), o
   rótulo do cabeçalho cai na borda da coluna e o hífen fica numa linha e o
@@ -665,6 +712,22 @@ código já presente no nome do arquivo em 1.948 de 1.951 (99,85%).
   troca entre códigos vizinhos. Bom exemplo de por que se identifica por CNPJ.
 - `PCMSO 11095 Serra Azul.pdf` e `PCMSO 10710 Martinica.pdf` estão em pastas
   PCMSO mas são "Detalhamento do Faturamento", não NFS-e.
+
+
+### Boletos na mesma aba (v6.19.0)
+
+A aba lê **NFS-e e boleto** no mesmo lote: cada arquivo é testado primeiro
+como DANFSe e, se não for, como boleto (`extrair_dados_boleto`, `logica.py`).
+Quem reconhece decide para qual aba da planilha a linha vai — "Notas fiscais"
+(sempre) e "Boletos" (só quando o lote tem algum). Colunas do boleto: tipo,
+banco/emissor, vencimento, valor, CNPJ/CPF do pagador, condomínio, código,
+linha digitável e código de barras. As duas últimas vão como **texto**: são
+47 e 44 dígitos, e o Excel os transformaria em notação científica, perdendo
+justamente os dígitos verificadores que autorizam confiar no resto da linha.
+
+O raciocínio de por que aqui o dado é confiável (DVs), de como o pagador é
+identificado e do que fazer quando a barra não traz vencimento está no
+Histórico de decisões, v6.19.0.
 
 ## Contagem dos Protocolos dos Correios (aba 3)
 

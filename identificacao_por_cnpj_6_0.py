@@ -74,6 +74,7 @@ from logica import (
     buscar_por_nome_arquivo, desempatar_por_cadastro, candidatos_por_nome,
     criar_overlay, processar_pdf, carregar_cadastro, salvar_cadastro,
     extrair_dados_nfse, linha_planilha_nfse, salvar_planilha_nfse,
+    extrair_dados_boleto, linha_planilha_boleto,
     extrair_dados_protocolo_correio, conferir_contagem_protocolo,
     valor_protocolo, formatar_reais,
     converter_valor_digitado,
@@ -206,7 +207,7 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("Dark" if self.nome_tema == "escuro" else "Light")
 
         super().__init__()
-        self.title("Codificador v6.18.1")
+        self.title("Codificador v6.19.0")
         self.geometry("780x680")
         self.minsize(620, 420)
         self.resizable(True, True)
@@ -2245,8 +2246,9 @@ class App(ctk.CTk):
     def _montar_aba_extracao(self, parent_externo):
         """
         Contrapartida do carimbo: em vez de escrever o código no PDF, lê os
-        dados das NFS-e da pasta e gera uma planilha. Mesma linguagem visual
-        da tela Principal (Swiss, cantos retos, cobalto só no botão primário).
+        dados das NFS-e e dos boletos da pasta e gera uma planilha (uma aba
+        para cada tipo de documento). Mesma linguagem visual da tela Principal
+        (Swiss, cantos retos, cobalto só no botão primário).
         """
         tema = self.tema_atual
         fonte = familia_fonte()
@@ -2281,7 +2283,7 @@ class App(ctk.CTk):
         titulo.pack(anchor="w")
 
         subtitulo = registrar(
-            ctk.CTkLabel(bloco_titulo, text="NOTAS FISCAIS PARA PLANILHA", font=(fonte, 11),
+            ctk.CTkLabel(bloco_titulo, text="NOTAS FISCAIS E BOLETOS PARA PLANILHA", font=(fonte, 11),
                          text_color=tema["texto_secundario"], anchor="w"),
             {"text_color": "texto_secundario"},
         )
@@ -2336,7 +2338,7 @@ class App(ctk.CTk):
             )
             botao.grid(row=0, column=1)
 
-        montar_campo(0, "PASTA COM AS NOTAS", self.pasta_notas, self._escolher_pasta_notas)
+        montar_campo(0, "PASTA COM OS DOCUMENTOS", self.pasta_notas, self._escolher_pasta_notas)
         montar_campo(2, "SALVAR PLANILHA EM", self.arquivo_planilha_saida,
                      self._escolher_planilha_saida)
 
@@ -2355,9 +2357,11 @@ class App(ctk.CTk):
         explicacao = registrar(
             ctk.CTkLabel(
                 corpo,
-                text=("Lê as notas fiscais da pasta e gera uma planilha com os dados de cada "
-                      "uma. Não altera os PDFs. Notas escaneadas não são lidas — só as que "
-                      "têm texto."),
+                text=("Lê as notas fiscais e os boletos da pasta e gera uma planilha com os "
+                      "dados de cada um — dos boletos, o código de barras, o banco, o "
+                      "vencimento e o valor. Cada tipo vai para a sua aba da planilha. "
+                      "Não altera os PDFs. Documentos escaneados não são lidos — só os "
+                      "que têm texto."),
                 font=(fonte, 13), text_color=tema["texto_terciario"],
                 justify="left", anchor="w", wraplength=640,
             ),
@@ -2378,14 +2382,14 @@ class App(ctk.CTk):
         self._atualizar_botao_extrair()
 
     def _escolher_pasta_notas(self):
-        pasta = filedialog.askdirectory(title="Selecione a pasta com as notas fiscais")
+        pasta = filedialog.askdirectory(title="Selecione a pasta com as notas fiscais e os boletos")
         if pasta:
             self.pasta_notas.set(pasta)
             # Sugere um destino junto da pasta escolhida, para o usuário não
             # precisar decidir nada quando só quer a planilha rapidamente.
-            nome_pasta = os.path.basename(os.path.normpath(pasta)) or "notas"
+            nome_pasta = os.path.basename(os.path.normpath(pasta)) or "documentos"
             self.arquivo_planilha_saida.set(
-                os.path.join(pasta, f"dados_notas_{nome_pasta}.xlsx"))
+                os.path.join(pasta, f"dados_{nome_pasta}.xlsx"))
         self._atualizar_botao_extrair()
 
     def _escolher_planilha_saida(self):
@@ -2394,7 +2398,7 @@ class App(ctk.CTk):
             title="Salvar planilha como",
             defaultextension=".xlsx",
             filetypes=[("Excel", "*.xlsx")],
-            initialfile=os.path.basename(atual) if atual else "dados_notas.xlsx",
+            initialfile=os.path.basename(atual) if atual else "dados_documentos.xlsx",
             initialdir=os.path.dirname(atual) if atual else None,
         )
         if caminho:
@@ -2412,7 +2416,7 @@ class App(ctk.CTk):
                 quantidade = 0
 
         if quantidade > 0 and self.arquivo_planilha_saida.get().strip():
-            plural = "nota" if quantidade == 1 else "notas"
+            plural = "documento" if quantidade == 1 else "documentos"
             self.botao_extrair.configure(
                 text=f"Extrair dados de {quantidade} {plural}", state="normal")
         else:
@@ -2423,7 +2427,7 @@ class App(ctk.CTk):
         destino = self.arquivo_planilha_saida.get().strip()
 
         if not pasta or not os.path.isdir(pasta):
-            messagebox.showerror("Erro", "Selecione a pasta com as notas fiscais.")
+            messagebox.showerror("Erro", "Selecione a pasta com os documentos.")
             return
         if not destino:
             messagebox.showerror("Erro", "Escolha onde salvar a planilha.")
@@ -2435,7 +2439,7 @@ class App(ctk.CTk):
             return
 
         self.botao_extrair.configure(state="disabled")
-        self.label_status_extracao.configure(text="Lendo as notas...")
+        self.label_status_extracao.configure(text="Lendo os documentos...")
 
         thread = threading.Thread(
             target=self._extrair_em_thread, args=(pasta, destino), daemon=True)
@@ -2447,13 +2451,20 @@ class App(ctk.CTk):
         linhas da planilha. Sem OCR de propósito — ver a nota em logica.py,
         seção de extração: valor e data não têm dígito verificador, então uma
         leitura errada entraria na planilha sem ninguém perceber.
+
+        Cada arquivo é testado primeiro como NFS-e e depois como boleto, e vai
+        para a aba do tipo que reconhecer. A ordem importa pouco (uma DANFSe
+        não tem linha digitável válida e um boleto não tem os rótulos do
+        DANFSe), mas mantém o caminho das notas exatamente como era.
         """
         arquivos = sorted(f for f in os.listdir(pasta) if f.lower().endswith(".pdf"))
         total = len(arquivos)
         self.after(0, lambda: self.barra_extracao.configure(maximum=total, value=0))
 
         linhas = []
+        linhas_boleto = []
         extraidas = 0
+        boletos = 0
         ignoradas = 0
         sem_cadastro = 0
 
@@ -2463,32 +2474,41 @@ class App(ctk.CTk):
                        self.label_status_extracao.configure(text=f"Lendo {i} de {total}: {n}"))
 
             dados = None
+            dados_boleto = None
             observacao = ""
             try:
                 texto = extrair_texto_pdf(caminho)
                 if len(texto.strip()) < LIMITE_TEXTO_MINIMO:
-                    observacao = "Nota escaneada — não foi possível ler"
+                    observacao = "Documento escaneado — não foi possível ler"
                 else:
                     dados = extrair_dados_nfse(texto)
                     if dados is None:
-                        observacao = "Não é uma nota fiscal (outro tipo de documento)"
+                        dados_boleto = extrair_dados_boleto(texto, self.cadastro)
+                    if dados is None and dados_boleto is None:
+                        observacao = "Não é nota fiscal nem boleto (outro documento)"
             except Exception as e:
                 observacao = f"Erro ao ler: {e}"
 
-            linha = linha_planilha_nfse(nome, dados, self.cadastro, observacao)
-            linhas.append(linha)
-
-            if dados is None:
-                ignoradas += 1
-            else:
-                extraidas += 1
-                if not linha[6]:           # coluna "Código" vazia
+            if dados_boleto is not None:
+                linha = linha_planilha_boleto(nome, dados_boleto, self.cadastro)
+                linhas_boleto.append(linha)
+                boletos += 1
+                if not linha[7]:           # coluna "Código" vazia
                     sem_cadastro += 1
+            else:
+                linha = linha_planilha_nfse(nome, dados, self.cadastro, observacao)
+                linhas.append(linha)
+                if dados is None:
+                    ignoradas += 1
+                else:
+                    extraidas += 1
+                    if not linha[6]:       # coluna "Código" vazia
+                        sem_cadastro += 1
 
             self.after(0, lambda v=indice: self.barra_extracao.configure(value=v))
 
         try:
-            salvar_planilha_nfse(destino, linhas)
+            salvar_planilha_nfse(destino, linhas, linhas_boleto)
         except Exception as e:
             #  `erro=e` como argumento padrão: o `except ... as e` desvincula
             #  `e` ao sair do bloco, e o `self.after` só executa a lambda bem
@@ -2504,8 +2524,10 @@ class App(ctk.CTk):
             return
 
         resumo = f"{extraidas} nota(s) extraída(s)"
+        if boletos:
+            resumo += f" · {boletos} boleto(s) lido(s)"
         if sem_cadastro:
-            resumo += f" · {sem_cadastro} com CNPJ fora do cadastro"
+            resumo += f" · {sem_cadastro} sem condomínio identificado"
         if ignoradas:
             resumo += f" · {ignoradas} arquivo(s) ignorado(s)"
 
