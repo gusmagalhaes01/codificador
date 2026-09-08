@@ -129,7 +129,7 @@ similaridade de nome sozinha.
 
 ## Histórico de decisões
 
-- **v6.19.0 — boletos na aba "Extrair dados" (código de barras)**: a aba 2
+- **v6.18.2 — boletos na aba "Extrair dados" (código de barras)**: a aba 2
   passou a reconhecer boleto além de NFS-e e a escrever cada tipo na sua aba
   da planilha ("Notas fiscais" e "Boletos"). O que se lê é a **linha
   digitável** impressa no texto nativo do PDF — que é o **mesmo dado** das
@@ -714,7 +714,7 @@ código já presente no nome do arquivo em 1.948 de 1.951 (99,85%).
   PCMSO mas são "Detalhamento do Faturamento", não NFS-e.
 
 
-### Boletos na mesma aba (v6.19.0)
+### Boletos na mesma aba (v6.18.2)
 
 A aba lê **NFS-e e boleto** no mesmo lote: cada arquivo é testado primeiro
 como DANFSe e, se não for, como boleto (`extrair_dados_boleto`, `logica.py`).
@@ -739,7 +739,7 @@ verificadores que autorizam confiar no valor lido da barra.
 
 O raciocínio de por que aqui o dado é confiável (DVs), de como o pagador é
 identificado e do que fazer quando a barra não traz vencimento está no
-Histórico de decisões, v6.19.0.
+Histórico de decisões, v6.18.2.
 
 ## Contagem dos Protocolos dos Correios (aba 3)
 
