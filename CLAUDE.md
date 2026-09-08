@@ -730,17 +730,19 @@ acrescentar a coluna em `COLUNAS_BOLETO` e o campo em `linha_planilha_boleto`.
 
 **Linha digitável e código de barras são o MESMO dado em duas formas, e as
 duas colunas existem de propósito:** a linha digitável é o número impresso na
-parte de cima do boleto — dá para conferir a olho contra o papel e digitar no
-banco —, e sai pontuada como no papel (`formatar_linha_digitavel`); o código
-de barras é o que as barras carregam, 44 dígitos corridos.
+parte de cima do boleto, o que se digita no banco; o código de barras é o que
+as barras carregam. As duas saem **só com dígitos** (47 e 44), sem os pontos e
+espaços da impressão — é assim que o número é colado num sistema de pagamento
+ou cruzado com outra planilha, e limpar a pontuação à mão toda vez seria
+trabalho repetido.
 
 **Célula vazia em vencimento ou valor não é falha de leitura da barra** e a
 observação diz isso: há emissor que não põe a data no código (fator 9999) e
 existe boleto "em branco", com valor zerado a preencher no caixa.
 
-As duas vão como **texto**: são 47 e 44 dígitos, e o Excel os transformaria
-em notação científica, perdendo justamente os dígitos verificadores que
-autorizam confiar no valor lido da barra.
+As duas vão como **texto**: em número, o Excel as transformaria em notação
+científica, perdendo justamente os dígitos verificadores que autorizam
+confiar no valor lido da barra.
 
 O raciocínio de por que aqui o dado é confiável (DVs), de como o pagador é
 identificado e do que fazer quando a barra não traz vencimento está no

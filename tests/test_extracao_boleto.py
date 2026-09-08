@@ -70,11 +70,6 @@ class TestConversaoBarra(unittest.TestCase):
         self.assertTrue(app.codigo_barras_valido(codigo))
         self.assertEqual(app.codigo_barras_para_linha_digitavel(codigo), LINHA_CAIXA)
 
-    def test_formatacao_igual_a_impressa_no_papel(self):
-        self.assertEqual(
-            app.formatar_linha_digitavel(LINHA_CAIXA),
-            "10498.05755 32180.100045 00000.763854 1 15650000025000")
-
 
 class TestFatorDeVencimento(unittest.TestCase):
     def test_fator_do_boleto_real_da_caixa(self):
@@ -180,7 +175,7 @@ class TestLinhaDaPlanilha(unittest.TestCase):
         # são o entorno.
         linha = app.linha_planilha_boleto("boleto.pdf", self.dados, CADASTRO_TESTE)
         self.assertEqual(linha[0], "boleto.pdf")
-        self.assertEqual(linha[1], app.formatar_linha_digitavel(LINHA_CAIXA))
+        self.assertEqual(linha[1], LINHA_CAIXA)
         self.assertEqual(linha[2], app.linha_digitavel_para_codigo_barras(LINHA_CAIXA))
         self.assertEqual(linha[3], "KLOSTERS")
         self.assertEqual(linha[4], "10004")
@@ -188,12 +183,14 @@ class TestLinhaDaPlanilha(unittest.TestCase):
         self.assertEqual(linha[6], 250.0)
         self.assertEqual(linha[7], "")
 
-    def test_linha_digitavel_igual_a_impressa_no_boleto(self):
-        # É o número que a pessoa lê na parte de cima do papel: sai pontuado,
-        # como impresso, para conferir a olho e digitar no banco.
+    def test_linha_digitavel_sai_sem_pontos_nem_espacos(self):
+        # É o número que a pessoa lê na parte de cima do papel, mas na
+        # planilha ele vai cru: assim se cola num sistema de pagamento ou se
+        # cruza com outra planilha sem ter de limpar a pontuação à mão.
         linha = app.linha_planilha_boleto("boleto.pdf", self.dados, CADASTRO_TESTE)
-        self.assertEqual(linha[1],
-                         "10498.05755 32180.100045 00000.763854 1 15650000025000")
+        self.assertEqual(linha[1], "10498057553218010004500000763854115650000025000")
+        self.assertEqual(len(linha[1]), 47)
+        self.assertTrue(linha[1].isdigit())
 
     def test_os_dois_numeros_saem_como_texto(self):
         # 47 e 44 dígitos: como número, o Excel viraria notação científica e
@@ -258,8 +255,7 @@ class TestPlanilhaComDuasAbas(unittest.TestCase):
         self.assertEqual(aba.cell(row=2, column=6).value,
                          datetime.datetime(2026, 9, 10))
         self.assertEqual(aba.cell(row=2, column=7).value, 250.0)
-        self.assertEqual(aba.cell(row=2, column=2).value,
-                         app.formatar_linha_digitavel(LINHA_CAIXA))
+        self.assertEqual(aba.cell(row=2, column=2).value, LINHA_CAIXA)
         self.assertEqual(aba.cell(row=2, column=3).value,
                          app.linha_digitavel_para_codigo_barras(LINHA_CAIXA))
 

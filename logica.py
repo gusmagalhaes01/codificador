@@ -1747,17 +1747,6 @@ def linha_digitavel_valida(linha):
     return False
 
 
-def formatar_linha_digitavel(linha):
-    """Deixa a linha digitável na forma impressa no boleto, para conferir a
-    olho contra o papel."""
-    d = re.sub(r"\D", "", linha or "")
-    if len(d) == 47:
-        return f"{d[0:5]}.{d[5:10]} {d[10:15]}.{d[15:21]} {d[21:26]}.{d[26:32]} {d[32]} {d[33:47]}"
-    if len(d) == 48:
-        return f"{d[0:12]} {d[12:24]} {d[24:36]} {d[36:48]}"
-    return d
-
-
 def _janelas_de_digitos(trecho):
     """Todas as sequências de 47, 48 e 44 dígitos dentro de um candidato, do
     formato mais longo para o mais curto.
@@ -1851,7 +1840,10 @@ def extrair_dados_boleto(texto, cadastro=None):
 
     codigo = linha_digitavel_para_codigo_barras(linha)
     dados = dados_do_codigo_barras(codigo)
-    dados["linha_digitavel"] = formatar_linha_digitavel(linha)
+    #  Só dígitos, sem os pontos e espaços da impressão: é assim que o número
+    #  é colado num sistema de pagamento ou conferido contra outra planilha —
+    #  a pontuação teria de ser tirada à mão toda vez.
+    dados["linha_digitavel"] = linha
     dados["codigo_barras"] = codigo
 
     candidatos = extrair_cnpj_tomador(texto, None, cadastro)
@@ -1927,12 +1919,12 @@ def linha_planilha_nfse(nome_arquivo, dados, cadastro, observacao=""):
 #
 #  Linha digitável e código de barras são O MESMO dado em duas formas, e as
 #  duas colunas existem porque servem a usos diferentes: a linha digitável é o
-#  que está impresso em cima do boleto (dá para conferir a olho contra o papel
-#  e digitar no banco), o código de barras é o que as barras carregam.
+#  número impresso em cima do boleto, o que se digita no banco; o código de
+#  barras é o que as barras carregam.
 #
-#  Os dois entram como TEXTO, não número: são 47 e 44 dígitos, e o Excel
-#  transformaria em notação científica, perdendo justamente os dígitos
-#  verificadores que justificam confiar no valor lido da barra.
+#  Os dois entram como TEXTO, não número, e sem pontuação: são 47 e 44
+#  dígitos, e o Excel transformaria em notação científica, perdendo justamente
+#  os dígitos verificadores que justificam confiar no valor lido da barra.
 COLUNAS_BOLETO = [
     ("Arquivo", 38, None),
     ("Linha digitável", 56, "@"),
