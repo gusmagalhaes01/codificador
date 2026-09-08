@@ -1921,10 +1921,9 @@ def linha_planilha_nfse(nome_arquivo, dados, cadastro, observacao=""):
 #  o boleto e quanto é —, mais o arquivo de origem (para achar o PDF) e a
 #  observação (para explicar célula vazia).
 #
-#  Banco, vencimento, CNPJ do pagador e linha digitável SÃO lidos e continuam
-#  disponíveis em `extrair_dados_boleto`; só não entram na planilha. Voltar
-#  qualquer um deles é acrescentar a coluna aqui e o campo em
-#  `linha_planilha_boleto`.
+#  Banco, CNPJ do pagador e linha digitável SÃO lidos e continuam disponíveis
+#  em `extrair_dados_boleto`; só não entram na planilha. Voltar qualquer um
+#  deles é acrescentar a coluna aqui e o campo em `linha_planilha_boleto`.
 #
 #  O código de barras entra como TEXTO, não número: são 44 dígitos, e o Excel
 #  transformaria em notação científica, perdendo justamente os dígitos
@@ -1934,6 +1933,7 @@ COLUNAS_BOLETO = [
     ("Código de barras", 48, "@"),
     ("Condomínio", 34, None),
     ("Código", 10, None),
+    ("Vencimento", 13, "DD/MM/YYYY"),
     ("Valor", 14, "R$ #,##0.00"),
     ("Observação", 44, None),
 ]
@@ -1968,9 +1968,12 @@ def linha_planilha_boleto(nome_arquivo, dados, cadastro, observacao=""):
         else:
             avisos.append("Condomínio não identificado")
 
-    #  Valor zerado (boleto "em branco", a preencher no caixa) chega como None
-    #  em `dados_do_codigo_barras`. Sem aviso, a célula vazia pareceria falha
-    #  de leitura da barra, que é o oposto do que aconteceu.
+    #  Célula vazia em vencimento ou valor não é falha de leitura da barra: há
+    #  emissor que não põe a data no código (fator 9999, visto num boleto real
+    #  do Itaú) e existe boleto "em branco", com valor zerado a preencher no
+    #  caixa. Dizer isso evita que alguém procure bug onde não tem.
+    if dados.get("vencimento") is None and dados.get("tipo") == "Boleto bancário":
+        avisos.append("Código de barras sem vencimento")
     if dados.get("valor") is None:
         avisos.append("Código de barras sem valor")
 
@@ -1979,6 +1982,7 @@ def linha_planilha_boleto(nome_arquivo, dados, cadastro, observacao=""):
         dados.get("codigo_barras", ""),
         nome,
         codigo,
+        dados.get("vencimento"),
         dados.get("valor"),
         " · ".join(avisos),
     ]

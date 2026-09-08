@@ -2358,9 +2358,10 @@ class App(ctk.CTk):
             ctk.CTkLabel(
                 corpo,
                 text=("Lê as notas fiscais e os boletos da pasta e gera uma planilha com os "
-                      "dados de cada um — dos boletos, o código de barras, o condomínio e "
-                      "o valor. Cada tipo vai para a sua aba da planilha. Não altera os "
-                      "PDFs. Documentos escaneados não são lidos — só os que têm texto."),
+                      "dados de cada um — dos boletos, o código de barras, o condomínio, o "
+                      "vencimento e o valor. Cada tipo vai para a sua aba da planilha. "
+                      "Não altera os PDFs. Documentos escaneados não são lidos — só os "
+                      "que têm texto."),
                 font=(fonte, 13), text_color=tema["texto_terciario"],
                 justify="left", anchor="w", wraplength=640,
             ),
