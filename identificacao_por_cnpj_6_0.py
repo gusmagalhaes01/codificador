@@ -207,7 +207,7 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("Dark" if self.nome_tema == "escuro" else "Light")
 
         super().__init__()
-        self.title("Codificador v6.18.2")
+        self.title("Codificador v6.18.3")
         self.geometry("780x680")
         self.minsize(620, 420)
         self.resizable(True, True)
@@ -2358,8 +2358,8 @@ class App(ctk.CTk):
             ctk.CTkLabel(
                 corpo,
                 text=("Lê as notas fiscais e os boletos da pasta e gera uma planilha com os "
-                      "dados de cada um — dos boletos, o código de barras, o condomínio, o "
-                      "vencimento e o valor. Cada tipo vai para a sua aba da planilha. "
+                      "dados de cada um — dos boletos, a linha digitável, o código de "
+                      "barras, o condomínio, o vencimento e o valor. Cada tipo vai para a sua aba da planilha. "
                       "Não altera os PDFs. Documentos escaneados não são lidos — só os "
                       "que têm texto."),
                 font=(fonte, 13), text_color=tema["texto_terciario"],
@@ -2493,7 +2493,7 @@ class App(ctk.CTk):
                 linha = linha_planilha_boleto(nome, dados_boleto, self.cadastro)
                 linhas_boleto.append(linha)
                 boletos += 1
-                if not linha[3]:           # coluna "Código" vazia
+                if not linha[4]:           # coluna "Código" vazia
                     sem_cadastro += 1
             else:
                 linha = linha_planilha_nfse(nome, dados, self.cadastro, observacao)

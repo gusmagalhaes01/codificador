@@ -1921,15 +1921,21 @@ def linha_planilha_nfse(nome_arquivo, dados, cadastro, observacao=""):
 #  o boleto e quanto é —, mais o arquivo de origem (para achar o PDF) e a
 #  observação (para explicar célula vazia).
 #
-#  Banco, CNPJ do pagador e linha digitável SÃO lidos e continuam disponíveis
-#  em `extrair_dados_boleto`; só não entram na planilha. Voltar qualquer um
-#  deles é acrescentar a coluna aqui e o campo em `linha_planilha_boleto`.
+#  Banco e CNPJ do pagador SÃO lidos e continuam disponíveis em
+#  `extrair_dados_boleto`; só não entram na planilha. Voltar qualquer um deles
+#  é acrescentar a coluna aqui e o campo em `linha_planilha_boleto`.
 #
-#  O código de barras entra como TEXTO, não número: são 44 dígitos, e o Excel
+#  Linha digitável e código de barras são O MESMO dado em duas formas, e as
+#  duas colunas existem porque servem a usos diferentes: a linha digitável é o
+#  que está impresso em cima do boleto (dá para conferir a olho contra o papel
+#  e digitar no banco), o código de barras é o que as barras carregam.
+#
+#  Os dois entram como TEXTO, não número: são 47 e 44 dígitos, e o Excel
 #  transformaria em notação científica, perdendo justamente os dígitos
 #  verificadores que justificam confiar no valor lido da barra.
 COLUNAS_BOLETO = [
     ("Arquivo", 38, None),
+    ("Linha digitável", 56, "@"),
     ("Código de barras", 48, "@"),
     ("Condomínio", 34, None),
     ("Código", 10, None),
@@ -1979,6 +1985,7 @@ def linha_planilha_boleto(nome_arquivo, dados, cadastro, observacao=""):
 
     return [
         nome_arquivo,
+        dados.get("linha_digitavel", ""),
         dados.get("codigo_barras", ""),
         nome,
         codigo,

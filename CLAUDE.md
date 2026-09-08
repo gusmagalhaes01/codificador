@@ -721,21 +721,26 @@ como DANFSe e, se não for, como boleto (`extrair_dados_boleto`, `logica.py`).
 Quem reconhece decide para qual aba da planilha a linha vai — "Notas fiscais"
 (sempre) e "Boletos" (só quando o lote tem algum).
 
-**Colunas do boleto: arquivo, código de barras, condomínio, código,
-vencimento, valor e observação** — o que o usuário pediu para conferir (a
-barra, de quem é o boleto, quando vence e quanto é), com o arquivo para achar
-o PDF e a observação para explicar célula vazia. Banco, CNPJ do pagador e
-linha digitável **são lidos e continuam em `extrair_dados_boleto`**; só não
-entram na planilha. Devolver qualquer um é acrescentar a coluna em
-`COLUNAS_BOLETO` e o campo em `linha_planilha_boleto`.
+**Colunas do boleto: arquivo, linha digitável, código de barras, condomínio,
+código, vencimento, valor e observação** — o que o usuário pediu para
+conferir, com o arquivo para achar o PDF e a observação para explicar célula
+vazia. Banco e CNPJ do pagador **são lidos e continuam em
+`extrair_dados_boleto`**; só não entram na planilha. Devolver qualquer um é
+acrescentar a coluna em `COLUNAS_BOLETO` e o campo em `linha_planilha_boleto`.
+
+**Linha digitável e código de barras são o MESMO dado em duas formas, e as
+duas colunas existem de propósito:** a linha digitável é o número impresso na
+parte de cima do boleto — dá para conferir a olho contra o papel e digitar no
+banco —, e sai pontuada como no papel (`formatar_linha_digitavel`); o código
+de barras é o que as barras carregam, 44 dígitos corridos.
 
 **Célula vazia em vencimento ou valor não é falha de leitura da barra** e a
 observação diz isso: há emissor que não põe a data no código (fator 9999) e
 existe boleto "em branco", com valor zerado a preencher no caixa.
 
-O código de barras vai como **texto**: são 44 dígitos, e o Excel os
-transformaria em notação científica, perdendo justamente os dígitos
-verificadores que autorizam confiar no valor lido da barra.
+As duas vão como **texto**: são 47 e 44 dígitos, e o Excel os transformaria
+em notação científica, perdendo justamente os dígitos verificadores que
+autorizam confiar no valor lido da barra.
 
 O raciocínio de por que aqui o dado é confiável (DVs), de como o pagador é
 identificado e do que fazer quando a barra não traz vencimento está no
