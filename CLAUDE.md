@@ -160,8 +160,10 @@ similaridade de nome sozinha.
   dia em que a planilha fosse gerada.
   **`0000` e `9999` são "sem vencimento no código", não erro de leitura.** O
   9999 não é hipótese de manual: aparece no boleto real do Itaú, que tem
-  15/09/2026 impresso na folha e 9999 na barra. A célula sai vazia e a
-  observação diz o motivo, para ninguém procurar bug onde não tem.
+  15/09/2026 impresso na folha e 9999 na barra. O vencimento saiu das colunas
+  da planilha depois (ver "Boletos na mesma aba"), mas continua sendo lido —
+  e quem for trazê-lo de volta precisa saber que a célula vem vazia nesses
+  casos, sem que nada esteja errado.
   **A conferência dos DVs é que sustenta o recorte do número**, e não o
   contrário: o pypdf enfia um espaço dentro do último campo e cola o que vem
   depois ("...0000018 848 341-7"), deixando o trecho com 50 dígitos. Por isso
@@ -719,11 +721,19 @@ código já presente no nome do arquivo em 1.948 de 1.951 (99,85%).
 A aba lê **NFS-e e boleto** no mesmo lote: cada arquivo é testado primeiro
 como DANFSe e, se não for, como boleto (`extrair_dados_boleto`, `logica.py`).
 Quem reconhece decide para qual aba da planilha a linha vai — "Notas fiscais"
-(sempre) e "Boletos" (só quando o lote tem algum). Colunas do boleto: tipo,
-banco/emissor, vencimento, valor, CNPJ/CPF do pagador, condomínio, código,
-linha digitável e código de barras. As duas últimas vão como **texto**: são
-47 e 44 dígitos, e o Excel os transformaria em notação científica, perdendo
-justamente os dígitos verificadores que autorizam confiar no resto da linha.
+(sempre) e "Boletos" (só quando o lote tem algum).
+
+**Colunas do boleto: arquivo, código de barras, condomínio, código e
+observação, mais o valor** — foi o que o usuário pediu para conferir (a
+barra, de quem é o boleto e quanto é), com o arquivo para achar o PDF e a
+observação para explicar célula vazia. Banco, vencimento, CNPJ do pagador e
+linha digitável **são lidos e continuam em `extrair_dados_boleto`**; só não
+entram na planilha. Devolver qualquer um é acrescentar a coluna em
+`COLUNAS_BOLETO` e o campo em `linha_planilha_boleto`.
+
+O código de barras vai como **texto**: são 44 dígitos, e o Excel os
+transformaria em notação científica, perdendo justamente os dígitos
+verificadores que autorizam confiar no valor lido da barra.
 
 O raciocínio de por que aqui o dado é confiável (DVs), de como o pagador é
 identificado e do que fazer quando a barra não traz vencimento está no

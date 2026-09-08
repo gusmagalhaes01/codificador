@@ -174,32 +174,38 @@ class TestLinhaDaPlanilha(unittest.TestCase):
     def setUp(self):
         self.dados = app.extrair_dados_boleto(ler("boleto_caixa.txt"), CADASTRO_TESTE)
 
-    def test_codigo_vem_do_cadastro_pelo_cnpj(self):
+    def test_as_quatro_colunas_pedidas(self):
+        # Barra, condomínio (nome e código) e valor — o que a planilha existe
+        # para mostrar; arquivo e observação são o entorno.
         linha = app.linha_planilha_boleto("boleto.pdf", self.dados, CADASTRO_TESTE)
-        self.assertEqual(linha[5], "01.195.716/0001-54")
-        self.assertEqual(linha[6], "KLOSTERS")
-        self.assertEqual(linha[7], "10004")
-        self.assertEqual(linha[10], "")
+        self.assertEqual(linha[0], "boleto.pdf")
+        self.assertEqual(linha[1], app.linha_digitavel_para_codigo_barras(LINHA_CAIXA))
+        self.assertEqual(linha[2], "KLOSTERS")
+        self.assertEqual(linha[3], "10004")
+        self.assertEqual(linha[4], 250.0)
+        self.assertEqual(linha[5], "")
 
-    def test_linha_e_barra_saem_como_texto(self):
+    def test_barra_sai_como_texto(self):
+        # 44 dígitos: como número, o Excel viraria notação científica e comeria
+        # os dígitos verificadores.
         linha = app.linha_planilha_boleto("boleto.pdf", self.dados, CADASTRO_TESTE)
-        self.assertEqual(linha[8], app.formatar_linha_digitavel(LINHA_CAIXA))
-        self.assertEqual(linha[9], app.linha_digitavel_para_codigo_barras(LINHA_CAIXA))
-        self.assertIsInstance(linha[9], str)
+        self.assertIsInstance(linha[1], str)
+        self.assertEqual(len(linha[1]), 44)
 
     def test_sem_cnpj_no_boleto_cai_para_o_nome_do_arquivo_e_avisa(self):
         dados = app.extrair_dados_boleto(ler("boleto_sem_vencimento.txt"), CADASTRO_TESTE)
         linha = app.linha_planilha_boleto("Boleto SAN REMO 09.26.pdf", dados,
                                           CADASTRO_TESTE)
-        self.assertEqual(linha[7], "10002")
-        self.assertIn("nome do arquivo", linha[10])
+        self.assertEqual(linha[2], "SAN REMO")
+        self.assertEqual(linha[3], "10002")
+        self.assertIn("nome do arquivo", linha[5])
 
-    def test_sem_vencimento_na_barra_a_planilha_diz_o_motivo(self):
+    def test_condominio_nao_identificado_e_dito_na_observacao(self):
         dados = app.extrair_dados_boleto(ler("boleto_sem_vencimento.txt"), CADASTRO_TESTE)
         linha = app.linha_planilha_boleto("desconhecido.pdf", dados, CADASTRO_TESTE)
-        self.assertIsNone(linha[3])
-        self.assertIn("sem vencimento", linha[10])
-        self.assertIn("não identificado", linha[10])
+        self.assertEqual(linha[2], "")
+        self.assertEqual(linha[3], "")
+        self.assertIn("não identificado", linha[5])
 
     def test_arquivo_ignorado_mantem_o_formato_da_linha(self):
         linha = app.linha_planilha_boleto("x.pdf", None, CADASTRO_TESTE, "Erro ao ler")
@@ -222,16 +228,19 @@ class TestPlanilhaComDuasAbas(unittest.TestCase):
         app.salvar_planilha_nfse(self.caminho, [], [self.linha_boleto])
         wb = load_workbook(self.caminho)
         self.assertEqual(wb.sheetnames, ["Notas fiscais", "Boletos"])
-        self.assertEqual(wb["Boletos"].cell(row=1, column=1).value, "Arquivo")
-        self.assertEqual(wb["Boletos"].cell(row=2, column=8).value, "10004")
+        self.assertEqual(
+            [c.value for c in wb["Boletos"][1]],
+            ["Arquivo", "Código de barras", "Condomínio", "Código", "Valor",
+             "Observação"])
+        self.assertEqual(wb["Boletos"].cell(row=2, column=4).value, "10004")
 
-    def test_valor_e_data_vao_como_numero_e_data_de_verdade(self):
+    def test_valor_vai_como_numero_e_a_barra_como_texto(self):
         from openpyxl import load_workbook
         app.salvar_planilha_nfse(self.caminho, [], [self.linha_boleto])
         aba = load_workbook(self.caminho)["Boletos"]
         self.assertEqual(aba.cell(row=2, column=5).value, 250.0)
-        self.assertEqual(aba.cell(row=2, column=4).value,
-                         datetime.datetime(2026, 9, 10))
+        self.assertEqual(aba.cell(row=2, column=2).value,
+                         app.linha_digitavel_para_codigo_barras(LINHA_CAIXA))
 
 
 if __name__ == "__main__":

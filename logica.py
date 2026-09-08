@@ -1917,20 +1917,24 @@ def linha_planilha_nfse(nome_arquivo, dados, cadastro, observacao=""):
     ]
 
 
-#  Aba dos boletos. Linha digitável e código de barras entram como TEXTO, não
-#  número: são 47/44 dígitos, e o Excel transformaria em notação científica,
-#  perdendo os dígitos verificadores que justificam confiar no resto da linha.
+#  Aba dos boletos: o que o usuário pediu para conferir — a barra, de quem é
+#  o boleto e quanto é —, mais o arquivo de origem (para achar o PDF) e a
+#  observação (para explicar célula vazia).
+#
+#  Banco, vencimento, CNPJ do pagador e linha digitável SÃO lidos e continuam
+#  disponíveis em `extrair_dados_boleto`; só não entram na planilha. Voltar
+#  qualquer um deles é acrescentar a coluna aqui e o campo em
+#  `linha_planilha_boleto`.
+#
+#  O código de barras entra como TEXTO, não número: são 44 dígitos, e o Excel
+#  transformaria em notação científica, perdendo justamente os dígitos
+#  verificadores que justificam confiar no valor lido da barra.
 COLUNAS_BOLETO = [
     ("Arquivo", 38, None),
-    ("Tipo", 16, None),
-    ("Banco / Emissor", 30, None),
-    ("Vencimento", 13, "DD/MM/YYYY"),
-    ("Valor", 14, "R$ #,##0.00"),
-    ("CNPJ / CPF do pagador", 21, None),
+    ("Código de barras", 48, "@"),
     ("Condomínio", 34, None),
     ("Código", 10, None),
-    ("Linha digitável", 56, "@"),
-    ("Código de barras", 48, "@"),
+    ("Valor", 14, "R$ #,##0.00"),
     ("Observação", 44, None),
 ]
 
@@ -1964,23 +1968,18 @@ def linha_planilha_boleto(nome_arquivo, dados, cadastro, observacao=""):
         else:
             avisos.append("Condomínio não identificado")
 
-    #  Vencimento vazio não é falha de leitura: há emissor que não põe a data
-    #  no código de barras (fator 9999). Dizer isso evita que alguém procure
-    #  bug onde não tem.
-    if dados.get("vencimento") is None and dados.get("tipo") == "Boleto bancário":
-        avisos.append("Código de barras sem vencimento")
+    #  Valor zerado (boleto "em branco", a preencher no caixa) chega como None
+    #  em `dados_do_codigo_barras`. Sem aviso, a célula vazia pareceria falha
+    #  de leitura da barra, que é o oposto do que aconteceu.
+    if dados.get("valor") is None:
+        avisos.append("Código de barras sem valor")
 
     return [
         nome_arquivo,
-        dados.get("tipo", ""),
-        dados.get("emissor", ""),
-        dados.get("vencimento"),
-        dados.get("valor"),
-        formatar_documento(documento) if documento else "",
+        dados.get("codigo_barras", ""),
         nome,
         codigo,
-        dados.get("linha_digitavel", ""),
-        dados.get("codigo_barras", ""),
+        dados.get("valor"),
         " · ".join(avisos),
     ]
 
