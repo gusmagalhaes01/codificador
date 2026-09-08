@@ -1082,6 +1082,19 @@ no 6_0 — o `identificacao_por_cnpj_5_3.py` não tem nenhuma delas:
   Detalhes que já quebraram o exe (ícone via `sys._MEIPASS`, assets do
   CustomTkinter, `hiddenimports` dos bindings `winrt.*`) estão comentados
   dentro do `.spec`. Dependência de build fixada em `requirements-build.txt`.
+  **Dados do Tcl/Tk — a falha mais traiçoeira até agora:** saiu build sem as
+  pastas `_internal/_tcl_data` e `_internal/_tk_data`, que o hook de tkinter
+  do PyInstaller deveria copiar sozinho. O exe morre no duplo clique com
+  `FileNotFoundError: Tcl data directory ... _tcl_data not found`, **antes**
+  de abrir a janela — cedo demais até para o `report_callback_exception` — e
+  o build tinha "passado" sem aviso nenhum. Duas defesas, porque uma só não
+  cobre: o `.spec` copia as pastas à mão quando o hook não as trouxe (achando
+  o Tcl por `tkinter.Tcl().eval("info library")`, que funciona em Python do
+  python.org, da Store ou embutido — palpitar por `sys.base_prefix`, não), e
+  o `gerar_exe.bat` confere a existência das duas pastas e do `.exe` depois
+  de empacotar, falhando ali em vez de montar um zip que não abre. O `.bat`
+  também passou a usar `--clean`: cache de um build anterior (de outra versão
+  do PyInstaller ou interrompido no meio) já produziu pacote incompleto.
 - Testes: `python -m unittest discover -s tests -p "test_*.py"` (ou duplo
   clique em `rodar_testes.bat`). Usam `tests/cadastro_teste.py` (9 condomínios
   fixos) e fixtures de texto em `tests/dados/`, nunca a planilha real. Cobrem

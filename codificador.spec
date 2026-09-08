@@ -30,6 +30,12 @@ Pontos que já quebraram o exe antes e por isso estão explícitos aqui:
   abaixo o PyInstaller não os enxerga no grafo de imports, e o exe sai com
   OCR_DISPONIVEL=False — a leitura de boletos escaneados morre em silêncio,
   sem nenhum erro visível.
+- os dados do Tcl/Tk (as pastas _tcl_data e _tk_data dentro do _internal).
+  Normalmente quem os copia é o hook de tkinter do próprio PyInstaller, mas
+  já saiu build sem eles, e aí o exe morre logo na abertura com
+  `FileNotFoundError: Tcl data directory ... _tcl_data not found` — antes de
+  qualquer janela, então nem o handler global de erros pega. A rede está
+  logo abaixo de Analysis: se o hook não trouxe, a receita copia à mão.
 """
 
 import os
@@ -77,6 +83,49 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
+#  ---- Rede: dados do Tcl/Tk ----------------------------------------------
+#  Sem a pasta _tcl_data dentro do _internal, o exe nem chega a abrir a
+#  janela: o runtime hook do tkinter levanta FileNotFoundError e o programa
+#  morre antes de qualquer tratamento de erro nosso. O hook do PyInstaller
+#  costuma copiar essas pastas sozinho, mas já falhou em máquina de build
+#  real (ver o cabeçalho), e o build "passa" sem aviso nenhum — o problema
+#  só aparece no primeiro duplo clique do usuário. Por isso: se os dados não
+#  estiverem no pacote, procura-se o Tcl/Tk pelo próprio interpretador que
+#  está rodando o build e copia-se na mão.
+
+
+def _tem_dados(analysis, destino):
+    """A pasta `destino` já foi para dentro do pacote?"""
+    return any(nome.replace("\\", "/").startswith(destino + "/")
+               for nome, _, _ in analysis.datas)
+
+
+def _dados_do_tcl_tk():
+    """Pastas de dados do Tcl e do Tk da instalação do Python do build.
+
+    `info library` é o próprio Tcl dizendo onde ficam seus arquivos, o que
+    funciona igual em Python do python.org, da Microsoft Store ou embutido —
+    palpitar o caminho a partir de sys.base_prefix, não.
+    """
+    import tkinter
+
+    biblioteca_tcl = tkinter.Tcl().eval("info library")     # .../lib/tcl8.6
+    pasta_lib = os.path.dirname(biblioteca_tcl)
+    versao = os.path.basename(biblioteca_tcl).replace("tcl", "")
+    biblioteca_tk = os.path.join(pasta_lib, "tk" + versao)  # .../lib/tk8.6
+    return biblioteca_tcl, biblioteca_tk
+
+
+if not _tem_dados(a, "_tcl_data") or not _tem_dados(a, "_tk_data"):
+    pasta_tcl, pasta_tk = _dados_do_tcl_tk()
+    if not _tem_dados(a, "_tcl_data"):
+        a.datas += Tree(pasta_tcl, prefix="_tcl_data")
+    if not _tem_dados(a, "_tk_data"):
+        a.datas += Tree(pasta_tk, prefix="_tk_data")
+    print("[codificador.spec] dados do Tcl/Tk copiados à mão "
+          "(o hook do tkinter não os trouxe)")
+
 
 pyz = PYZ(a.pure)
 
