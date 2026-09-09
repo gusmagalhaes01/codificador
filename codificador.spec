@@ -30,9 +30,16 @@ Pontos que já quebraram o exe antes e por isso estão explícitos aqui:
   abaixo o PyInstaller não os enxerga no grafo de imports, e o exe sai com
   OCR_DISPONIVEL=False — a leitura de boletos escaneados morre em silêncio,
   sem nenhum erro visível.
+- os dados do Tcl/Tk (as pastas _tcl_data e _tk_data dentro do _internal).
+  Normalmente quem os copia é o hook de tkinter do próprio PyInstaller, mas
+  já saiu build sem eles, e aí o exe morre logo na abertura com
+  `FileNotFoundError: Tcl data directory ... _tcl_data not found` — antes de
+  qualquer janela, então nem o handler global de erros pega. A rede está
+  logo abaixo de Analysis: se o hook não trouxe, a receita copia à mão.
 """
 
 import os
+import sys
 
 import customtkinter
 
@@ -77,6 +84,113 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+
+#  ---- Rede: dados do Tcl/Tk ----------------------------------------------
+#  Sem a pasta _tcl_data dentro do _internal, o exe nem chega a abrir a
+#  janela: o runtime hook do tkinter levanta FileNotFoundError e o programa
+#  morre antes de qualquer tratamento de erro nosso. O hook do PyInstaller
+#  costuma copiar essas pastas sozinho, mas já falhou em máquina de build
+#  real (ver o cabeçalho), e o build "passa" sem aviso nenhum — o problema
+#  só aparece no primeiro duplo clique do usuário. Por isso: se os dados não
+#  estiverem no pacote, procura-se o Tcl/Tk pelo próprio interpretador que
+#  está rodando o build e copia-se na mão.
+
+
+def _tem_dados(analysis, destino):
+    """A pasta `destino` já foi para dentro do pacote?"""
+    return any(nome.replace("\\", "/").startswith(destino + "/")
+               for nome, _, _ in analysis.datas)
+
+
+def _pasta_com(raiz, arquivo_marcador):
+    """Dentro de `raiz`, a pasta que contém `arquivo_marcador` (init.tcl para o
+    Tcl, tk.tcl para o Tk). Serve para não depender do arranjo interno do zip:
+    procura-se o arquivo que o Tcl precisa achar, não um caminho decorado."""
+    for pasta, _, arquivos in os.walk(raiz):
+        if arquivo_marcador in arquivos:
+            return pasta
+    return None
+
+
+def _extrair_zips_tcl_tk(destino):
+    """Python 3.14 (Windows) — Tcl/Tk vêm ZIPADOS.
+
+    O instalador oficial passou a embarcar as bibliotecas de script como
+    libtcl9.*.zip / libtk9.*.zip, lidas por um sistema de arquivos virtual
+    (`info library` devolve algo como `//zipfs:/lib/tcl/tcl_library`, que não
+    existe em disco). O hook de tkinter do PyInstaller ainda espera pastas
+    reais, e é por isso que o _tcl_data some do pacote sem ninguém avisar
+    (pyinstaller/pyinstaller#8856).
+
+    A saída é descompactar na pasta de build e apontar para o que sair de lá.
+    """
+    import glob
+    import zipfile
+
+    encontrados = {}
+    for nome, marcador in (("tcl", "init.tcl"), ("tk", "tk.tcl")):
+        candidatos = []
+        for onde in (sys.base_prefix, os.path.join(sys.base_prefix, "DLLs"),
+                     os.path.join(sys.base_prefix, "tcl"),
+                     os.path.join(sys.base_prefix, "Lib")):
+            candidatos += glob.glob(os.path.join(onde, "lib" + nome + "*.zip"))
+        if not candidatos:
+            continue
+        pasta = os.path.join(destino, nome)
+        with zipfile.ZipFile(sorted(candidatos)[-1]) as z:
+            z.extractall(pasta)
+        raiz = _pasta_com(pasta, marcador)
+        if raiz:
+            encontrados[nome] = raiz
+    return encontrados.get("tcl"), encontrados.get("tk")
+
+
+def _dados_do_tcl_tk():
+    """Pastas de dados do Tcl e do Tk da instalação do Python do build.
+
+    `info library` é o próprio Tcl dizendo onde ficam seus arquivos, o que
+    funciona igual em Python do python.org, da Microsoft Store ou embutido —
+    palpitar o caminho a partir de sys.base_prefix, não. Só que a partir do
+    Python 3.14 esse caminho pode não existir em disco (ver
+    `_extrair_zips_tcl_tk`), e aí o jeito é descompactar.
+    """
+    import tkinter
+
+    biblioteca_tcl = tkinter.Tcl().eval("info library")     # .../lib/tcl8.6
+    if os.path.isdir(biblioteca_tcl):
+        pasta_lib = os.path.dirname(biblioteca_tcl)
+        versao = os.path.basename(biblioteca_tcl).replace("tcl", "")
+        biblioteca_tk = os.path.join(pasta_lib, "tk" + versao)   # .../lib/tk8.6
+        if os.path.isdir(biblioteca_tk):
+            return biblioteca_tcl, biblioteca_tk
+
+    tcl, tk = _extrair_zips_tcl_tk(os.path.join(workpath, "tcltk_do_zip"))
+    if tcl and tk:
+        print("[codificador.spec] Tcl/Tk vieram zipados (Python 3.14+) e foram "
+              "descompactados para o pacote")
+        return tcl, tk
+
+    raise SystemExit(
+        "\n*** Nao foi possivel achar os arquivos do Tcl/Tk desta instalacao "
+        "do Python.\n"
+        "    Sem eles o executavel nao abre ('Tcl data directory ... "
+        "_tcl_data not found').\n"
+        "    Python do build: " + sys.version.split()[0] + " em "
+        + sys.base_prefix + "\n"
+        "    Saida mais simples: gerar o exe com o Python 3.13 do python.org, "
+        "que ainda\n"
+        "    instala o Tcl/Tk em pastas normais. Ver pyinstaller/pyinstaller#8856.\n")
+
+
+if not _tem_dados(a, "_tcl_data") or not _tem_dados(a, "_tk_data"):
+    pasta_tcl, pasta_tk = _dados_do_tcl_tk()
+    if not _tem_dados(a, "_tcl_data"):
+        a.datas += Tree(pasta_tcl, prefix="_tcl_data")
+    if not _tem_dados(a, "_tk_data"):
+        a.datas += Tree(pasta_tk, prefix="_tk_data")
+    print("[codificador.spec] dados do Tcl/Tk copiados à mão "
+          "(o hook do tkinter não os trouxe)")
+
 
 pyz = PYZ(a.pure)
 

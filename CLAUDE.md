@@ -129,6 +129,53 @@ similaridade de nome sozinha.
 
 ## Histórico de decisões
 
+- **v6.18.2 — boletos na aba "Extrair dados" (código de barras)**: a aba 2
+  passou a reconhecer boleto além de NFS-e e a escrever cada tipo na sua aba
+  da planilha ("Notas fiscais" e "Boletos"). O que se lê é a **linha
+  digitável** impressa no texto nativo do PDF — que é o **mesmo dado** das
+  barras (Interleaved 2 of 5), só em outra forma; por isso "ler o código de
+  barras" aqui não exige decodificar imagem nenhuma nem dependência nova.
+  De dentro dela saem banco, vencimento e valor.
+  **Por que isso não contraria a regra "sem OCR nesta aba":** a objeção
+  original é que valor e data não têm dígito verificador. A linha digitável
+  tem: um mod 10 em cada um dos três campos e um mod 11 geral sobre o código
+  de barras (`linha_digitavel_valida`, `logica.py`). Valor e vencimento saem
+  de dentro desse número já conferido, não de um campo solto da folha — um
+  dígito lido errado não vira valor errado na planilha, vira linha recusada.
+  Continua valendo que documento sem texto nativo não é lido.
+  **O pagador só é aceito se estiver no cadastro**: num boleto, o CNPJ que
+  aparece sozinho costuma ser o do beneficiário (quem cobra). Sem nenhum
+  cadastrado, ninguém é escolhido — aí tenta-se o nome do arquivo, pelo mesmo
+  `buscar_por_nome_arquivo` da codificação, e a observação diz que o código
+  veio dali (origem mais fraca que o CNPJ, quem confere precisa saber quais
+  linhas olhar). Nos dois boletos reais de referência: o da CAIXA resolveu
+  pelo CNPJ (ANGRENSE, 10760); o do Itaú **não traz o CNPJ do condomínio na
+  folha** e o nome do arquivo ("BoletoMITHRA_01092026.pdf") ficou em 0,67, sob
+  o limiar de 0,72 — sai sem código, de propósito.
+  **Fator de vencimento: só o ciclo em vigor.** O fator estourou os 4 dígitos
+  em 21/02/2025 e a contagem reiniciou em 1000 (22/02/2025). Os dois ciclos
+  usam a mesma faixa, mas toda data do ciclo antigo é anterior ao reinício —
+  boleto vencido há tempo. Ler pelo ciclo novo é determinístico; desempatar
+  "pela data de hoje" faria a mesma barra virar datas diferentes conforme o
+  dia em que a planilha fosse gerada.
+  **`0000` e `9999` são "sem vencimento no código", não erro de leitura.** O
+  9999 não é hipótese de manual: aparece no boleto real do Itaú, que tem
+  15/09/2026 impresso na folha e 9999 na barra. A célula do vencimento sai
+  vazia e a observação diz o motivo, para ninguém procurar bug onde não tem.
+  **A conferência dos DVs é que sustenta o recorte do número**, e não o
+  contrário: o pypdf enfia um espaço dentro do último campo e cola o que vem
+  depois ("...0000018 848 341-7"), deixando o trecho com 50 dígitos. Por isso
+  `extrair_linha_digitavel` testa janelas de 47/48/44 dígitos dentro do
+  candidato, e também uma passada com as quebras de linha emendadas (mesma
+  quebra-no-meio que derrubava o rótulo da NFS-e na v6.18.1).
+  Contas de concessionária (água, luz, gás) entram pelo código de
+  **arrecadação** — 48 dígitos começando com 8, sem banco e sem fator de
+  vencimento, com DV em módulo 10 ou 11 conforme o 3º dígito.
+  Testes em `tests/test_extracao_boleto.py`, sobre as fixtures
+  `boleto_caixa.txt` e `boleto_sem_vencimento.txt`. As duas linhas digitáveis
+  usadas nos testes são de boletos reais, inteiras: número inventado à mão
+  passaria ou falharia por construção e não provaria nada.
+
 - **v6.18.1 — a nota inteira era descartada porque "NFS-e" quebrava a linha
   no meio do rótulo**: nas notas da F&F de agosto/2026 (DANFSe v2.0), o
   rótulo do cabeçalho cai na borda da coluna e o hífen fica numa linha e o
@@ -665,6 +712,41 @@ código já presente no nome do arquivo em 1.948 de 1.951 (99,85%).
   troca entre códigos vizinhos. Bom exemplo de por que se identifica por CNPJ.
 - `PCMSO 11095 Serra Azul.pdf` e `PCMSO 10710 Martinica.pdf` estão em pastas
   PCMSO mas são "Detalhamento do Faturamento", não NFS-e.
+
+
+### Boletos na mesma aba (v6.18.2)
+
+A aba lê **NFS-e e boleto** no mesmo lote: cada arquivo é testado primeiro
+como DANFSe e, se não for, como boleto (`extrair_dados_boleto`, `logica.py`).
+Quem reconhece decide para qual aba da planilha a linha vai — "Notas fiscais"
+(sempre) e "Boletos" (só quando o lote tem algum).
+
+**Colunas do boleto: arquivo, linha digitável, código de barras, condomínio,
+código, vencimento, valor e observação** — o que o usuário pediu para
+conferir, com o arquivo para achar o PDF e a observação para explicar célula
+vazia. Banco e CNPJ do pagador **são lidos e continuam em
+`extrair_dados_boleto`**; só não entram na planilha. Devolver qualquer um é
+acrescentar a coluna em `COLUNAS_BOLETO` e o campo em `linha_planilha_boleto`.
+
+**Linha digitável e código de barras são o MESMO dado em duas formas, e as
+duas colunas existem de propósito:** a linha digitável é o número impresso na
+parte de cima do boleto, o que se digita no banco; o código de barras é o que
+as barras carregam. As duas saem **só com dígitos** (47 e 44), sem os pontos e
+espaços da impressão — é assim que o número é colado num sistema de pagamento
+ou cruzado com outra planilha, e limpar a pontuação à mão toda vez seria
+trabalho repetido.
+
+**Célula vazia em vencimento ou valor não é falha de leitura da barra** e a
+observação diz isso: há emissor que não põe a data no código (fator 9999) e
+existe boleto "em branco", com valor zerado a preencher no caixa.
+
+As duas vão como **texto**: em número, o Excel as transformaria em notação
+científica, perdendo justamente os dígitos verificadores que autorizam
+confiar no valor lido da barra.
+
+O raciocínio de por que aqui o dado é confiável (DVs), de como o pagador é
+identificado e do que fazer quando a barra não traz vencimento está no
+Histórico de decisões, v6.18.2.
 
 ## Contagem dos Protocolos dos Correios (aba 3)
 
@@ -1395,6 +1477,19 @@ no 6_0 — o `identificacao_por_cnpj_5_3.py` não tem nenhuma delas:
   Detalhes que já quebraram o exe (ícone via `sys._MEIPASS`, assets do
   CustomTkinter, `hiddenimports` dos bindings `winrt.*`) estão comentados
   dentro do `.spec`. Dependência de build fixada em `requirements-build.txt`.
+  **Dados do Tcl/Tk — a falha mais traiçoeira até agora:** saiu build sem as
+  pastas `_internal/_tcl_data` e `_internal/_tk_data`, que o hook de tkinter
+  do PyInstaller deveria copiar sozinho. O exe morre no duplo clique com
+  `FileNotFoundError: Tcl data directory ... _tcl_data not found`, **antes**
+  de abrir a janela — cedo demais até para o `report_callback_exception` — e
+  o build tinha "passado" sem aviso nenhum. Duas defesas, porque uma só não
+  cobre: o `.spec` copia as pastas à mão quando o hook não as trouxe (achando
+  o Tcl por `tkinter.Tcl().eval("info library")`, que funciona em Python do
+  python.org, da Store ou embutido — palpitar por `sys.base_prefix`, não), e
+  o `gerar_exe.bat` confere a existência das duas pastas e do `.exe` depois
+  de empacotar, falhando ali em vez de montar um zip que não abre. O `.bat`
+  também passou a usar `--clean`: cache de um build anterior (de outra versão
+  do PyInstaller ou interrompido no meio) já produziu pacote incompleto.
 - Testes: `python -m unittest discover -s tests -p "test_*.py"` (ou duplo
   clique em `rodar_testes.bat`). Usam `tests/cadastro_teste.py` (9 condomínios
   fixos) e fixtures de texto em `tests/dados/`, nunca a planilha real. Cobrem

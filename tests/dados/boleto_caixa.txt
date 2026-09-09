@@ -1,0 +1,45 @@
+Cedente
+CPF/CNPJ
+Agência / Código do Cedente
+Endereço do cedente
+Data do documento
+Nº do documento
+Espécie documento
+Carteira
+Nosso Número
+Sacado
+CPF/CNPJ
+Endereço do sacado
+Moeda
+Quantidade
+Valor
+Vencimento
+Valor do Documento
+Autenticação Mecânica - Recibo do Sacado
+104-0
+Local de pagamento
+SISTEMAS EXEMPLO LTDA
+11.222.333/0001-81
+6357/0805753-2
+RUA DE EXEMPLO 219 SL 202 - RIO DE JANEIRO
+RJ
+22050011
+03/09/2026
+13711
+DM
+01
+03/09/2026
+14/180000000007638-1
+CONDOMINIO KLOSTERS
+01.195.716/0001-54
+RUA DE EXEMPLO 14 - RIO DE JANEIRO
+RJ
+22050-020
+R$
+10/09/2026
+250,00
+Instruções (Texto de Responsabilidade do Cedente):
+MULTA    DE      R$:             5,00 A PARTIR DE : 10/09/2026
+JUROS    DE      R$:             0,83 AO DIA
+10498.05755  32180.100045  00000.763854  1  15650000025000
+PREFERENCIALMENTE NAS CASAS LOTÉRICAS ATÉ O VALOR LIMITE
