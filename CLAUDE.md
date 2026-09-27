@@ -129,6 +129,19 @@ similaridade de nome sozinha.
 
 ## Histórico de decisões
 
+- **v6.21.0 — lançamento no Superlógica direto da extração (aba 2)**: a aba
+  2 passou a gerar, além da planilha de extração, o arquivo de importação de
+  despesas do Superlógica para boleto do sindicato, DARF do DCTFWeb e nota
+  da F&F, escolhido por um seletor de opção de lançamento (uma por lote). Ver
+  a seção "Lançamento no Superlógica direto da extração (aba 2, v6.21.0)"
+  acima e o spec
+  `docs/superpowers/specs/2026-09-27-lancamento-superlogica-extracao-design.md`.
+  **Pendente antes do primeiro DARF/F&F real**: confirmar que o importador
+  aceita o código de arrecadação de 48 dígitos em `linha_digitavel` (ele
+  recusava o que não fosse boleto) e em que formato espera a `competencia`
+  (a da NFS-e sai como data cheia) — só validado offline, nunca contra uma
+  importação de verdade.
+
 - **v6.18.2 — boletos na aba "Extrair dados" (código de barras)**: a aba 2
   passou a reconhecer boleto além de NFS-e e a escrever cada tipo na sua aba
   da planilha ("Notas fiscais" e "Boletos"). O que se lê é a **linha
@@ -784,6 +797,14 @@ Superlógica gravar 01/01/1970).
 **O condomínio só vale pelo CNPJ lido do documento.** A planilha de extração
 usa o nome do arquivo como reserva nos boletos; o lançamento não — é
 dinheiro, e essa origem é mais fraca.
+
+**`TIPO_LANCAMENTO_ARRECADACAO` cobre QUALQUER código de arrecadação de 48
+dígitos (começa com 8), não só DARF** — água, luz e gás usam o mesmo formato
+de código de barras. O rótulo "(DARF)" em `ROTULOS_TIPO_LANCAMENTO`, a trava
+de pasta misturada e `vencimento_do_darf` não distinguem um do outro: quem
+mantém a mistura fora do lançamento é o usuário, escolhendo o modelo certo
+por lote (um modelo de DARF não deveria estar ativo numa pasta de conta de
+concessionária).
 
 **Vencimento do DARF**: o código de arrecadação não traz data. Ela está no
 texto com rótulo em três lugares (`Pagar este documento até`,

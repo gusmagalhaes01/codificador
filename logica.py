@@ -2460,8 +2460,14 @@ def linha_planilha_nfse(nome_arquivo, dados, cadastro, observacao=""):
 
     registro = cadastro.get(dados["cnpj_tomador"])
     codigo = registro["codigo"] if registro else ""
-    if not registro and not observacao:
-        observacao = "CNPJ do tomador não está no cadastro"
+    if not registro:
+        #  Junta em vez de sobrescrever: uma nota pode já chegar com
+        #  observação (ex: motivo de ficar fora do lançamento por retenção) e
+        #  MESMO ASSIM ter o CNPJ fora do cadastro — as duas informações são
+        #  independentes e nenhuma pode calar a outra (ver CLAUDE.md, seção
+        #  do lançamento no Superlógica).
+        avisos = [t for t in (observacao, "CNPJ do tomador não está no cadastro") if t]
+        observacao = " · ".join(avisos)
 
     return [
         nome_arquivo,

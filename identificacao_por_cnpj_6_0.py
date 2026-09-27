@@ -2422,12 +2422,22 @@ class App(ctk.CTk):
             {"text_color": "texto"},
         ).pack(side="left", padx=(0, 8))
 
-        self.menu_lancamento = ctk.CTkOptionMenu(
-            linha_lancamento, values=[SEM_LANCAMENTO], variable=self.opcao_lancamento,
-            corner_radius=0, fg_color=tema["superficie"], button_color=tema["borda_forte"],
-            button_hover_color=tema["borda_forte"], text_color=tema["texto"],
-            dropdown_fg_color=tema["superficie"], dropdown_text_color=tema["texto"],
-            font=(fonte, 13),
+        self.menu_lancamento = registrar(
+            ctk.CTkOptionMenu(
+                linha_lancamento, values=[SEM_LANCAMENTO], variable=self.opcao_lancamento,
+                corner_radius=0, fg_color=tema["superficie"], button_color=tema["borda_forte"],
+                button_hover_color=tema["borda_forte"], text_color=tema["texto"],
+                dropdown_fg_color=tema["superficie"], dropdown_text_color=tema["texto"],
+                font=(fonte, 13),
+            ),
+            {
+                "fg_color": "superficie",
+                "button_color": "borda_forte",
+                "button_hover_color": "borda_forte",
+                "text_color": "texto",
+                "dropdown_fg_color": "superficie",
+                "dropdown_text_color": "texto",
+            },
         )
         self.menu_lancamento.pack(side="left")
 
@@ -2627,7 +2637,11 @@ class App(ctk.CTk):
                 if not linha[4]:           # coluna "Código" vazia
                     sem_cadastro += 1
             else:
-                linha = linha_planilha_nfse(nome, dados, self.cadastro, observacao or motivo)
+                #  Retenção e "CNPJ não cadastrado" podem acontecer juntos —
+                #  os dois vão para a Observação, senão o segundo motivo some
+                #  em silêncio (ver Observação da NFS-e no cadastro).
+                obs_nfse = " · ".join(t for t in (observacao, motivo) if t)
+                linha = linha_planilha_nfse(nome, dados, self.cadastro, obs_nfse)
                 linhas.append(linha)
                 if dados is None:
                     ignoradas += 1
@@ -2704,26 +2718,33 @@ class App(ctk.CTk):
             self._concluir_extracao(destino, resumo)
             return
 
-        chave = self._pedir_chave_despesas()
-        if chave is None:
-            self._concluir_extracao(destino, resumo)
-            return
-
-        vencimento = None
-        if any(d["tipo"] == TIPO_LANCAMENTO_NOTA for d in documentos):
-            vencimento = self._pedir_vencimento_despesas()
-            if vencimento is None:
-                self._concluir_extracao(destino, resumo)
-                return
-
-        lancamentos = montar_lancamentos(documentos, self.cadastro, vencimento)
-        if not lancamentos:
+        #  Só documentos que de fato podem virar lançamento — perguntar chave
+        #  e vencimento antes de saber se sobra algum lançável faria o
+        #  usuário responder duas perguntas para, no fim, ver a mesma
+        #  mensagem de "nenhum documento pôde ser lançado" (ex: lote da F&F
+        #  inteiro com retenção).
+        lancaveis = [d for d in documentos if not motivo_fora_do_lancamento(d, self.cadastro)]
+        if not lancaveis:
             messagebox.showwarning(
                 "Lançamento não gerado",
                 "Nenhum documento pôde ser lançado — o motivo de cada um está "
                 "na coluna Observação da planilha de extração.")
             self._concluir_extracao(destino, resumo)
             return
+
+        chave = self._pedir_chave_despesas()
+        if chave is None:
+            self._concluir_extracao(destino, resumo)
+            return
+
+        vencimento = None
+        if any(d["tipo"] == TIPO_LANCAMENTO_NOTA for d in lancaveis):
+            vencimento = self._pedir_vencimento_despesas()
+            if vencimento is None:
+                self._concluir_extracao(destino, resumo)
+                return
+
+        lancamentos = montar_lancamentos(documentos, self.cadastro, vencimento)
 
         destino_superlogica = os.path.splitext(destino)[0] + " - superlogica.xlsx"
         if os.path.isfile(destino_superlogica) and not messagebox.askyesno(

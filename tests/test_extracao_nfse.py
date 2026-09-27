@@ -281,6 +281,16 @@ class TestLinhaDaPlanilha(unittest.TestCase):
         self.assertEqual(linha[15], "Não é uma NFS-e")
         self.assertTrue(all(c is None for c in linha[1:15]))
 
+    def test_observacao_previa_nao_cala_aviso_de_cnpj_fora_do_cadastro(self):
+        #  Uma nota com retenção (motivo do lançamento) e CNPJ fora do
+        #  cadastro são dois problemas independentes — o segundo não pode
+        #  sumir por já existir o primeiro (ver CLAUDE.md, lançamento no
+        #  Superlógica).
+        motivo_retencao = "Nota com retenção — lançar à mão no Superlógica"
+        linha = app.linha_planilha_nfse("nota.pdf", self.dados, {}, motivo_retencao)
+        self.assertIn(motivo_retencao, linha[15])
+        self.assertIn("não está no cadastro", linha[15])
+
 
 class TestPlanilhaGerada(unittest.TestCase):
     def setUp(self):
