@@ -2253,6 +2253,105 @@ def vencimento_do_darf(texto):
         return None
 
 
+#  Tipos de documento que podem virar lançamento no Superlógica. É o que a
+#  trava de pasta misturada compara: uma opção de lançamento vale para o lote
+#  inteiro, então o lote tem de ser de um tipo só.
+TIPO_LANCAMENTO_NOTA = "nota fiscal"
+TIPO_LANCAMENTO_BOLETO = "boleto"
+TIPO_LANCAMENTO_ARRECADACAO = "arrecadacao"
+
+#  Diferença mínima entre valor do serviço e valor líquido para contar como
+#  retenção. Os valores vêm como float da extração; um centavo de diferença
+#  já é retenção de verdade.
+TOLERANCIA_RETENCAO = 0.005
+
+
+def documento_para_lancamento(nome_arquivo, dados_nfse=None, dados_boleto=None,
+                              texto=""):
+    """
+    Normaliza um documento reconhecido pela extração num formato único,
+    independente do tipo. Devolve None para documento não reconhecido.
+
+    `texto` é o texto nativo do PDF — só é usado no DARF, para ler o
+    vencimento (`vencimento_do_darf`), porque o código de arrecadação não
+    traz data.
+
+    `documento` é SEMPRE o CNPJ lido do documento: o do tomador na nota, o do
+    pagador no boleto e no DARF (que `extrair_dados_boleto` só preenche
+    quando está no cadastro). A identificação pelo nome do arquivo, que a
+    planilha de extração usa como reserva nos boletos, NÃO vale aqui:
+    lançamento é dinheiro, e essa origem é mais fraca que o CNPJ.
+    """
+    if dados_nfse:
+        servico = dados_nfse.get("valor_servico")
+        liquido = dados_nfse.get("valor_liquido")
+        #  Dois sinais independentes, basta um: a diferença entre serviço e
+        #  líquido, ou algum campo de retenção federal preenchido.
+        diferenca = (servico is not None and liquido is not None
+                     and abs(servico - liquido) > TOLERANCIA_RETENCAO)
+        retencao = bool(diferenca
+                        or dados_nfse.get("contrib_sociais_retidas")
+                        or dados_nfse.get("previdencia_retida"))
+        return {
+            "arquivo": nome_arquivo,
+            "tipo": TIPO_LANCAMENTO_NOTA,
+            "documento": dados_nfse.get("cnpj_tomador"),
+            "valor": servico,
+            "vencimento": None,             # vem do lote
+            "linha_digitavel": None,
+            "numero_documento": dados_nfse.get("numero"),
+            "competencia": dados_nfse.get("competencia"),
+            "retencao": retencao,
+        }
+
+    if dados_boleto:
+        arrecadacao = dados_boleto.get("tipo") == "Arrecadação"
+        return {
+            "arquivo": nome_arquivo,
+            "tipo": TIPO_LANCAMENTO_ARRECADACAO if arrecadacao else TIPO_LANCAMENTO_BOLETO,
+            "documento": dados_boleto.get("documento_pagador"),
+            "valor": dados_boleto.get("valor"),
+            "vencimento": (vencimento_do_darf(texto) if arrecadacao
+                           else dados_boleto.get("vencimento")),
+            "linha_digitavel": dados_boleto.get("linha_digitavel"),
+            "numero_documento": None,
+            "competencia": None,
+            "retencao": False,
+        }
+
+    return None
+
+
+def motivo_fora_do_lancamento(documento, cadastro):
+    """
+    Por que este documento NÃO pode entrar no arquivo do Superlógica, em
+    frase para a coluna Observação. `""` significa que pode.
+
+    A ordem importa: o primeiro motivo que se aplica é o que aparece. A nota
+    com retenção vem primeiro porque é regra do usuário (lançar à mão), e não
+    defeito do documento.
+    """
+    if documento.get("retencao"):
+        return "Nota com retenção — lançar à mão no Superlógica"
+
+    registro = (cadastro or {}).get(documento.get("documento")) if documento.get("documento") else None
+    if registro is None:
+        return "Condomínio não identificado pelo CNPJ — fora do lançamento"
+    if not registro.get("id_sl"):
+        return "Condomínio sem ID SL no cadastro — fora do lançamento"
+
+    if documento.get("valor") is None:
+        return "Sem valor no código — lançar à mão"
+
+    if documento.get("vencimento") is None:
+        if documento.get("tipo") == TIPO_LANCAMENTO_BOLETO:
+            return "Boleto sem vencimento no código — lançar à mão"
+        if documento.get("tipo") == TIPO_LANCAMENTO_ARRECADACAO:
+            return "Vencimento do DARF não confirmado — lançar à mão"
+
+    return ""
+
+
 #  (rótulo da coluna, largura, formato numérico do Excel)
 COLUNAS_NFSE = [
     ("Arquivo", 38, None),

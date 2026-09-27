@@ -72,5 +72,123 @@ class TestVencimentoDoDarf(unittest.TestCase):
         self.assertIsNone(app.vencimento_do_darf(None))
 
 
+from cadastro_teste import CADASTRO_TESTE as CADASTRO
+
+KLOSTERS = "01195716000154"      # código 10004, ID SL 44
+LAGO = "07945453000130"          # código 10590, SEM ID SL
+
+NFSE_SEM_RETENCAO = {
+    "numero": "12367", "competencia": datetime.date(2026, 8, 24),
+    "cnpj_tomador": KLOSTERS, "valor_servico": 21.31, "valor_liquido": 21.31,
+    "previdencia_retida": None, "contrib_sociais_retidas": None,
+}
+BOLETO = {
+    "tipo": "Boleto bancário", "valor": 82.9,
+    "vencimento": datetime.date(2026, 9, 10),
+    "linha_digitavel": "23790472089000015979956006290706515650000008290",
+    "documento_pagador": KLOSTERS,
+}
+ARRECADACAO = {
+    "tipo": "Arrecadação", "valor": 58.51, "vencimento": None,
+    "linha_digitavel": "858300000009585103852620610716262610830654448534",
+    "documento_pagador": KLOSTERS,
+}
+
+
+class TestDocumentoParaLancamento(unittest.TestCase):
+
+    def test_nota_fiscal(self):
+        d = app.documento_para_lancamento("n.pdf", dados_nfse=NFSE_SEM_RETENCAO)
+        self.assertEqual(d["tipo"], app.TIPO_LANCAMENTO_NOTA)
+        self.assertEqual(d["documento"], KLOSTERS)
+        self.assertEqual(d["valor"], 21.31)
+        self.assertIsNone(d["vencimento"])          # vem do lote, não da nota
+        self.assertIsNone(d["linha_digitavel"])
+        self.assertEqual(d["numero_documento"], "12367")
+        self.assertEqual(d["competencia"], datetime.date(2026, 8, 24))
+        self.assertFalse(d["retencao"])
+
+    def test_retencao_pela_diferenca_entre_servico_e_liquido(self):
+        dados = dict(NFSE_SEM_RETENCAO, valor_servico=217.33, valor_liquido=207.22)
+        self.assertTrue(app.documento_para_lancamento("n.pdf", dados_nfse=dados)["retencao"])
+
+    def test_retencao_pelas_contribuicoes_sociais_retidas(self):
+        #  O segundo sinal sozinho: serviço e líquido iguais, mas o campo de
+        #  retenção preenchido. Basta um dos dois.
+        dados = dict(NFSE_SEM_RETENCAO, contrib_sociais_retidas=10.11)
+        self.assertTrue(app.documento_para_lancamento("n.pdf", dados_nfse=dados)["retencao"])
+
+    def test_retencao_pela_previdencia_retida(self):
+        dados = dict(NFSE_SEM_RETENCAO, previdencia_retida=2.34)
+        self.assertTrue(app.documento_para_lancamento("n.pdf", dados_nfse=dados)["retencao"])
+
+    def test_boleto(self):
+        d = app.documento_para_lancamento("b.pdf", dados_boleto=BOLETO)
+        self.assertEqual(d["tipo"], app.TIPO_LANCAMENTO_BOLETO)
+        self.assertEqual(d["vencimento"], datetime.date(2026, 9, 10))
+        self.assertEqual(d["linha_digitavel"], BOLETO["linha_digitavel"])
+        self.assertIsNone(d["numero_documento"])
+        self.assertIsNone(d["competencia"])
+
+    def test_arrecadacao_pega_o_vencimento_do_texto(self):
+        d = app.documento_para_lancamento("g.pdf", dados_boleto=ARRECADACAO, texto=DARF_OK)
+        self.assertEqual(d["tipo"], app.TIPO_LANCAMENTO_ARRECADACAO)
+        self.assertEqual(d["vencimento"], datetime.date(2026, 9, 18))
+        self.assertIsNone(d["numero_documento"])
+        self.assertIsNone(d["competencia"])
+
+    def test_documento_nao_reconhecido(self):
+        self.assertIsNone(app.documento_para_lancamento("x.pdf"))
+
+
+class TestMotivoForaDoLancamento(unittest.TestCase):
+
+    def doc(self, **mudancas):
+        base = app.documento_para_lancamento("b.pdf", dados_boleto=BOLETO)
+        base.update(mudancas)
+        return base
+
+    def test_documento_completo_pode_ser_lancado(self):
+        self.assertEqual(app.motivo_fora_do_lancamento(self.doc(), CADASTRO), "")
+
+    def test_nota_com_retencao(self):
+        d = app.documento_para_lancamento(
+            "n.pdf", dados_nfse=dict(NFSE_SEM_RETENCAO, contrib_sociais_retidas=10.11))
+        self.assertIn("retenção", app.motivo_fora_do_lancamento(d, CADASTRO))
+
+    def test_condominio_nao_identificado(self):
+        self.assertIn("não identificado", app.motivo_fora_do_lancamento(
+            self.doc(documento=None), CADASTRO))
+
+    def test_documento_fora_do_cadastro(self):
+        self.assertIn("não identificado", app.motivo_fora_do_lancamento(
+            self.doc(documento="11222333000181"), CADASTRO))
+
+    def test_condominio_sem_id_sl(self):
+        self.assertIn("ID SL", app.motivo_fora_do_lancamento(
+            self.doc(documento=LAGO), CADASTRO))
+
+    def test_sem_valor(self):
+        self.assertIn("valor", app.motivo_fora_do_lancamento(
+            self.doc(valor=None), CADASTRO))
+
+    def test_boleto_sem_vencimento(self):
+        #  Fator 0000/9999: o boleto real do Itaú de referência é assim. Não
+        #  se usa a data impressa na folha — ela seria uma data solta, sem a
+        #  conferência que o DARF tem.
+        self.assertIn("vencimento", app.motivo_fora_do_lancamento(
+            self.doc(vencimento=None), CADASTRO))
+
+    def test_darf_sem_vencimento_confirmado(self):
+        d = app.documento_para_lancamento("g.pdf", dados_boleto=ARRECADACAO, texto="")
+        self.assertIn("DARF", app.motivo_fora_do_lancamento(d, CADASTRO))
+
+    def test_nota_sem_vencimento_proprio_pode_ser_lancada(self):
+        #  A nota não tem vencimento próprio — ele vem do lote. Não é motivo
+        #  de exclusão.
+        d = app.documento_para_lancamento("n.pdf", dados_nfse=NFSE_SEM_RETENCAO)
+        self.assertEqual(app.motivo_fora_do_lancamento(d, CADASTRO), "")
+
+
 if __name__ == "__main__":
     unittest.main()
