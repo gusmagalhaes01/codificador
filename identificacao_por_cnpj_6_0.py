@@ -91,6 +91,9 @@ from logica import (
     lancamentos_de_despesa, gerar_planilha_despesas,
     buscar_condominios,
     converter_data_digitada,
+    PASTA_MODELOS_LANCAMENTO, listar_modelos_lancamento,
+    documento_para_lancamento, motivo_fora_do_lancamento,
+    conferir_lote_homogeneo, montar_lancamentos, TIPO_LANCAMENTO_NOTA,
 )
 
 
@@ -175,6 +178,10 @@ TAMANHO_BLOCO_PAYBOX = 10
 #  A aba 1 continua usando a qualidade da predefinição — lá o CNPJ tem
 #  dígito verificador e muitos boletos têm texto nativo.
 QUALIDADE_LEITURA_PROTOCOLO = 300
+
+#  Opção do seletor da aba 2 que desliga o lançamento no Superlógica: a aba
+#  funciona exatamente como antes.
+SEM_LANCAMENTO = "Nenhum"
 
 
 def familia_fonte():
@@ -2396,6 +2403,41 @@ class App(ctk.CTk):
         )
         self.botao_extrair.grid(row=4, column=0, sticky="ew", pady=(8, 8))
 
+        # --- Lançamento no Superlógica (opção do lote) ---
+        #  Cada opção é um .xlsx em modelos_superlogica/, ao lado do programa;
+        #  o nome do arquivo é o texto do seletor. "Nenhum" deixa a aba como
+        #  sempre foi.
+        self.opcao_lancamento = tk.StringVar(value=SEM_LANCAMENTO)
+        self._modelos_lancamento = {}
+
+        linha_lancamento = registrar(
+            ctk.CTkFrame(corpo, corner_radius=0, fg_color=tema["fundo"]),
+            {"fg_color": "fundo"},
+        )
+        linha_lancamento.grid(row=5, column=0, sticky="w", pady=(0, 8))
+
+        registrar(
+            ctk.CTkLabel(linha_lancamento, text="Lançamento no Superlógica:",
+                         font=(fonte, 13), text_color=tema["texto"]),
+            {"text_color": "texto"},
+        ).pack(side="left", padx=(0, 8))
+
+        self.menu_lancamento = ctk.CTkOptionMenu(
+            linha_lancamento, values=[SEM_LANCAMENTO], variable=self.opcao_lancamento,
+            corner_radius=0, fg_color=tema["superficie"], button_color=tema["borda_forte"],
+            button_hover_color=tema["borda_forte"], text_color=tema["texto"],
+            dropdown_fg_color=tema["superficie"], dropdown_text_color=tema["texto"],
+            font=(fonte, 13),
+        )
+        self.menu_lancamento.pack(side="left")
+
+        self.label_aviso_modelos = registrar(
+            ctk.CTkLabel(linha_lancamento, text="", font=(fonte, 12),
+                         text_color=tema["texto_terciario"]),
+            {"text_color": "texto_terciario"},
+        )
+        self.label_aviso_modelos.pack(side="left", padx=(12, 0))
+
         explicacao = registrar(
             ctk.CTkLabel(
                 corpo,
@@ -2409,17 +2451,17 @@ class App(ctk.CTk):
             ),
             {"text_color": "texto_terciario"},
         )
-        explicacao.grid(row=5, column=0, sticky="w", pady=(0, 16))
+        explicacao.grid(row=6, column=0, sticky="w", pady=(0, 16))
 
         self.barra_extracao = ttk.Progressbar(corpo, mode="determinate")
-        self.barra_extracao.grid(row=6, column=0, sticky="ew", pady=(0, 8))
+        self.barra_extracao.grid(row=7, column=0, sticky="ew", pady=(0, 8))
 
         self.label_status_extracao = registrar(
             ctk.CTkLabel(corpo, text="", font=(fonte, 13),
                          text_color=tema["texto_secundario"], anchor="w"),
             {"text_color": "texto_secundario"},
         )
-        self.label_status_extracao.grid(row=7, column=0, sticky="w", pady=(0, 24))
+        self.label_status_extracao.grid(row=8, column=0, sticky="w", pady=(0, 24))
 
         self._atualizar_botao_extrair()
 
@@ -2464,6 +2506,34 @@ class App(ctk.CTk):
         else:
             self.botao_extrair.configure(text="Extrair dados", state="disabled")
 
+        self._recarregar_opcoes_lancamento()
+
+    def _recarregar_opcoes_lancamento(self):
+        """
+        Relê a pasta de modelos e atualiza o seletor. Chamado sempre que a
+        aba se atualiza (ao escolher pasta ou destino), para um modelo recém-
+        -colocado na pasta aparecer sem reabrir o programa.
+
+        Mantém a opção escolhida se o arquivo dela ainda existir; senão volta
+        para "Nenhum" — gerar com um modelo que sumiu daria erro no fim da
+        extração, depois de o usuário já ter esperado o lote inteiro.
+        """
+        menu = getattr(self, "menu_lancamento", None)
+        if menu is None:
+            return
+        pasta = os.path.join(pasta_base(), PASTA_MODELOS_LANCAMENTO)
+        try:
+            os.makedirs(pasta, exist_ok=True)
+        except Exception:
+            pass
+        self._modelos_lancamento = dict(listar_modelos_lancamento(pasta))
+        menu.configure(values=[SEM_LANCAMENTO] + list(self._modelos_lancamento))
+        if self.opcao_lancamento.get() not in self._modelos_lancamento:
+            self.opcao_lancamento.set(SEM_LANCAMENTO)
+        self.label_aviso_modelos.configure(
+            text="" if self._modelos_lancamento else
+            f"Nenhum modelo em {pasta}")
+
     def _iniciar_extracao(self):
         pasta = self.pasta_notas.get().strip()
         destino = self.arquivo_planilha_saida.get().strip()
@@ -2483,11 +2553,14 @@ class App(ctk.CTk):
         self.botao_extrair.configure(state="disabled")
         self.label_status_extracao.configure(text="Lendo os documentos...")
 
+        #  None quando "Nenhum": a aba funciona como antes.
+        modelo = self._modelos_lancamento.get(self.opcao_lancamento.get())
+
         thread = threading.Thread(
-            target=self._extrair_em_thread, args=(pasta, destino), daemon=True)
+            target=self._extrair_em_thread, args=(pasta, destino, modelo), daemon=True)
         thread.start()
 
-    def _extrair_em_thread(self, pasta, destino):
+    def _extrair_em_thread(self, pasta, destino, modelo=None):
         """
         Lê cada PDF da pasta escolhida (sem entrar em subpastas) e monta as
         linhas da planilha. Sem OCR de propósito — ver a nota em logica.py,
@@ -2509,6 +2582,8 @@ class App(ctk.CTk):
         boletos = 0
         ignoradas = 0
         sem_cadastro = 0
+        documentos = []       # só usado com uma opção de lançamento escolhida
+        fora_do_lancamento = 0
 
         for indice, nome in enumerate(arquivos, 1):
             caminho = os.path.join(pasta, nome)
@@ -2518,6 +2593,7 @@ class App(ctk.CTk):
             dados = None
             dados_boleto = None
             observacao = ""
+            texto = ""
             try:
                 texto = extrair_texto_pdf(caminho)
                 if len(texto.strip()) < LIMITE_TEXTO_MINIMO:
@@ -2531,14 +2607,27 @@ class App(ctk.CTk):
             except Exception as e:
                 observacao = f"Erro ao ler: {e}"
 
+            #  Com uma opção de lançamento escolhida, cada documento
+            #  reconhecido vira documento de lançamento, e o motivo de ficar
+            #  de fora vai para a Observação da planilha de extração — é ali
+            #  que o usuário descobre o que lançar à mão.
+            motivo = ""
+            if modelo is not None:
+                documento = documento_para_lancamento(nome, dados, dados_boleto, texto)
+                if documento is not None:
+                    documentos.append(documento)
+                    motivo = motivo_fora_do_lancamento(documento, self.cadastro)
+                    if motivo:
+                        fora_do_lancamento += 1
+
             if dados_boleto is not None:
-                linha = linha_planilha_boleto(nome, dados_boleto, self.cadastro)
+                linha = linha_planilha_boleto(nome, dados_boleto, self.cadastro, motivo)
                 linhas_boleto.append(linha)
                 boletos += 1
                 if not linha[4]:           # coluna "Código" vazia
                     sem_cadastro += 1
             else:
-                linha = linha_planilha_nfse(nome, dados, self.cadastro, observacao)
+                linha = linha_planilha_nfse(nome, dados, self.cadastro, observacao or motivo)
                 linhas.append(linha)
                 if dados is None:
                     ignoradas += 1
@@ -2575,7 +2664,11 @@ class App(ctk.CTk):
 
         self.after(0, lambda: self.label_status_extracao.configure(text=resumo))
         self.after(0, self._atualizar_botao_extrair)
-        self.after(0, lambda: self._concluir_extracao(destino, resumo))
+        if modelo is None:
+            self.after(0, lambda: self._concluir_extracao(destino, resumo))
+        else:
+            self.after(0, lambda: self._gerar_lancamento_superlogica(
+                modelo, documentos, fora_do_lancamento, destino, resumo))
 
     def _concluir_extracao(self, destino, resumo):
         if messagebox.askyesno(
@@ -2586,6 +2679,82 @@ class App(ctk.CTk):
                 os.startfile(destino)
             except Exception as e:
                 messagebox.showerror("Erro", f"Não foi possível abrir a planilha:\n{e}")
+
+    def _gerar_lancamento_superlogica(self, modelo, documentos, fora, destino, resumo):
+        """
+        Gera o arquivo de importação do Superlógica ao fim da extração.
+
+        As perguntas vêm AQUI, e não no início como na aba 3: lá o vencimento
+        vai carimbado no PDF durante o processamento; aqui nada é carimbado, e
+        esperar o fim permite perguntar o vencimento só quando o lote de fato
+        tem nota fiscal. Qualquer cancelamento termina sem o arquivo do
+        Superlógica — a planilha de extração já foi gravada e não se perde.
+        """
+        if not documentos:
+            messagebox.showinfo(
+                "Lançamento no Superlógica",
+                "Nenhuma nota fiscal nem boleto foi reconhecido no lote — o "
+                "arquivo do Superlógica não foi gerado.")
+            self._concluir_extracao(destino, resumo)
+            return
+
+        mistura = conferir_lote_homogeneo(documentos)
+        if mistura:
+            messagebox.showwarning("Lançamento não gerado", mistura)
+            self._concluir_extracao(destino, resumo)
+            return
+
+        chave = self._pedir_chave_despesas()
+        if chave is None:
+            self._concluir_extracao(destino, resumo)
+            return
+
+        vencimento = None
+        if any(d["tipo"] == TIPO_LANCAMENTO_NOTA for d in documentos):
+            vencimento = self._pedir_vencimento_despesas()
+            if vencimento is None:
+                self._concluir_extracao(destino, resumo)
+                return
+
+        lancamentos = montar_lancamentos(documentos, self.cadastro, vencimento)
+        if not lancamentos:
+            messagebox.showwarning(
+                "Lançamento não gerado",
+                "Nenhum documento pôde ser lançado — o motivo de cada um está "
+                "na coluna Observação da planilha de extração.")
+            self._concluir_extracao(destino, resumo)
+            return
+
+        destino_superlogica = os.path.splitext(destino)[0] + " - superlogica.xlsx"
+        if os.path.isfile(destino_superlogica) and not messagebox.askyesno(
+            "Substituir arquivo",
+            f"Este arquivo já existe e será substituído:\n\n{destino_superlogica}\n\nContinuar?"
+        ):
+            self._concluir_extracao(destino, resumo)
+            return
+
+        try:
+            gerar_planilha_despesas(modelo, destino_superlogica, lancamentos, chave=chave)
+        except Exception as e:
+            messagebox.showerror(
+                "Erro ao gerar",
+                f"Não foi possível gerar o arquivo do Superlógica:\n{e}\n\n"
+                "Se ele estiver aberto no Excel, feche e tente de novo.")
+            self._concluir_extracao(destino, resumo)
+            return
+
+        texto = f"{len(lancamentos)} lançamento(s) gerado(s)"
+        if fora:
+            texto += (f", {fora} documento(s) ficaram de fora — veja a coluna "
+                      "Observação na planilha de extração")
+        #  Não oferece abrir o arquivo do Superlógica: abrir e salvar no Excel
+        #  é o gesto que já fez a coluna de vencimento virar número e o
+        #  Superlógica gravar 01/01/1970 (v6.17.0).
+        messagebox.showinfo(
+            "Arquivo do Superlógica pronto",
+            f"{texto}.\n\nSalvo em:\n{destino_superlogica}\n\n"
+            "Importe esse arquivo direto no Superlógica, sem abrir no Excel.")
+        self._concluir_extracao(destino, resumo)
 
     # --------------------------------------------------------
     #  ABA 3 — PROTOCOLOS DOS CORREIOS
