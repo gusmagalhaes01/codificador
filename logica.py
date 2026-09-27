@@ -2352,6 +2352,81 @@ def motivo_fora_do_lancamento(documento, cadastro):
     return ""
 
 
+#  As colunas do arquivo do Superlógica que variam por documento. São SEMPRE
+#  escritas pelo programa (vazias quando o documento não tem o dado), nunca
+#  herdadas do molde: foi deixar o vencimento no modelo que fez o Superlógica
+#  gravar 01/01/1970 e recusar lançamentos (v6.14.0). Nomes já normalizados
+#  por `_normalizar_cabecalho`. O `complemento` fica de fora de propósito —
+#  o usuário o preenche à mão.
+COLUNAS_POR_DOCUMENTO = ("condominio", "valor", "vencimento",
+                         "linha_digitavel", "numero_documento", "competencia")
+
+#  Como cada tipo aparece na mensagem da trava de pasta misturada.
+ROTULOS_TIPO_LANCAMENTO = {
+    TIPO_LANCAMENTO_NOTA: "nota fiscal",
+    TIPO_LANCAMENTO_BOLETO: "boleto",
+    TIPO_LANCAMENTO_ARRECADACAO: "guia de arrecadação (DARF)",
+}
+
+
+def conferir_lote_homogeneo(documentos):
+    """
+    Se o lote tem documentos de mais de um tipo, devolve a mensagem que diz
+    quais; senão, `""`.
+
+    Existe porque a opção de lançamento vale para o lote inteiro: uma nota
+    perdida numa pasta de boletos do sindicato seria lançada com o
+    fornecedor do sindicato. Só conta documento reconhecido — o
+    "Detalhamento do Faturamento" que vem nas pastas da F&F não é nota nem
+    boleto, e nem chega aqui (`documento_para_lancamento` devolve None).
+    """
+    por_tipo = {}
+    for documento in documentos:
+        por_tipo.setdefault(documento["tipo"], []).append(documento["arquivo"])
+    if len(por_tipo) <= 1:
+        return ""
+
+    partes = []
+    for tipo, arquivos in sorted(por_tipo.items(), key=lambda item: -len(item[1])):
+        exemplos = ", ".join(arquivos[:3])
+        resto = f" e mais {len(arquivos) - 3}" if len(arquivos) > 3 else ""
+        partes.append(f"{len(arquivos)} {ROTULOS_TIPO_LANCAMENTO.get(tipo, tipo)}: {exemplos}{resto}")
+    return ("A pasta mistura tipos de documento, e a opção de lançamento vale "
+            "para o lote inteiro — o arquivo do Superlógica não foi gerado.\n\n"
+            + "\n".join(partes))
+
+
+def montar_lancamentos(documentos, cadastro, vencimento_lote=None):
+    """
+    Lançamentos para `gerar_planilha_despesas`: um dict por documento que
+    PODE ser lançado, na ordem recebida, com exatamente as chaves de
+    COLUNAS_POR_DOCUMENTO. Documento com motivo em `motivo_fora_do_lancamento`
+    é pulado — o motivo já foi para a planilha de extração.
+
+    `vencimento_lote` é o vencimento das notas fiscais (nota não tem
+    vencimento próprio). Faltar com nota no lote é erro de quem chama.
+    """
+    lancamentos = []
+    for documento in documentos:
+        if motivo_fora_do_lancamento(documento, cadastro):
+            continue
+        if documento["tipo"] == TIPO_LANCAMENTO_NOTA:
+            if vencimento_lote is None:
+                raise ValueError("Nota fiscal no lote exige o vencimento do lote.")
+            vencimento = vencimento_lote
+        else:
+            vencimento = documento["vencimento"]
+        lancamentos.append({
+            "condominio": cadastro[documento["documento"]]["id_sl"],
+            "valor": documento["valor"],
+            "vencimento": vencimento,
+            "linha_digitavel": documento["linha_digitavel"],
+            "numero_documento": documento["numero_documento"],
+            "competencia": documento["competencia"],
+        })
+    return lancamentos
+
+
 #  (rótulo da coluna, largura, formato numérico do Excel)
 COLUNAS_NFSE = [
     ("Arquivo", 38, None),

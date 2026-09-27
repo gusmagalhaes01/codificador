@@ -190,5 +190,71 @@ class TestMotivoForaDoLancamento(unittest.TestCase):
         self.assertEqual(app.motivo_fora_do_lancamento(d, CADASTRO), "")
 
 
+class TestLoteHomogeneo(unittest.TestCase):
+
+    def test_um_tipo_so_passa(self):
+        docs = [app.documento_para_lancamento("a.pdf", dados_boleto=BOLETO),
+                app.documento_para_lancamento("b.pdf", dados_boleto=BOLETO)]
+        self.assertEqual(app.conferir_lote_homogeneo(docs), "")
+
+    def test_lote_vazio_passa(self):
+        self.assertEqual(app.conferir_lote_homogeneo([]), "")
+
+    def test_nota_no_meio_de_boletos_recusa_e_diz_qual(self):
+        docs = [app.documento_para_lancamento("boleto.pdf", dados_boleto=BOLETO),
+                app.documento_para_lancamento("nota_perdida.pdf", dados_nfse=NFSE_SEM_RETENCAO)]
+        mensagem = app.conferir_lote_homogeneo(docs)
+        self.assertTrue(mensagem)
+        self.assertIn("nota_perdida.pdf", mensagem)
+
+    def test_boleto_e_darf_sao_tipos_diferentes(self):
+        docs = [app.documento_para_lancamento("b.pdf", dados_boleto=BOLETO),
+                app.documento_para_lancamento("g.pdf", dados_boleto=ARRECADACAO, texto=DARF_OK)]
+        self.assertTrue(app.conferir_lote_homogeneo(docs))
+
+
+class TestMontarLancamentos(unittest.TestCase):
+
+    def test_boleto_vira_lancamento_com_as_seis_colunas(self):
+        docs = [app.documento_para_lancamento("b.pdf", dados_boleto=BOLETO)]
+        lancamentos = app.montar_lancamentos(docs, CADASTRO)
+        self.assertEqual(len(lancamentos), 1)
+        l = lancamentos[0]
+        self.assertEqual(set(l), set(app.COLUNAS_POR_DOCUMENTO))
+        self.assertEqual(l["condominio"], "44")
+        self.assertEqual(l["valor"], 82.9)
+        self.assertEqual(l["vencimento"], datetime.date(2026, 9, 10))
+        self.assertEqual(l["linha_digitavel"], BOLETO["linha_digitavel"])
+        self.assertIsNone(l["numero_documento"])
+        self.assertIsNone(l["competencia"])
+
+    def test_nota_usa_o_vencimento_do_lote(self):
+        docs = [app.documento_para_lancamento("n.pdf", dados_nfse=NFSE_SEM_RETENCAO)]
+        l = app.montar_lancamentos(docs, CADASTRO, datetime.date(2026, 9, 5))[0]
+        self.assertEqual(l["vencimento"], datetime.date(2026, 9, 5))
+        self.assertEqual(l["numero_documento"], "12367")
+        self.assertEqual(l["competencia"], datetime.date(2026, 8, 24))
+        self.assertIsNone(l["linha_digitavel"])
+
+    def test_nota_sem_vencimento_do_lote_e_erro_de_quem_chama(self):
+        docs = [app.documento_para_lancamento("n.pdf", dados_nfse=NFSE_SEM_RETENCAO)]
+        with self.assertRaises(ValueError):
+            app.montar_lancamentos(docs, CADASTRO)
+
+    def test_documentos_com_motivo_ficam_de_fora(self):
+        docs = [app.documento_para_lancamento("ok.pdf", dados_boleto=BOLETO),
+                app.documento_para_lancamento("lago.pdf", dados_boleto=dict(BOLETO, documento_pagador=LAGO)),
+                app.documento_para_lancamento("sem_venc.pdf", dados_boleto=dict(BOLETO, vencimento=None))]
+        lancamentos = app.montar_lancamentos(docs, CADASTRO)
+        self.assertEqual(len(lancamentos), 1)
+
+    def test_ordem_dos_documentos_e_preservada(self):
+        SAN_REMO = "08578541000103"      # ID SL 42
+        docs = [app.documento_para_lancamento("1.pdf", dados_boleto=dict(BOLETO, documento_pagador=SAN_REMO)),
+                app.documento_para_lancamento("2.pdf", dados_boleto=BOLETO)]
+        self.assertEqual([l["condominio"] for l in app.montar_lancamentos(docs, CADASTRO)],
+                         ["42", "44"])
+
+
 if __name__ == "__main__":
     unittest.main()
