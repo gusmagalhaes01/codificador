@@ -22,3 +22,6 @@ cadastro_condominios_BACKUP_*.xlsx
 # Worktrees de execução de planos (Claude Code) — nunca versionados
 .claude/worktrees/
 .superpowers/
+
+# Modelos de lancamento do Superlogica: dados do usuario, ficam ao lado do programa
+modelos_superlogica/
