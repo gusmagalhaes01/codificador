@@ -2209,6 +2209,50 @@ def extrair_dados_boleto(texto, cadastro=None):
     return dados
 
 
+#  Vencimento de um DARF (guia do DCTFWeb). O código de arrecadação traz valor
+#  e dígitos verificadores, mas NÃO traz data — ela só existe no texto da
+#  guia. Três rótulos a carregam, em lugares diferentes da folha:
+#
+#      Pagar este documento até\n18/09/2026   (cabeçalho)
+#      PA:08/2026 Vencimento:18/09/2026        (composição)
+#      Pagar até: 18/09/2026                   (recibo do rodapé)
+#
+#  Só casa data COM rótulo: a guia também traz a data de emissão
+#  ("SENDA ... 18/09/2026 09:46") sem rótulo de vencimento, e ela não pode
+#  entrar na conta. "Vencimento" só conta com dois-pontos logo depois —
+#  "Data de Vencimento Número do Documento" (cabeçalho da tabela) e "APOS
+#  VENCIMENTO MULTA" (boleto) não têm.
+RE_VENCIMENTO_DARF = re.compile(
+    r"(?:Pagar\s+(?:este\s+documento\s+)?at[ée]:?|Vencimento:)\s*(\d{2}/\d{2}/\d{4})",
+    re.IGNORECASE)
+
+#  A conferência só existe com pelo menos duas ocorrências: com uma, não há
+#  com o que comparar, e uma data solta de texto é exatamente o que a aba 2
+#  evita. As guias reais trazem três.
+MINIMO_OCORRENCIAS_VENCIMENTO_DARF = 2
+
+
+def vencimento_do_darf(texto):
+    """
+    Data de vencimento de um DARF, lida do texto nativo.
+
+    Devolve a data só quando ela aparece pelo menos
+    MINIMO_OCORRENCIAS_VENCIMENTO_DARF vezes com rótulo e TODAS as
+    ocorrências são a mesma data. Divergindo, faltando ou sendo uma data que
+    não existe, devolve None — e o DARF fica fora do lançamento, para ser
+    lançado à mão. Nunca escolhe uma das datas.
+    """
+    achadas = RE_VENCIMENTO_DARF.findall(texto or "")
+    if len(achadas) < MINIMO_OCORRENCIAS_VENCIMENTO_DARF:
+        return None
+    if len(set(achadas)) != 1:
+        return None
+    try:
+        return datetime.datetime.strptime(achadas[0], "%d/%m/%Y").date()
+    except ValueError:
+        return None
+
+
 #  (rótulo da coluna, largura, formato numérico do Excel)
 COLUNAS_NFSE = [
     ("Arquivo", 38, None),
