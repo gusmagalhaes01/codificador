@@ -58,7 +58,9 @@ errado.
 ferramentas/paybox_ff/
   associar_ff.js   — o código (lógica pura + chamadas + caixinha)
   instalar.html    — link para arrastar à barra de favoritos, com instruções
-  testes.html      — testes da lógica pura, rodados no navegador
+  testes.html      — página que roda os testes (abrir no navegador)
+  testes.js        — os casos de teste
+  rodar_testes.py  — roda testes.html no Edge sem janela; sai com erro se falhar
   LEIAME.md        — como usar, o que cada relatório significa, como atualizar
 ```
 
@@ -78,8 +80,8 @@ que a própria tela usa.
 | Passo | Chamada | O que tira dela |
 |---|---|---|
 | Listar a fila | `ocr/getenvelopes?idCondominio=-2&pagina=N` | `data.envelopes[]` (cada um com `envelope_id`, `metadata.document-type`, `metadata.document-recipient`, `metadata.invoice-number`, `metadata.invoice-value`, `metadata.net-value`, `metadata.filename`) e `data.totaldepaginas` |
-| Condomínio do envelope | `ocr/getenvelope?idEnvelope=<id>` | `id_condominio_cond`, `st_fantasia_cond` |
-| Buscar despesas | `despesas/index` com params `comStatus:"todas"`, `idCondominio`, `pesquisa:<valor "84.65">`, `tipoFiltroData:"periodo"`, `dtInicio`/`dtFim` (MM/DD/AAAA), `itensPorPagina`, `pagina` | por despesa: `id_despesa_des`, `id_parcela_pdes`, `st_documento_des`, `st_cpf_con`, `id_contato_con`, `vl_valor_pdes`, `dt_despesa_des`, `fl_modelotrabalho_des`, `id_tipo_doc`, `id_forma_pag`, `st_complemento_pdes`, `arquivos`, `st_fantasia_cond`, `st_nome_con` |
+| Dados do envelope | `ocr/getenvelope?idEnvelope=<id>` | `data.invoices[]` (`type`, `number`, `amount`, `amount_before_taxes`), `data.customer` (`id_condominio_cond`, `st_fantasia_cond`), `data.issuer` (`document_number`, `id_contato_con` e a classificação da Reinf). É a **fonte de verdade** da nota. A lista da fila só serve para achar os envelopes |
+| Buscar despesas | `despesas/index` com params `comStatus:"todas"`, `idCondominio`, `FAVORECIDOS:[<id_contato_con do issuer>]`, `pesquisa:<valor "84.65">`, `tipoFiltroData:"periodo"`, `dtInicio`/`dtFim` (MM/DD/AAAA), `itensPorPagina`, `pagina` | por despesa: `id_despesa_des`, `id_parcela_pdes`, `st_documento_des`, `st_cpf_con`, `id_contato_con`, `vl_valor_pdes`, `dt_despesa_des`, `fl_modelotrabalho_des`, `id_tipo_doc`, `id_forma_pag`, `st_complemento_pdes`, `arquivos`, `st_fantasia_cond`, `st_nome_con` |
 | Associar | `ocr/vincularenvelopeadespesa`, corpo em campos de formulário soltos | resposta `status: "200"` |
 
 A resposta de `getenvelopes` numa listagem sem filtro tem a forma do
@@ -104,7 +106,16 @@ diante de qualquer outra forma, para (ver Proteções).
 | `ST_CPF_CNPJ_FORNECEDOR_ENV` | CNPJ da F&F |
 | `ST_FANTASIA_COND` | envelope/despesa |
 | `ST_NOME_CON` | despesa |
-| `ST_CLASSIFICACAO_TRIBUTARIA`, `ID_CLASSIFICACAOTRIBUTARIA_DES`, `ST_CLASSIFICACAO_SERVICO_PRESTADO`, `ID_CLASSSERVICOPRESTADO_DES` | despesa, quando existirem, senão vazios (ver "Pendente de conferência") |
+| `ST_CLASSIFICACAO_TRIBUTARIA`, `ID_CLASSIFICACAOTRIBUTARIA_DES`, `ST_CLASSIFICACAO_SERVICO_PRESTADO`, `ID_CLASSSERVICOPRESTADO_DES` | envelope, bloco `issuer` do `getenvelope` (`st_classificacao_tributaria`, `id_classificacao_tributaria`, `st_classificacao_servico_prestado`, `id_classificacao_servico_prestado`) |
+
+**A classificação da Reinf vem do cadastro do fornecedor, exatamente como a
+tela faz.** O HAR mostrou que os valores "99 Pessoas Jurídicas em Geral" /
+"100000006 Preparação de dados para processamento" não são inventados pela
+tela: saem do bloco `issuer` do `getenvelope`, que é o cadastro da F&F no
+Superlógica. Mandar o mesmo que a associação manual manda produz o mesmo
+resultado que ela. A despesa só tem os textos (`st_classificacao_*`), sem os
+ids, então não daria para copiar dela. Se a classificação estiver errada, o
+conserto é no cadastro do fornecedor, não aqui.
 | `VALIDAR_CPF_CNPJ`=`1`, `FL_MARCAR_PARA_LANCAMENTO`=`0`, `despesa`=`on`, `salvar`=`Vincular` | fixos, como a tela manda |
 
 **Por que copiar da despesa e não repetir o que a tela manda:** na captura, a
@@ -124,22 +135,27 @@ ignorado e não aparece no relatório como erro.
 
 Para cada nota:
 
-1. Lê o envelope, de onde vem `id_condominio_cond`.
-2. Busca as despesas desse condomínio no período informado, com `pesquisa` pelo
-   valor da nota. A primeira tentativa usa o `invoice-value`. Sem candidata, tenta
-   de novo com o `net-value`, se for diferente. Lê todas as páginas da busca.
+1. Lê o envelope (`getenvelope`), de onde vêm a nota, o condomínio e o
+   fornecedor. O envelope precisa ter **exatamente uma** nota, do tipo `nfse` e
+   emitida pela F&F. Senão a nota fica de fora com o motivo.
+2. Busca as despesas desse condomínio e desse fornecedor no período informado,
+   com `pesquisa` pelo valor da nota. A primeira tentativa usa o `amount`. Sem
+   candidata, tenta de novo com o `amount_before_taxes`, se for diferente. Lê
+   todas as páginas da busca.
 3. **Candidatas** são as despesas com `st_cpf_con == "13736666000154"` **e**
-   `st_documento_des` igual ao `invoice-number`, comparados sem zeros à
+   `st_documento_des` igual ao número da nota, comparados sem zeros à
    esquerda.
 4. O resultado:
 
 | Situação | Ação | Motivo no relatório |
 |---|---|---|
-| exatamente 1 candidata, sem arquivo, valor = `invoice-value` ou `net-value` (tolerância R$ 0,005) | **associa** | — |
+| exatamente 1 candidata, sem arquivo, valor = `amount` ou `amount_before_taxes` (tolerância R$ 0,005) | **associa** | — |
 | 0 candidatas | fica | "Despesa não encontrada no período" |
 | 2 ou mais | fica | "Mais de uma despesa com o documento N" |
 | 1, mas já tem arquivo | fica | "Despesa já tem anexo" |
 | 1, valor diferente | fica | "Valor da despesa (X) difere da nota (Y)" |
+| envelope com 0 ou 2+ notas | fica | "Envelope com N notas" |
+| nota do envelope não é NFS-e da F&F | fica | "Não é NFS-e da F&F" |
 | envelope sem condomínio | fica | "Paybox não identificou o condomínio" |
 
 O **número do documento é a chave**, e o valor é conferência. Por isso a
@@ -189,9 +205,9 @@ comparado no próprio código.
 
 ## Pendente de conferência (primeiro uso real)
 
-1. **Classificação da EFD-Reinf:** o que a despesa 56112 tem hoje nesses campos
-   depois da associação manual, e se a associação aceita esses campos vazios.
-   Conferir na etapa 2 abaixo.
+1. **Classificação da EFD-Reinf:** confirmar, na despesa associada na etapa 2
+   abaixo, que ela ficou igual à de uma associação manual. Ela vem do cadastro
+   do fornecedor, como na tela.
 2. **Cabeçalhos exigidos:** se as chamadas feitas por `fetch` a partir do
    favorito precisam de algum cabeçalho que a tela adiciona, como
    `X-Requested-With`. Se precisarem, a primeira chamada falha e o processo para,
@@ -224,7 +240,10 @@ comparado no próprio código.
   testes é trocada por respostas gravadas (fixtures anonimizadas). Assim o fluxo
   inteiro de simular e associar roda sem rede, e dá para conferir que a
   simulação **nunca** chama o `vincular`.
-- Verificação: abrir `testes.html` no navegador e ver todos os testes verdes. A
+- Verificação: `python ferramentas/paybox_ff/rodar_testes.py` abre o
+  `testes.html` no Edge sem janela (`--headless --dump-dom`) e sai com erro se
+  algum teste falhar. Não há Node na máquina, e o Edge vem com o Windows. O mesmo
+  `testes.html` também pode ser aberto à mão no navegador. A
   suíte Python do Codificador não é afetada.
 
 ## Fora do escopo
