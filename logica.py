@@ -3261,11 +3261,40 @@ def converter_data_digitada(texto):
     return None, "Data inválida. Use o formato 21/08/2026."
 
 
+#  Pasta, ao lado do programa, com um .xlsx por opção de lançamento da aba 2.
+#  O nome do arquivo (sem extensão) é o texto do seletor; a linha 2 é o
+#  molde, igual ao `modelo_despesas.xlsx` da aba 3. O zip de instalação NÃO
+#  traz modelos: são do usuário, e um pacote novo sobrescreveria as edições.
+PASTA_MODELOS_LANCAMENTO = "modelos_superlogica"
+
+
+def listar_modelos_lancamento(pasta):
+    """
+    Opções de lançamento disponíveis: `[(rótulo, caminho), ...]`, em ordem
+    alfabética do rótulo. Pasta inexistente devolve lista vazia.
+
+    Ignora o `~$Nome.xlsx` que o Excel cria enquanto o modelo está aberto —
+    não é modelo, e virar opção faria o gerador tentar abrir um arquivo de
+    trava.
+    """
+    if not os.path.isdir(pasta):
+        return []
+    modelos = []
+    for nome in os.listdir(pasta):
+        if nome.startswith("~$") or not nome.lower().endswith(".xlsx"):
+            continue
+        modelos.append((os.path.splitext(nome)[0], os.path.join(pasta, nome)))
+    return sorted(modelos, key=lambda modelo: modelo[0].lower())
+
+
 def gerar_planilha_despesas(caminho_modelo, caminho_saida, lancamentos,
                             vencimento=None, chave=None):
     """
     Gera a planilha de importação de despesas do Superlógica a partir do
-    modelo do usuário. `lancamentos` é [(id_sl, valor), ...] na ordem de saída.
+    modelo do usuário. `lancamentos` é uma lista, na ordem de saída, de
+    `(id_sl, valor)` (aba 3) ou de dicts `{coluna_normalizada: valor}` (aba
+    2, ver COLUNAS_POR_DOCUMENTO) — as colunas do dict vencem o molde,
+    inclusive com None, que deixa a célula vazia.
 
     O modelo é ABERTO E PREENCHIDO, nunca reconstruído: copiar preserva
     formatos de célula, validações e colunas ocultas que o importador do
@@ -3294,6 +3323,17 @@ def gerar_planilha_despesas(caminho_modelo, caminho_saida, lancamentos,
         raise ValueError(
             "Nenhum lançamento para gerar — a planilha não foi criada.")
 
+    #  Cada lançamento vira um dict {coluna: valor}. A aba 3 continua mandando
+    #  (id_sl, valor); a aba 2 manda as seis colunas de COLUNAS_POR_DOCUMENTO.
+    campos_por_linha = []
+    for lancamento in lancamentos:
+        if isinstance(lancamento, dict):
+            campos_por_linha.append(dict(lancamento))
+        else:
+            id_sl, valor = lancamento
+            campos_por_linha.append({COLUNA_DESPESA_CONDOMINIO: id_sl,
+                                     COLUNA_DESPESA_VALOR: valor})
+
     wb = load_workbook(caminho_modelo)
     sheet = wb.active
 
@@ -3304,6 +3344,10 @@ def gerar_planilha_despesas(caminho_modelo, caminho_saida, lancamentos,
             colunas.setdefault(nome, celula.column)
 
     obrigatorias = [COLUNA_DESPESA_CONDOMINIO, COLUNA_DESPESA_VALOR]
+    for campos in campos_por_linha:
+        for nome in campos:
+            if nome not in obrigatorias:
+                obrigatorias.append(nome)
     if vencimento is not None:
         obrigatorias.append(COLUNA_DESPESA_VENCIMENTO)
     if chave is not None:
@@ -3313,9 +3357,6 @@ def gerar_planilha_despesas(caminho_modelo, caminho_saida, lancamentos,
         raise ValueError(
             "O modelo não tem a(s) coluna(s): " + ", ".join(faltando) +
             ". Confira se o arquivo é o modelo de despesas do Superlógica.")
-
-    coluna_condominio = colunas[COLUNA_DESPESA_CONDOMINIO]
-    coluna_valor = colunas[COLUNA_DESPESA_VALOR]
 
     nomes_por_coluna = {celula.column: _normalizar_cabecalho(celula.value)
                         for celula in sheet[1]}
@@ -3332,7 +3373,7 @@ def gerar_planilha_despesas(caminho_modelo, caminho_saida, lancamentos,
             valor, formato = _data_do_molde(nomes_por_coluna[coluna], celula.value)
         molde.append((valor, copy.copy(celula._style), formato))
 
-    for indice, (id_sl, valor) in enumerate(lancamentos):
+    for indice, campos in enumerate(campos_por_linha):
         numero_linha = LINHA_MOLDE_DESPESAS + indice
         for coluna, (valor_molde, estilo, formato) in enumerate(molde, start=1):
             celula = sheet.cell(row=numero_linha, column=coluna)
@@ -3340,8 +3381,17 @@ def gerar_planilha_despesas(caminho_modelo, caminho_saida, lancamentos,
             celula._style = copy.copy(estilo)
             if formato:
                 celula.number_format = formato
-        sheet.cell(row=numero_linha, column=coluna_condominio).value = id_sl
-        sheet.cell(row=numero_linha, column=coluna_valor).value = float(valor)
+        #  Colunas do lançamento vencem o molde — inclusive com None, que
+        #  apaga o que o molde tivesse ali.
+        for nome, valor in campos.items():
+            celula = sheet.cell(row=numero_linha, column=colunas[nome])
+            if nome == COLUNA_DESPESA_VALOR and valor is not None:
+                celula.value = float(valor)
+            elif nome in COLUNAS_DATA_DESPESAS and isinstance(valor, datetime.date):
+                celula.value = valor
+                celula.number_format = FORMATO_DATA_DESPESAS
+            else:
+                celula.value = valor
         if vencimento is not None:
             celula_venc = sheet.cell(row=numero_linha,
                                      column=colunas[COLUNA_DESPESA_VENCIMENTO])

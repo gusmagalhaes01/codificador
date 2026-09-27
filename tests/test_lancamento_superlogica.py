@@ -256,5 +256,137 @@ class TestMontarLancamentos(unittest.TestCase):
                          ["42", "44"])
 
 
+import shutil
+import tempfile
+
+from openpyxl import Workbook, load_workbook
+
+#  Modelo sintético com as colunas que importam aqui. O molde traz lixo nas
+#  colunas por documento DE PROPÓSITO: o programa tem de sobrescrevê-las,
+#  nunca herdar.
+CABECALHO = ["condomínio", "vencimento", "competencia", "fornecedor",
+             "conta_categoria", "numero_documento", "complemento", "valor",
+             "linha_digitavel", "chave"]
+MOLDE = [None, None, None, "4521", "2.1.49 Envio Informações E-Social",
+         "LIXO DO MOLDE", "Exames Médicos", None, "LIXO DO MOLDE", 46]
+
+
+def montar_modelo(caminho):
+    wb = Workbook()
+    sheet = wb.active
+    sheet.append(CABECALHO)
+    sheet.append(MOLDE)
+    wb.save(caminho)
+    return caminho
+
+
+class TestGerarComColunasPorDocumento(unittest.TestCase):
+
+    def setUp(self):
+        self.pasta = tempfile.mkdtemp()
+        self.modelo = montar_modelo(os.path.join(self.pasta, "modelo.xlsx"))
+        self.saida = os.path.join(self.pasta, "saida.xlsx")
+
+    def tearDown(self):
+        shutil.rmtree(self.pasta, ignore_errors=True)
+
+    def gerar(self, lancamentos, **kwargs):
+        app.gerar_planilha_despesas(self.modelo, self.saida, lancamentos, **kwargs)
+        sheet = load_workbook(self.saida).active
+        colunas = {app._normalizar_cabecalho(c.value): c.column for c in sheet[1]}
+        return sheet, colunas
+
+    def lancamento(self, **mudancas):
+        base = {"condominio": "44", "valor": 82.9,
+                "vencimento": datetime.date(2026, 9, 10),
+                "linha_digitavel": "23790472089000015979956006290706515650000008290",
+                "numero_documento": None, "competencia": None}
+        base.update(mudancas)
+        return base
+
+    def test_escreve_as_colunas_por_documento(self):
+        sheet, col = self.gerar([self.lancamento()])
+        self.assertEqual(sheet.cell(2, col["condominio"]).value, "44")
+        self.assertEqual(sheet.cell(2, col["valor"]).value, 82.9)
+        self.assertEqual(sheet.cell(2, col["linha_digitavel"]).value,
+                         "23790472089000015979956006290706515650000008290")
+
+    def test_data_sai_como_data_de_verdade(self):
+        sheet, col = self.gerar([self.lancamento()])
+        celula = sheet.cell(2, col["vencimento"])
+        self.assertTrue(celula.is_date)
+        self.assertEqual(celula.number_format, app.FORMATO_DATA_DESPESAS)
+
+    def test_none_apaga_o_que_o_molde_tinha(self):
+        #  "—" no spec é célula vazia, mesmo que o molde tenha algo ali.
+        sheet, col = self.gerar([self.lancamento(linha_digitavel=None)])
+        self.assertIsNone(sheet.cell(2, col["linha_digitavel"]).value)
+        self.assertIsNone(sheet.cell(2, col["numero_documento"]).value)
+
+    def test_colunas_do_molde_continuam_sendo_copiadas(self):
+        sheet, col = self.gerar([self.lancamento(), self.lancamento()])
+        for linha in (2, 3):
+            self.assertEqual(sheet.cell(linha, col["fornecedor"]).value, "4521")
+            self.assertEqual(sheet.cell(linha, col["complemento"]).value, "Exames Médicos")
+            self.assertEqual(sheet.cell(linha, col["chave"]).value, 46)
+
+    def test_chave_do_lote_continua_valendo(self):
+        sheet, col = self.gerar([self.lancamento()], chave=99)
+        self.assertEqual(sheet.cell(2, col["chave"]).value, 99)
+
+    def test_modelo_sem_uma_coluna_por_documento_avisa(self):
+        wb = Workbook()
+        wb.active.append(["condomínio", "valor"])
+        wb.active.append([None, None])
+        wb.save(self.modelo)
+        with self.assertRaises(ValueError) as erro:
+            self.gerar([self.lancamento()])
+        self.assertIn("linha_digitavel", str(erro.exception))
+
+    def test_formato_antigo_de_tupla_continua_funcionando(self):
+        #  A aba 3 continua chamando com (id_sl, valor).
+        sheet, col = self.gerar([("44", 57.75)])
+        self.assertEqual(sheet.cell(2, col["condominio"]).value, "44")
+        self.assertEqual(sheet.cell(2, col["valor"]).value, 57.75)
+
+
+class TestListarModelosLancamento(unittest.TestCase):
+
+    def setUp(self):
+        self.pasta = tempfile.mkdtemp()
+
+    def tearDown(self):
+        shutil.rmtree(self.pasta, ignore_errors=True)
+
+    def criar(self, nome):
+        open(os.path.join(self.pasta, nome), "wb").close()
+
+    def test_lista_os_xlsx_pelo_nome_sem_extensao_em_ordem(self):
+        self.criar("Sindicato - Contr. Assistencial.xlsx")
+        self.criar("FF - Exames Medicos.xlsx")
+        rotulos = [r for r, _ in app.listar_modelos_lancamento(self.pasta)]
+        self.assertEqual(rotulos, ["FF - Exames Medicos", "Sindicato - Contr. Assistencial"])
+
+    def test_devolve_o_caminho_do_arquivo(self):
+        self.criar("FF - PCMSO.xlsx")
+        (_, caminho), = app.listar_modelos_lancamento(self.pasta)
+        self.assertEqual(caminho, os.path.join(self.pasta, "FF - PCMSO.xlsx"))
+
+    def test_ignora_o_arquivo_de_trava_do_excel(self):
+        #  Com um modelo aberto no Excel aparece "~$Nome.xlsx" na pasta; não
+        #  é modelo e não pode virar opção.
+        self.criar("FF - PCMSO.xlsx")
+        self.criar("~$FF - PCMSO.xlsx")
+        self.assertEqual(len(app.listar_modelos_lancamento(self.pasta)), 1)
+
+    def test_ignora_o_que_nao_e_xlsx(self):
+        self.criar("leia-me.txt")
+        self.criar("antigo.xls")
+        self.assertEqual(app.listar_modelos_lancamento(self.pasta), [])
+
+    def test_pasta_que_nao_existe(self):
+        self.assertEqual(app.listar_modelos_lancamento(os.path.join(self.pasta, "nao")), [])
+
+
 if __name__ == "__main__":
     unittest.main()
