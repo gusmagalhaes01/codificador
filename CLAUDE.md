@@ -748,6 +748,98 @@ O raciocínio de por que aqui o dado é confiável (DVs), de como o pagador é
 identificado e do que fazer quando a barra não traz vencimento está no
 Histórico de decisões, v6.18.2.
 
+## Lançamento no Superlógica direto da extração (aba 2, v6.21.0)
+
+A aba 2 gera, junto da planilha de extração, o arquivo de importação de
+despesas do Superlógica para **boletos do sindicato, DARF do DCTFWeb e notas
+da F&F**. Um seletor escolhe a **opção de lançamento do lote** ("Nenhum" =
+aba como antes). Uma opção por lote, por decisão do usuário.
+
+**Cada opção é um `.xlsx` em `modelos_superlogica/`**, ao lado do programa:
+nome do arquivo = texto do seletor, linha 2 = molde — o mesmo mecanismo do
+`modelo_despesas.xlsx` da aba 3. Fornecedor e favorecido podem ir pelo **ID
+do Superlógica** (o importador aceita); `conta_categoria` continua como
+`código nome`. O zip **não traz** modelos — são do usuário. O seletor ignora
+o `~$Nome.xlsx` que o Excel cria com o modelo aberto. A alternativa de
+guardar as opções no `config.json` com editor em Configurações foi preferida
+pelo usuário para o futuro, mas adiada.
+
+**Seis colunas são escritas pelo programa, nunca herdadas do molde**
+(`COLUNAS_POR_DOCUMENTO`): `condominio`, `valor`, `vencimento`,
+`linha_digitavel`, `numero_documento`, `competencia` — vazias quando o
+documento não tem o dado, mesmo que o molde tenha algo. O **`complemento`
+não é escrito**: o usuário preenche à mão (no modelo ou no Superlógica —
+nunca abrindo a planilha gerada no Excel, que é o gesto que já fez o
+Superlógica gravar 01/01/1970).
+
+| Coluna | Boleto do sindicato | DARF | Nota da F&F |
+|---|---|---|---|
+| `condominio` (ID SL) | CNPJ do pagador | CNPJ | CNPJ do tomador |
+| `valor` | código de barras | código de barras | valor do serviço |
+| `vencimento` | código de barras | texto (≥2 ocorrências iguais) | o do lote |
+| `linha_digitavel` | 47 dígitos | 48 dígitos | — |
+| `numero_documento` | — | — | nº da NFS-e |
+| `competencia` | — | — | competência da nota |
+
+**O condomínio só vale pelo CNPJ lido do documento.** A planilha de extração
+usa o nome do arquivo como reserva nos boletos; o lançamento não — é
+dinheiro, e essa origem é mais fraca.
+
+**Vencimento do DARF**: o código de arrecadação não traz data. Ela está no
+texto com rótulo em três lugares (`Pagar este documento até`,
+`Vencimento:` e `Pagar até:`), e `vencimento_do_darf` exige **pelo menos
+duas ocorrências e todas iguais** — divergindo ou faltando, o DARF vai para o
+manual. A data de emissão ("SENDA ... 18/09/2026 09:46") não tem rótulo e
+não entra na conta.
+
+**O que fica de fora** vai para a Observação da planilha de extração
+(`motivo_fora_do_lancamento`), e o arquivo do Superlógica sai com o resto —
+diferente da aba 3, que trava tudo por uma pendência, porque aqui parte dos
+documentos é manual **por regra do usuário**:
+
+- **nota da F&F com retenção** (serviço ≠ líquido, **ou** contrib. sociais /
+  previdência retidas) — regra do usuário: lançar à mão
+- condomínio não identificado pelo CNPJ, ou sem ID SL
+- sem valor no código
+- boleto sem vencimento no código (fator `0000`/`9999`) — **não** se usa a
+  data impressa na folha: sem a repetição do DARF, seria data solta
+- DARF sem vencimento confirmado
+
+**Trava de pasta misturada** (`conferir_lote_homogeneo`): documentos
+reconhecidos de mais de um tipo (nota, boleto, arrecadação) → o arquivo do
+Superlógica não é gerado. Documento não reconhecido não conta — o
+"Detalhamento do Faturamento" das pastas da F&F travaria todo lote.
+
+**Perguntas ao fim da extração**, não no início como na aba 3: chave sempre,
+vencimento só se o lote tem nota fiscal. Lá o vencimento vai carimbado no
+PDF durante o processamento; aqui nada é carimbado.
+
+**`gerar_planilha_despesas` aceita dois formatos de lançamento**: a tupla
+`(id_sl, valor)` da aba 3 e o dict por coluna da aba 2.
+
+**Validação** (`tests/_validar_lancamento.py`, contra as pastas reais): 284
+boletos do sindicato lançados e 12 DARF lançados, os dois lotes sem mistura
+de tipo e com o condomínio (pelo CNPJ) batendo 100% com o código no nome do
+arquivo. Na F&F de fevereiro/2026 (594 notas): 362 lançadas, 228 com
+retenção (lançar à mão, regra do usuário), 3 condomínios sem ID SL e 1 CNPJ
+não cadastrado — todos corretamente fora do lançamento, não bugs.
+
+**Duas divergências reais entre nome do arquivo e CNPJ, achadas na F&F —
+mesma família do `10871 Esperança`/`10872 PAIVA` já registrado acima:**
+`10528 Walfran II.pdf` traz o CNPJ do `10500` no tomador, e
+`10621 Gabriela.pdf` traz o CNPJ do `10497`. Nos dois o CNPJ da nota está
+correto e é o nome do arquivo que erra o código — o comportamento esperado é
+lançar pelo código do CNPJ (10500 e 10497), não pelo do nome do arquivo, e é
+o que `documento_para_lancamento` faz. Achado de dado, não defeito.
+
+**Pendente de teste real de importação:** se o importador aceita o código de
+arrecadação de 48 dígitos em `linha_digitavel` (ele recusava o que não fosse
+boleto), e em que formato espera a `competencia` (a da NFS-e é data cheia).
+O Paybox anexar os boletos sozinho com a linha digitável é plausível e **não
+testado**.
+
+Spec: `docs/superpowers/specs/2026-09-27-lancamento-superlogica-extracao-design.md`.
+
 ## Contagem dos Protocolos dos Correios (aba 3)
 
 Contrapartida do carimbo de código (v6.8.0/v6.9.0): além de identificar o
