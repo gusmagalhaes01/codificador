@@ -136,11 +136,12 @@ similaridade de nome sozinha.
   a seção "Lançamento no Superlógica direto da extração (aba 2, v6.21.0)"
   acima e o spec
   `docs/superpowers/specs/2026-09-27-lancamento-superlogica-extracao-design.md`.
-  **Pendente antes do primeiro DARF/F&F real**: confirmar que o importador
+  **Pendente antes do primeiro DARF real**: confirmar que o importador
   aceita o código de arrecadação de 48 dígitos em `linha_digitavel` (ele
-  recusava o que não fosse boleto) e em que formato espera a `competencia`
-  (a da NFS-e sai como data cheia) — só validado offline, nunca contra uma
-  importação de verdade.
+  recusava o que não fosse boleto) — só validado offline. **A `competencia`
+  da F&F foi confirmada** em 2026-09-27: uma importação real de uma NFS-e
+  (11882) gerada pelo mesmo caminho do programa entrou com a competência
+  certa.
 
 - **v6.18.2 — boletos na aba "Extrair dados" (código de barras)**: a aba 2
   passou a reconhecer boleto além de NFS-e e a escrever cada tipo na sua aba
@@ -855,9 +856,9 @@ o que `documento_para_lancamento` faz. Achado de dado, não defeito.
 
 **Pendente de teste real de importação:** se o importador aceita o código de
 arrecadação de 48 dígitos em `linha_digitavel` (ele recusava o que não fosse
-boleto), e em que formato espera a `competencia` (a da NFS-e é data cheia).
-O Paybox anexar os boletos sozinho com a linha digitável é plausível e **não
-testado**.
+boleto). A `competencia` da NFS-e, gravada como data cheia, **foi aceita**
+numa importação real em 2026-09-27. O Paybox anexar os boletos sozinho com a
+linha digitável é plausível e **não testado**.
 
 Spec: `docs/superpowers/specs/2026-09-27-lancamento-superlogica-extracao-design.md`.
 
@@ -1440,12 +1441,17 @@ Vale a pena registrá-las, porque todas eram plausíveis e custaram experimento:
   Funcionaria pelo mesmo mecanismo dos Correios, mas seria degradar de
   propósito a verificabilidade de um documento fiscal para enganar um
   classificador.
-- **O caminho que resta é o suporte do Superlógica** (que a associação de
-  `nfse` não dependa do vencimento, ou que ele seja herdado da despesa
-  candidata) ou, se o endpoint de upload aceitar metadados, **enviar as notas
-  já com o vencimento preenchido pela API** — a licença tem API (foi de lá que
-  saiu o JSON da despesa `54927`). Essa é a única pergunta que ainda pode
-  reabrir a automação.
+- **Resolvido fora do Codificador (2026-09-27):** a associação das notas da
+  F&F foi automatizada por um **favorito do navegador** que faz as mesmas
+  chamadas da tela do Paybox ao clicar em Vincular — repositório próprio,
+  [gusmagalhaes01/associar-paybox-ff](https://github.com/gusmagalhaes01/associar-paybox-ff)
+  (privado), separado por decisão do usuário: nada dele entra em `logica.py`,
+  na interface ou no executável. Lá estão o design, as medições e os achados
+  (as notas pendentes vêm do Histórico de uploads, não da fila de gestão de
+  arquivos). Antes dele, **a coluna `etiqueta_paybox` foi testada e não
+  associa**: a despesa grava o link `sldocs.com.br`, mas a imagem continua na
+  fila (NFS-e 11882). A API oficial continua sendo o caminho mais limpo, se
+  um administrador criar o App Token.
 
 ## Planilha de Despesas do Superlógica (aba 3, v6.14.0)
 
