@@ -23,5 +23,6 @@ cadastro_condominios_BACKUP_*.xlsx
 .claude/worktrees/
 .superpowers/
 
-# Modelos de lancamento do Superlogica: dados do usuario, ficam ao lado do programa
-modelos_superlogica/
+# Modelos de lancamento do Superlogica (aba 2): versionados e empacotados no zip.
+# So o arquivo de trava que o Excel cria com o modelo aberto fica de fora.
+modelos_superlogica/~$*

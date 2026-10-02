@@ -773,7 +773,11 @@ aba como antes). Uma opção por lote, por decisão do usuário.
 nome do arquivo = texto do seletor, linha 2 = molde — o mesmo mecanismo do
 `modelo_despesas.xlsx` da aba 3. Fornecedor e favorecido podem ir pelo **ID
 do Superlógica** (o importador aceita); `conta_categoria` continua como
-`código nome`. O zip **não traz** modelos — são do usuário. O seletor ignora
+`código nome`. Os modelos **são versionados e vão no zip** (pedido do
+usuário na publicação da v6.21.0): `gerar_exe.bat` copia a pasta para
+`dist\Codificador\modelos_superlogica\` e falha se ela estiver vazia. São
+cinco hoje: as quatro da F&F (E-Social, Exames Médicos, PCMSO e PGR) e a
+Contribuição Confederativa do sindicato. O seletor ignora
 o `~$Nome.xlsx` que o Excel cria com o modelo aberto. A alternativa de
 guardar as opções no `config.json` com editor em Configurações foi preferida
 pelo usuário para o futuro, mas adiada.

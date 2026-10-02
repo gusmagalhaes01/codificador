@@ -57,6 +57,12 @@ copy /Y cadastro_condominios.xlsx "dist\Codificador\" >nul
 if errorlevel 1 goto erro
 copy /Y modelo_despesas.xlsx "dist\Codificador\" >nul
 if errorlevel 1 goto erro
+rem Opcoes de lancamento da aba 2 (v6.21.0): o seletor le a pasta ao lado do exe.
+rem O ~$Nome.xlsx que o Excel cria com o modelo aberto nao pode ir junto.
+if not exist "modelos_superlogica\*.xlsx" goto erro
+xcopy /I /Y /Q "modelos_superlogica\*.xlsx" "dist\Codificador\modelos_superlogica\" >nul
+if errorlevel 1 goto erro
+del /Q "dist\Codificador\modelos_superlogica\~$*.xlsx" 2>nul
 if exist "dist\CODIFICADOR.zip" del /Q "dist\CODIFICADOR.zip"
 powershell -NoProfile -Command "Compress-Archive -Path 'dist\Codificador' -DestinationPath 'dist\CODIFICADOR.zip' -Force"
 if errorlevel 1 goto erro
@@ -67,7 +73,8 @@ echo   Pronto: dist\CODIFICADOR.zip
 echo ============================================
 echo.
 echo O zip contem a pasta Codificador\ com o executavel,
-echo o _internal\, o cadastro_condominios.xlsx e o modelo_despesas.xlsx.
+echo o _internal\, o cadastro_condominios.xlsx, o modelo_despesas.xlsx
+echo e a pasta modelos_superlogica\.
 echo Extrair a pasta INTEIRA - o exe nao roda sozinho.
 echo.
 pause
